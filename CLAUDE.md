@@ -32,7 +32,7 @@ A 1v1 web-based strategy game: simultaneous hidden orders under a countdown time
 
 ## Working with me
 - I'm a coding beginner. Explain what you're doing and why in plain terms as you go — teach, don't just produce.
-- I'm on Windows (project at `C:\Users\stirl\nuke-wars`). Give Windows-compatible commands.
+- Primary machine is Windows (project at `C:\Users\stirl\nuke-wars`), but I also work remotely from a MacBook. Check which OS the current session is actually running on before giving shell commands — don't assume Windows.
 - Walk me through any manual steps click-by-click.
 - If something I ask for conflicts with the spec or architecture rules, push back and explain the trade-off instead of silently complying.
 
@@ -43,6 +43,7 @@ A 1v1 web-based strategy game: simultaneous hidden orders under a countdown time
 - (once tests exist) `npx vitest` — run unit tests
 
 ## Current status (update at end of every session)
-- Completed: project scaffold; `src/sim/map.ts` (mirrored terrain gen with seeded RNG); `src/render/GameCanvas.tsx` (Pixi hex map with pan/zoom/hover/select); wired into App.
-- Next up: simulation engine core — GameState/Unit/Order/Event types, movement, launches, interception, win-condition checks, with unit tests (spec §6–§8, build-order step 2).
+- Completed: project scaffold; `src/sim/hex.ts` (axial hex math — distance/neighbors/hexesInRange, unit-tested); `src/sim/map.ts` (mirrored terrain gen with seeded RNG); `src/render/GameCanvas.tsx` (Pixi hex map, flat-top orientation, pan/zoom/hover/select, StrictMode-safe init/destroy); wired into App; `src/sim/types.ts` (core sim types: `GameState`, `Unit`, `Order`, `GameEvent`, `Outcome` — approved, no logic yet).
+- Next up: movement logic against the approved types — offset (col/row) ↔ axial (q/r) coordinate bridge, launcher movement validation (≤2 hexes/round, mountains impassable), with Vitest tests incl. an illegal-move case (spec §6–§8, build-order step 2, movement sub-stage).
+- Open questions to resolve before/during the movement or damage sessions: (1) HP for launcher/radar/interceptor isn't specified in the spec (only the Leader's "2 penetrating hits" is) — current assumption is 1 (destroyed by any impact), unconfirmed. (2) `UNIT_DEFS`/`MISSILE_DEFS` data tables (movement points, ammo, radii, the spec §7 numbers) don't exist yet — needed once movement/launch logic is implemented.
 - Known issues: none currently.
