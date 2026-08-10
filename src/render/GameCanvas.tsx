@@ -10,18 +10,22 @@ const FILL: Record<string, number> = {
   urban: 0x8a6d3b,    // amber
 };
 
+// Flat-top hexes have a flat edge on top/bottom, so columns stack directly
+// north/south of each other — the offset (odd-q) instead shifts alternating
+// *columns* vertically, and adjacent columns are the diagonal NE/SE/NW/SW
+// neighbors.
 function hexCenter(col: number, row: number) {
-  const w = Math.sqrt(3) * HEX;
+  const h = Math.sqrt(3) * HEX;
   return {
-    x: w * (col + 0.5 * (row % 2)) + w,
-    y: HEX * 1.5 * row + HEX * 2,
+    x: HEX * 1.5 * col + HEX * 2,
+    y: h * (row + 0.5 * (col % 2)) + h,
   };
 }
 
 function hexCorners(cx: number, cy: number): number[] {
   const pts: number[] = [];
   for (let i = 0; i < 6; i++) {
-    const angle = (Math.PI / 180) * (60 * i - 30); // pointy-top
+    const angle = (Math.PI / 180) * (60 * i); // flat-top
     pts.push(cx + HEX * Math.cos(angle), cy + HEX * Math.sin(angle));
   }
   return pts;
