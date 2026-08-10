@@ -47,7 +47,14 @@ export default function GameCanvas() {
 
     (async () => {
       await app.init({ background: 0x0b0f14, resizeTo: host });
-      if (cancelled) return;
+      if (cancelled) {
+        // Effect was cleaned up (e.g. React StrictMode's mount/unmount/remount
+        // in dev) while init() was still pending. `app` wasn't fully
+        // initialized yet at cleanup time, so destroying it there would throw
+        // inside Pixi's ResizePlugin — safe to destroy now that init finished.
+        app.destroy(true, { children: true });
+        return;
+      }
       host.appendChild(app.canvas);
 
       const world = new Container();
@@ -106,7 +113,9 @@ export default function GameCanvas() {
 
     return () => {
       cancelled = true;
-      app.destroy(true, { children: true });
+      // Only destroy here if init() already resolved (app.renderer exists).
+      // Otherwise the async block above will destroy it once init() finishes.
+      if (app.renderer) app.destroy(true, { children: true });
     };
   }, []);
 
