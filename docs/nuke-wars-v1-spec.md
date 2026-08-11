@@ -42,7 +42,16 @@ Both the bunker and a **decoy bunker** are hidden, and to the enemy they are ind
 
 **Munitions are unlimited.** No missile stock, no interceptor ammo counts. The interceptor limit is *per round* (rate), not total (stockpile).
 
-**Terrain:** **Plains** (normal), **Mountains** (impassable to launchers; missiles and drones fly over freely), **Urban** (visual flavor only in V1).
+**Terrain — two types, and that is the whole system:**
+
+| Terrain | Share | Rule |
+|---|---|---|
+| **Plains** | ~85% | Passable. The only ground a launcher moves on, and the only ground a launcher or drone spawns on. |
+| **Mountains** | ~15% | **Impassable to launchers.** Missiles and drones cross freely, and **static structures — bunker, decoy, interceptor base — may be built on them** (§12). Generated as *ranges*, not scattered noise (§7). |
+
+**Mobile things need plains; built things do not.** A mountain stops a vehicle, not a construction crew. A bunker on a mountain is still photographed by recon, still marked permanently once spotted, and still destroyed by two missiles — nothing about it is safer except that no enemy launcher can ever be ordered onto it, so ground probing can never bump into it (§9, §11). What it pays for that is a much narrower search: terrain is public, so the enemy knows precisely which hexes those are.
+
+*Urban terrain was cut on 2026-08-11.* It was flagged "visual flavour only" and carried no rule, so it was a third case in every terrain switch for no gameplay. Its V2 role (regime hexes as score) is recorded in `docs/v2-backlog.md` and would need reintroducing there.
 
 **Roster discipline:** V1 fields exactly five asset types — one mobile offensive unit, one static defense, one recon unit, one leader piece, one decoy — plus a single missile type. That is 8 assets per player and nothing else. Depth comes from interactions (interceptor geometry × concealment × the real-or-fake read × counter-battery exposure), not roster size.
 
@@ -164,6 +173,10 @@ Victory conditions are evaluated only after a full resolution completes — neve
 | Parameter | Value |
 |---|---|
 | Map size | 16 wide x 19 tall, symmetric under a 180° rotation (see note below) |
+| Mountain coverage | 15% of the board (46 of 304 hexes), grown as **4 ranges per half**; the generator enforces a 10–20% band |
+| Mountain shape | Every mountain hex touches another — no lone hexes (`TERRAIN_GEN.rangeStraightness`) |
+| Spawn clearance | No mountain on, or adjacent to, any of the 8 spawn hexes |
+| Max approach cost | 12 (8 on open ground) — see the generation note below |
 | Orders | 1 per living asset per round (no global cap — with 3 launchers + 1 drone, 4 is the natural maximum) |
 | Round cap | 25 |
 | Launchers | 3 per player, 1 HP, move 3 hexes/round OR launch |
@@ -183,6 +196,14 @@ Victory conditions are evaluated only after a full resolution completes — neve
 **The board is fought north/south.** P1 holds the southern edge and advances north; P2 holds the northern edge and advances south. Row 0 is the top of the screen, so P1's home rows are the *high* numbers. This is not cosmetic — hexes are **flat-top**, which means every hex has a true north and south neighbour and none directly east or west, so an advance up the board is a straight line rather than a zigzag. The north/south axis is the long one (19) precisely because it is the axis of approach.
 
 **Why a 180° rotation rather than a mirror.** The map is flat-top hexes in odd-q offset coordinates, where odd columns sit half a hex lower than even ones. A top/bottom mirror is therefore geometrically impossible: reflecting the row index lands odd columns half a hex off the grid, and the two halves end up at subtly different distances from their owner's spawns — an invisible unfairness no playtest would ever isolate. A half-turn about the map centre is a true isometry (distances, adjacency and movement costs all survive it), **but only while the map width is even** — hence 16, not 15 or 19. `generateMap` throws on an odd width, and `map.test.ts` checks distance preservation across every pair of hexes on the board. The visible consequence is that the two sides' launcher *columns* differ (P1's col 2 answers P2's col 13); their geometry is identical.
+
+**Why mountains are generated as ranges, and why the generator validates itself.** Scattered singleton mountains at 15% are speed bumps: a launcher steps around one without the detour ever mattering. The same 15% grown into ridges is walls, chokepoints, and routes — terrain that shapes an advance instead of decorating it. That is the point, and it is also the risk: unlike noise, ridges can produce a map nobody can cross. So `generateMap` **generates, validates, and re-rolls** rather than patching, and a map is rejected if any of three things is true:
+
+1. Mountain coverage falls outside 10–20%.
+2. The 8 spawn hexes are not all in one connected region of plains (a ridge across the board, or a launcher walled into a pocket).
+3. Any launcher's ground path to a hex within missile range of an enemy launcher spawn costs more than 12. On open ground that path costs 8 — the 14-row gap less the missile's 6 — which at movement 3 is what the tuning note below is built on. 12 permits about one extra round of detour; past that, matches drift toward the Armistice draw.
+
+**Re-rolling rather than carving is deliberate.** Cutting a pass through an offending ridge is the tempting fix and it is a trap: every carve must be applied to the hex *and its half-turn twin* or the two players quietly receive different maps, which is the exact failure this whole layout exists to prevent. A rejected map is thrown away whole and a fresh one rolled from a derived seed, so `generateMap` stays a pure function of its seed.
 
 **Tuning intuition:** launcher speed 3 vs missile range 6 vs the 14 rows between the two launcher lines gives ~2 rounds of maneuver before first exchanges are possible, and the drone reaches the enemy home zone on round 2 — first blood around round 3 without any grace-period rule. The pre-pivot grace rules (no launches round 1, leader untargetable rounds 1–3) were **cut as redundant: starting geometry enforces them.** If spawn positions or ranges change, re-check that this stays true.
 
@@ -245,6 +266,8 @@ One geometric primitive powers both missiles and drone flight: **`hexLine(a, b)`
 
 **Missile flight:** the missile traverses `hexLine(origin, target)`, checked for interception on every hex *after* the origin, including the target hex itself.
 
+**Missiles ignore terrain entirely — in flight and in targeting.** Any hex on the map within range 6 is a legal target, mountains included, and no terrain blocks or deflects a missile in transit. This is load-bearing, not an omission: static structures may be built on mountains (§2, §12), so a targeting rule that filtered out impassable hexes would make a mountain bunker literally invulnerable and hand the defender a guaranteed win. Blind fire at a mountain hex is as legal as blind fire at open plains.
+
 **Interception mechanics (phase 2):**
 
 - A base covers its hex + 6 neighbors and may destroy **at most 1 enemy missile per round**. Friendly missiles and the owner's own drone are never engaged.
@@ -294,7 +317,7 @@ These are public events (§6). They report that something happened at a hex; the
 - **`IMPACT`** — emitted for every missile arrival, including hits on empty ground, precisely so its presence leaks nothing about occupancy.
 - **`MISSILE_INTERCEPTED`** — tells you an enemy base covers that hex, i.e. the base is one of 7 candidates. That is an inference you draw, not a reveal; the base is not marked until recon actually sees it.
 - **`DRONE_DOWNED`** — same shape of clue, same 7 candidates.
-- **`MOVE_FAILED`** — you learn only that *your own* move was blocked, with no hex, no blocker, and no reason (§9).
+- **`MOVE_FAILED`** — you learn only that *your own* move was blocked, with no hex, no blocker, and no reason (§9). This is the closest thing to a third detector, and it is why terrain matters to concealment: a plains hex can be probed by driving a launcher at it, and a **mountain hex cannot be probed at all**, because the order is rejected at entry from public terrain data before it ever reaches resolution (§12).
 - **Drones are never detectable at all.** No swath and no event ever reveals an enemy drone to you; drones do not reveal each other (§2). The only thing that touches an enemy drone is interceptor coverage, which kills it.
 
 ### The event log is permanent history, not live intel
@@ -334,9 +357,11 @@ An earlier draft kept permanent "last seen (hex, round N)" ghost markers. They w
 
 **Secret placement (SETUP phase, hotseat: P1 places while P2 looks away, then swap):** each player places, in order:
 
-1. **Bunker** — any passable, non-spawn hex in their home zone (P1 rows 13–18 in the south / P2 rows 0–5 in the north).
+1. **Bunker** — any non-spawn hex in their home zone (P1 rows 13–18 in the south / P2 rows 0–5 in the north), on **plains or mountain**.
 2. **Decoy bunker** — the same constraints as the bunker, on a different hex. No minimum or maximum distance from the real bunker (see the design note below).
-3. **2 Interceptor bases** — any passable, non-spawn, unoccupied hexes in their home zone, each **at least 3 hexes from both their own bunker and their own decoy** (so both sites and their neighbors sit outside all friendly coverage — no point-blank shield; defending approach *lanes* at a distance is legal and is the intended skill).
+3. **2 Interceptor bases** — any non-spawn, unoccupied hex in their home zone, on **plains or mountain**, each **at least 3 hexes from both their own bunker and their own decoy** (so both sites and their neighbors sit outside all friendly coverage — no point-blank shield; defending approach *lanes* at a distance is legal and is the intended skill).
+
+**All three placed assets may be built on any terrain** (`RULES.placementTerrain` in `src/sim/defs.ts`). The rule is "mobile things need plains, built things do not" — nothing static is driven into position, so nothing static cares whether a launcher could get there. Note that "passable" is therefore **not** the test for placement: `TerrainDef.groundPassable` answers only "may a ground unit *enter* this hex", and placement validation must read `RULES.placementTerrain` instead. The field is named `groundPassable` rather than `passable` specifically so that reaching for the wrong one looks wrong.
 
 Each step validates against the rules above, and the UI must offer only legal hexes. A 6-row × 16-column home zone (96 hexes) is far larger than two radius-2 exclusion zones, so no bunker/decoy pair can box a player out of legal base positions — but placement validation is still a pure function in `src/sim/`, tested, and the single authority both the UI and the engine call.
 
@@ -346,12 +371,15 @@ Each step validates against the rules above, and the UI must offer only legal he
 
 **Every rule that applies to the bunker applies identically to the decoy, with exactly one exception: hit points.** Same home zone, same terrain and spawn constraints, same interceptor exclusion, same permanent-detection behaviour (§11), same appearance in enemy intel and events.
 
+The terrain rule is the newest test of this and the easiest to get wrong: `RULES.placementTerrain.bunker` and `RULES.placementTerrain.decoy` must stay identical lists, because if the decoy could not be built where the bunker could, every site found on that terrain would be provably real. `defs.test.ts` asserts the two are equal, so a balance pass cannot break it by editing one row and forgetting the other.
+
 This is not stylistic. Any asymmetry becomes a *rules-derived tell* — a way for the attacker to identify the real bunker by reasoning about the rulebook instead of by spending a missile. If the exclusion rule covered only the real bunker, then "the site inside interceptor coverage" would be provably the fake, and the decoy would be worthless the instant both were spotted. When adding any future rule that mentions the bunker, ask whether it must also mention the decoy; the default answer is yes.
 
 **How the bluff resolves (intended, do not "fix"):** the attacker finds a site, fires one missile, and reads the result. A public `UNIT_DESTROYED` means it was the decoy. Silence — no destruction, no dead hand — means the missile hit the real bunker for 1 of its 2, because only the real bunker can absorb a hit (§6). So one missile buys certainty. The cost of that missile is the real price: a launcher that spends its round firing cannot move, its origin hex becomes public, and it must be within range 6 of the target — deep in enemy ground. Testing a decoy is cheap in munitions and expensive in exposure, which is the trade the whole game is built on.
 
 **Design notes:**
 
+- *A mountain site trades one kind of safety for another.* Because no launcher can be ordered onto a mountain, a site there can never be found by ground probing — the trick where you drive a launcher at a suspected hex and read the failed move (§9) simply cannot be aimed at it. But terrain is public, so mountains in a home zone are a short, publicly-known list of candidate hexes, and an opponent who suspects you favour them can point recon straight at them. Neither choice dominates, which is the point: it is a read on your opponent, not a solved optimum. **Both the bunker and the decoy get this option** — if only one did, the terrain itself would identify the real one for free (see the principle below).
 - *Placing the two sites far apart is usually stronger.* One drone swath is 3 hexes wide, so adjacent sites are found together, and destroying the fake immediately hands the attacker the real one's location. Sites in different corners must each be found separately. This is left to player judgment rather than enforced by a minimum-distance rule — fewer rules, and the incentive already points the right way.
 - *Finding interceptor bases narrows the bunker hunt.* Because bases must sit ≥3 from both sites, an attacker who spots both bases can rule out every hex within 2 of either. Recon that finds defenses is therefore also recon that finds the leader — a genuine second use for drone intel.
 - *Tuning lever if the bluff proves too cheap in playtest:* raise the decoy to 2 HP. It then becomes fully symmetric with the real bunker and is distinguishable only by the absence of dead hand when it dies — a longer, more expensive bluff. V1 ships at 1 HP deliberately, for a faster resolution.
@@ -365,5 +393,7 @@ There is no placement of launchers or the drone; asymmetric openings come from s
 For the record, the pivot resolved every open design question from the pre-pivot spec: damage model (hits-based: 1/1/2, no variance), non-leader HP (1), `MISSILE_DEFS` (moot — one missile type, stats in RULES), event-log visibility (§6 table), starting positions (§7/§12), starting defense counts (2 bases), and intra-round move-vs-impact ordering (§3: strikes first). Newly accepted rough edges, on purpose: the §10 unit-id tiebreak is arbitrary-but-deterministic, and all §7 numbers are untested first drafts.
 
 **Amendment, same day — decoy bunker added to V1.** One decoy per player, 1 HP, placed secretly alongside the real bunker and rule-identical to it in every observable way (§12). It was in the original pre-pivot vision, deferred to V2, and is now back in V1 scope because the pivot's simplifications left room for it and it restores the bluff layer to the leader hunt. Its cost to build is small: one unit kind, one placement step, one mask in the visibility filter. The V1 asset count per player goes 7 → 8.
+
+**Amendment, 2026-08-11 — terrain simplified to two types; static structures may be built on mountains.** Urban terrain is **cut**: it was "visual flavour only in V1", carried no rule, and cost a case in every terrain switch (its V2 regime-score role is noted in `docs/v2-backlog.md`). Mountains go from ~14% scattered singletons to **15% grown as ranges**, which makes them terrain that shapes an advance rather than decoration — and because ridges, unlike noise, can wall a board off, `generateMap` now validates every map it produces (coverage band, spawn connectivity, approach cost) and re-rolls rather than shipping or patching one (§7). The placement rule changed with it: **bunker, decoy and interceptor base may be built on mountains**, launchers and drones still spawn and move on plains only. "Mobile things need plains, built things do not." The consequence worth naming is that a mountain site is immune to ground probing (§11) but sits in a small, publicly-known set of candidate hexes — and that the option must belong to the bunker and the decoy identically, or terrain becomes a rules-derived tell (§12).
 
 **Amendment, 2026-08-11 — detection rules clarified, "fog of war" retired as a term.** §11 is now a flat four-rule detection system (map public; only recon and launch detection reveal enemy assets; mobile sightings last one round, static sightings are permanent; nothing distinguishes bunker from decoy), and the old permanent "last seen (hex, round N)" launcher ghost markers are **cut** — a detected launch site expires after one order phase because the launcher can relocate. The permanent record moves to the event log, which keeps every detected launch for the whole match (§6). Architecture layer 2 is now called the **visibility filter** throughout; "fog"/"fog of war" is no longer used anywhere in the design.

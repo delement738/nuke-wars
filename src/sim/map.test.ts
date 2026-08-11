@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_SPAWN_HEXES, RULES, SPAWNS } from './defs';
-import { distance, offsetToAxial } from './hex';
-import { generateMap, rotate180, tileAt } from './map';
+import { ALL_SPAWN_HEXES, RULES, SPAWNS, TERRAIN_GEN } from './defs';
+import {
+  axialToOffset,
+  distance,
+  hexKey,
+  hexesInRange,
+  neighbors,
+  offsetToAxial,
+} from './hex';
+import { generateMap, groundCostsFrom, rotate180, tileAt } from './map';
 
 const WIDTH = 16;
 const HEIGHT = 19;
@@ -156,31 +163,113 @@ describe('generateMap — symmetry', () => {
     }
   });
 
-  it.each(SEEDS)('gives both players equal urban hexes, all in home zones, at seed %i', (seed) => {
-    // Urban is placed in the northern home zone and rotated south, so the two
-    // players always hold the SAME number — that equality is the property
-    // worth pinning, not the literal 6. Up to 6 are placed; the spawn-hex
-    // plains guarantee runs afterwards and can convert any that landed on one
-    // of the 4 spawns inside the band, always symmetrically for both players.
-    const map = generateMap(WIDTH, HEIGHT, seed);
-    const urbanIn = (player: 'p1' | 'p2') => {
-      const zone = RULES.homeZoneRows[player];
-      return map.tiles.filter(
-        (t) => t.terrain === 'urban' && t.row >= zone.min && t.row <= zone.max,
-      ).length;
-    };
-    expect(urbanIn('p1')).toBe(urbanIn('p2'));
-    expect(urbanIn('p1')).toBeLessThanOrEqual(6);
-    expect(urbanIn('p1')).toBeGreaterThan(0);
-    // No urban strays outside the two home zones.
-    expect(map.tiles.filter((t) => t.terrain === 'urban')).toHaveLength(
-      urbanIn('p1') + urbanIn('p2'),
-    );
-  });
-
   it('is deterministic — the same seed produces an identical map', () => {
+    // Still true despite generateMap's re-roll loop: the retry seeds derive
+    // from the caller's seed, so the whole search is a pure function of it.
     expect(generateMap(WIDTH, HEIGHT, 42).tiles).toEqual(
       generateMap(WIDTH, HEIGHT, 42).tiles,
     );
+  });
+});
+
+describe('generateMap — mountains (spec §2, §7)', () => {
+  it.each(SEEDS)('covers a share of the board inside the tuned band at seed %i', (seed) => {
+    const map = generateMap(WIDTH, HEIGHT, seed);
+    const fraction =
+      map.tiles.filter((t) => t.terrain === 'mountain').length /
+      map.tiles.length;
+    expect(fraction).toBeGreaterThanOrEqual(TERRAIN_GEN.mountainFractionBand.min);
+    expect(fraction).toBeLessThanOrEqual(TERRAIN_GEN.mountainFractionBand.max);
+  });
+
+  it.each(SEEDS)('grows mountains in ranges, not as noise, at seed %i', (seed) => {
+    // The property that separates "ridges" from "salt and pepper": a mountain
+    // hex should almost always touch another one. Scattered singletons at the
+    // same percentage would be speed bumps rather than terrain that shapes an
+    // advance, and nothing else in the generator would notice the difference.
+    const map = generateMap(WIDTH, HEIGHT, seed);
+    const mountains = map.tiles.filter((t) => t.terrain === 'mountain');
+
+    const lone = mountains.filter(
+      (tile) =>
+        !neighbors(offsetToAxial(tile)).some(
+          (n) => tileAt(map, axialToOffset(n))?.terrain === 'mountain',
+        ),
+    );
+
+    expect(
+      lone.map((t) => `${t.col},${t.row}`),
+      'every mountain must touch another — lone hexes are noise, not ranges',
+    ).toEqual([]);
+  });
+
+  it.each(SEEDS)('keeps every spawn and its ring clear at seed %i', (seed) => {
+    // Forcing the spawn hex itself to plains is not enough once mountains
+    // cluster — a plains hex ringed by a ridge is a launcher that cannot move
+    // for the whole match.
+    const map = generateMap(WIDTH, HEIGHT, seed);
+    for (const spawn of ALL_SPAWN_HEXES) {
+      for (const hex of hexesInRange(
+        offsetToAxial(spawn),
+        TERRAIN_GEN.spawnClearanceRadius,
+      )) {
+        // Ring hexes may fall off the board edge; those simply don't exist.
+        const tile = tileAt(map, axialToOffset(hex));
+        if (tile) expect(tile.terrain).toBe('plains');
+      }
+    }
+  });
+
+  it.each(SEEDS)('leaves every spawn mutually reachable at seed %i', (seed) => {
+    // A ridge across the board, or a launcher walled into a pocket, is the
+    // failure mode clustering introduces and scattering never could.
+    const map = generateMap(WIDTH, HEIGHT, seed);
+    const reachable = groundCostsFrom(map, ALL_SPAWN_HEXES[0]);
+    for (const spawn of ALL_SPAWN_HEXES) {
+      expect(
+        reachable.has(hexKey(offsetToAxial(spawn))),
+        `spawn ${spawn.col},${spawn.row} is cut off from the rest of the board`,
+      ).toBe(true);
+    }
+  });
+
+  it.each(SEEDS)('keeps the §7 approach premise intact at seed %i', (seed) => {
+    // §7 is tuned on a launcher closing to firing range in ~3 rounds. Detours
+    // around ridges lengthen that, and enough of them turn matches into
+    // Armistice draws — so the generator re-rolls rather than ship one.
+    const map = generateMap(WIDTH, HEIGHT, seed);
+
+    for (const player of ['p1', 'p2'] as const) {
+      const enemy = player === 'p1' ? 'p2' : 'p1';
+
+      const firingPositions = new Set<string>();
+      for (const enemySpawn of SPAWNS[enemy].launchers) {
+        for (const hex of hexesInRange(
+          offsetToAxial(enemySpawn),
+          RULES.missileRange,
+        )) {
+          firingPositions.add(hexKey(hex));
+        }
+      }
+
+      for (const spawn of SPAWNS[player].launchers) {
+        const costs = groundCostsFrom(map, spawn);
+        let closest = Infinity;
+        for (const [key, cost] of costs) {
+          if (firingPositions.has(key) && cost < closest) closest = cost;
+        }
+        expect(
+          closest,
+          `${player} launcher at ${spawn.col},${spawn.row} needs ${closest} to reach firing range`,
+        ).toBeLessThanOrEqual(TERRAIN_GEN.maxApproachCost);
+      }
+    }
+  });
+
+  it('refuses dimensions the spawn table does not fit on', () => {
+    // Without this the spawns fall off the edge, every attempt fails the
+    // connectivity check, and generateMap reports "no playable map" — a
+    // thoroughly misleading way to say "there is no spawn table for that size".
+    expect(() => generateMap(8, 9)).toThrow(/SPAWNS/);
   });
 });

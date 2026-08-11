@@ -24,9 +24,26 @@ below. Do not implement any of them in V1.
 | Grace rules (no launches round 1; leader untargetable rounds 1–3) | Redundant — starting geometry enforces the same pacing (spec §7 note) |
 | Player-drawn drone waypoint paths | Straight-line flight via `hexLine` (V1 keeps order UI trivial) |
 | Two-stage commit (recon window, then strike window) | Single simultaneous commit; drone intel pays off next round |
+| **Urban terrain** (cut later the same day) | Two terrains only: plains and mountain. Urban was "visual flavour only in V1" and carried no rule — see the note below |
 
 The "damage variance," "chance model," and radar rows in the original vision
 tables below should be read through this lens: V1 shipped without them.
+
+### Urban terrain is gone from the code — anything below that depends on it must reintroduce it
+
+`Terrain` in `src/sim/map.ts` is now exactly `'plains' | 'mountain'`. Two items
+below assume a third type and cannot be built without adding it back first:
+
+- **Outcome 5, "Attrition Adjudication"** scores surviving regime % from urban
+  hexes. With no urban hexes there is no regime score, so V1 breaks the round
+  cap with a flat Armistice draw instead (spec §4).
+- **"Urban hexes per player: 6"** in the numbers table below.
+
+V1's mountains also changed shape at the same time: 15% of the board grown as
+*ranges* rather than scattered singletons, and static structures (bunker, decoy,
+interceptor base) may be built on them. Anything here that assumes mountains are
+purely an obstacle — the radar line-of-sight rows especially — should be
+re-read with that in mind.
 
 ### Promoted back INTO V1 (same day)
 

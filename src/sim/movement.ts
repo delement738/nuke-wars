@@ -64,8 +64,11 @@ function occupiedHexes(state: GameState, mover: Unit): Set<string> {
  * and true travel cost are different numbers.
  *
  * Costs come from TERRAIN_DEFS.moveCost rather than being assumed to be 1, so
- * making urban tiles cost 2 during a balance pass is a data edit here with no
- * change to this algorithm.
+ * adding a rough terrain that costs 2 during a balance pass would be a data
+ * edit in defs.ts with no change to this algorithm. In V1 there are only two
+ * terrains and every legal step costs 1, so this currently behaves as a plain
+ * breadth-first search — that is a property of the data, not an assumption
+ * baked into the code.
  */
 export function reachableHexes(
   state: GameState,
@@ -105,7 +108,7 @@ export function reachableHexes(
       if (!tile) continue; // off the edge of the map
 
       const terrain = TERRAIN_DEFS[tile.terrain];
-      if (!terrain.passable) continue; // mountain
+      if (!terrain.groundPassable) continue; // mountain
 
       const cost = current.cost + terrain.moveCost;
       if (cost > budget) continue;
@@ -161,7 +164,7 @@ export function validateMove(
 
   const tile = tileAt(state.map, axialToOffset(order.destination));
   if (!tile) return { legal: false, reason: 'OFF_MAP' };
-  if (!TERRAIN_DEFS[tile.terrain].passable) {
+  if (!TERRAIN_DEFS[tile.terrain].groundPassable) {
     return { legal: false, reason: 'IMPASSABLE_TERRAIN' };
   }
   if (occupiedHexes(state, unit).has(destination)) {
