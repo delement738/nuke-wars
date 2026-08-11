@@ -143,14 +143,17 @@ Victory conditions are evaluated only after a full resolution completes — neve
 | Event | Visible to |
 |---|---|
 | `LAUNCH_DETECTED` (origin, target) | **Both** — launches are loud, and detection is automatic and unsuppressable. The origin marks an enemy launcher on the defender's map for **one round** (§11); the log entry itself is permanent |
-| `MISSILE_INTERCEPTED` (hex) | **Both** — probing lanes with missiles is legitimate, risky recon |
-| `IMPACT` (hex only — **never** says what it hit) | **Both.** Emitted for **every** missile that reaches its target hex, including hits on empty ground. This is load-bearing: if `IMPACT` only fired when something was struck, its mere presence would reveal that the hex was occupied, and blind-fire probing would find bunkers and bases for free — defeating both the `BUNKER_HIT` secrecy rule below and "only drones find bunkers" |
+| `MISSILE_INTERCEPTED` (missile id + hex) | **Both** — probing lanes with missiles is legitimate, risky recon. Names no interceptor base: the attacker learns only that *some* base covers that hex, i.e. one of 7 candidates |
+| `IMPACT` (missile id + hex — **never** names a victim) | **Both.** Emitted for **every** missile that reaches its target hex, including hits on empty ground. This is load-bearing: if `IMPACT` only fired when something was struck, its mere presence would reveal that the hex was occupied, and blind-fire probing would find bunkers and bases for free — defeating both the `BUNKER_HIT` secrecy rule below and "only drones find bunkers" |
 | `UNIT_DESTROYED` (unitId, kind, hex) | **Both** — kills are observable. Reports a destroyed decoy **truthfully as a decoy**: masking it as "bunker" would fool nobody, since the absence of dead hand gives it away in the same instant, and a lie the engine has to maintain is a bug waiting to happen |
 | `BUNKER_HIT` (non-lethal bunker damage) | **Owner only.** To the attacker, a non-lethal bunker hit is indistinguishable from hitting empty ground — this preserves "only drones find bunkers" against blind-fire probing. Decoys never emit it (they die to the hit that would cause it), so *silence after a hit* is exactly what identifies the real bunker |
 | `DRONE_DOWNED` (hex) | **Both** (the defender knows their own base locations, so this leaks nothing to them; the owner learns only the death hex — the killing base is somewhere within 1, i.e. 7 candidates) |
 | `DRONE_MOVED`, `ASSET_SPOTTED` (recon results) | **Spotting player only.** A spotted decoy is reported with `kind: 'bunker'` — the visibility filter applies the mask, so `resolve()` never lies and the sim stays honest internally (§11) |
+| `DRONE_RESPAWNED` (unitId, hex) | **Owner only.** The enemy learning your recon is back online would be free intel they did nothing to earn. The spawn hex is public knowledge anyway (§12) — what is private is the *timing* |
 | `UNIT_MOVED`, `MOVE_FAILED` | **Owner only** (`MOVE_FAILED` carries only the mover's unit id, §9) |
 | `DEAD_HAND_TRIGGERED`, `GAME_OVER` | **Both** |
+
+**Missile ids carry no information.** `LAUNCH_DETECTED`, `MISSILE_INTERCEPTED`, and `IMPACT` share a per-round missile id so the client can tell which missile an event belongs to and animate from the log rather than guess. It is derived from public data only — the round number plus the origin hex, which `LAUNCH_DETECTED` already publishes to both players — so it leaks nothing about the firing launcher's identity. A launcher fires at most one missile per round and no two launchers share a hex, so it is unique. Never derive it from a unit id: that would hand the enemy a trackable identity, which §11 deliberately withholds.
 
 **Data-table rule:** unit/terrain stats and rule numbers live in plain data objects keyed by string IDs in `src/sim/defs.ts`, never hardcoded in logic. Balance patches = edited numbers, a one-file diff.
 
@@ -217,6 +220,8 @@ Ground movement (launchers only — the drone is exempt, §11) resolves in phase
 | Unit ordered into a hex another unit is vacating this round | **Illegal — no chaining or following.** | The hex is occupied at phase start. Permitting it would make resolution order-dependent. |
 | Move blocked by an undetected enemy unit | **The order fails entirely; the unit holds position. No partial advance.** | Partial movement would require path reconstruction plus tiebreaks between equal-cost routes. More importantly, a failed order is part of what makes recon valuable: advancing into unscouted ground risks wasting that launcher's entire round. |
 | Move blocked by terrain or a unit the player can currently see | **Rejected at order entry.** | The UI validates against the visibility-filtered state (§11), so these never reach resolution. Note a launcher contact that has expired is *not* visible — you can legally order a move into a hex where you saw a launcher two rounds ago, and it can fail. |
+
+**MOVE is a launcher-only order.** The drone moves 6 hexes a round but only by FLY, along a straight `hexLine` that ignores terrain and units (§11) — so a MOVE order naming the drone is a category error, rejected at validation with its own reason (`AIR_UNIT`) rather than being quietly treated as immobile or, worse, run through the ground-movement flood fill.
 
 **Occupancy:** a living ground unit (launcher, interceptor base, bunker, **decoy**) blocks both *passage through* and *landing on* its hex, friendly or enemy. Destroyed units block nothing. The drone neither blocks nor is blocked. Ordering a unit to the hex it already occupies is illegal, not a no-op — it would silently waste that unit's round.
 

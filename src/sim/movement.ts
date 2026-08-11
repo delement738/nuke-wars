@@ -1,8 +1,9 @@
 // PURE SIMULATION CODE — no React or Pixi imports allowed in src/sim/, ever.
 //
-// Launcher movement: reachability and order validation (spec §6–§8, build-order
-// step 2). This module answers one question — "may this unit legally end its
-// move on this hex?" — and nothing else.
+// Launcher movement: reachability and order validation (spec §9; build-order
+// step 4 in the post-pivot numbering — this file predates it and originally
+// cited the old step 2). This module answers one question — "may this unit
+// legally end its move on this hex?" — and nothing else.
 //
 // It deliberately does NOT apply moves. Mutating state, emitting UNIT_MOVED
 // events, and adjudicating simultaneous-move conflicts (spec §9) belong to
@@ -19,7 +20,8 @@ export type MoveIllegalReason =
   | 'UNKNOWN_UNIT' // no unit in the game carries that id
   | 'NOT_YOUR_UNIT' // belongs to the other player
   | 'UNIT_DESTROYED' // already dead; corpses don't take orders
-  | 'IMMOBILE_UNIT' // movement === 0 (radar, interceptor, leader)
+  | 'IMMOBILE_UNIT' // movement === 0 (interceptor, bunker, decoy)
+  | 'AIR_UNIT' // the drone flies (FLY order, spec §11) — it never takes MOVE
   | 'SAME_HEX' // destination is where it already stands
   | 'OFF_MAP' // destination isn't a real tile
   | 'IMPASSABLE_TERRAIN' // destination is a mountain
@@ -72,13 +74,19 @@ export function reachableHexes(
   const start: ReachableHex = { hex: unit.position, cost: 0 };
   const best = new Map<string, ReachableHex>([[hexKey(unit.position), start]]);
 
+  // The drone's UNIT_DEFS movement is a straight-line FLIGHT range, not a
+  // ground budget — it ignores terrain and units entirely (spec §11), so
+  // running it through this flood fill would produce a confidently wrong
+  // answer. Ground movement is launchers only (spec §9).
+  if (unit.kind !== 'launcher') return best;
+
   const budget = UNIT_DEFS[unit.kind].movement;
   if (budget <= 0) return best;
 
   const blocked = occupiedHexes(state, unit);
 
   // Cheapest-first frontier. A real priority queue would be overkill: the map
-  // is ~285 tiles and budgets are tiny (2), so the frontier never holds more
+  // is ~285 tiles and budgets are tiny (3), so the frontier never holds more
   // than a handful of entries and a linear scan for the minimum is faster.
   const frontier: ReachableHex[] = [start];
 
@@ -139,6 +147,9 @@ export function validateMove(
   if (!unit) return { legal: false, reason: 'UNKNOWN_UNIT' };
   if (unit.owner !== playerId) return { legal: false, reason: 'NOT_YOUR_UNIT' };
   if (unit.destroyed) return { legal: false, reason: 'UNIT_DESTROYED' };
+  // Checked before the immobility test so the drone gets its own honest
+  // reason: it is not immobile, it simply moves by FLY, never by MOVE (§11).
+  if (unit.kind === 'drone') return { legal: false, reason: 'AIR_UNIT' };
   if (UNIT_DEFS[unit.kind].movement <= 0) {
     return { legal: false, reason: 'IMMOBILE_UNIT' };
   }

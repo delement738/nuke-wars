@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { UNIT_DEFS } from './defs';
 import {
   axialToOffset,
   distance,
@@ -39,7 +40,14 @@ function makeUnit(
   kind: UnitKind,
   position: Hex,
 ): Unit {
-  return { id, owner, kind, position, hp: 1, maxHp: 1, destroyed: false };
+  return {
+    id,
+    owner,
+    kind,
+    position,
+    hp: UNIT_DEFS[kind].hp,
+    destroyed: false,
+  };
 }
 
 function makeState(map: MapData, units: Unit[]): GameState {
@@ -48,10 +56,28 @@ function makeState(map: MapData, units: Unit[]): GameState {
     phase: 'ORDER_PHASE',
     map,
     units,
-    missileStock: { p1: { SRM: 6, MRM: 4 }, p2: { SRM: 6, MRM: 4 } },
-    reconSweepsRemaining: { p1: 5, p2: 5 },
+    intel: {
+      p1: { staticReveals: [], contacts: [] },
+      p2: { staticReveals: [], contacts: [] },
+    },
+    droneRespawnIn: { p1: 0, p2: 0 },
+    deadHandFor: null,
     outcome: null,
   };
+}
+
+/**
+ * The launcher's budget, read from the balance table rather than hardcoded.
+ *
+ * Every geometry assertion below is written in terms of this, so tuning
+ * launcher movement in defs.ts stays the one-file diff CLAUDE.md's data-table
+ * rule promises — it must not silently invalidate the movement tests.
+ */
+const BUDGET = UNIT_DEFS.launcher.movement;
+
+/** Hexes within n steps of a hex on open ground: the standard 1 + 3n(n+1). */
+function openReach(n: number): number {
+  return 1 + 3 * n * (n + 1);
 }
 
 function move(unitId: string, destination: Hex): MoveOrder {
@@ -167,14 +193,13 @@ describe('tileAt', () => {
 // --- reachability -----------------------------------------------------------
 
 describe('reachableHexes', () => {
-  it('covers exactly the 19 hexes within 2 steps on open plains', () => {
-    // 1 + 3n(n+1) for n=2 — the launcher's full budget with nothing in the way.
+  it('covers exactly the hexes within its movement budget on open plains', () => {
     const unit = makeUnit('u1', 'p1', 'launcher', CENTER);
     const reached = reachableHexes(openField([unit]), unit);
-    expect(reached.size).toBe(19);
+    expect(reached.size).toBe(openReach(BUDGET));
   });
 
-  it('reports cost 0 for its own hex, 1 for adjacent, 2 for two steps', () => {
+  it("reports every hex's cost as its true distance from the start", () => {
     const unit = makeUnit('u1', 'p1', 'launcher', CENTER);
     const reached = reachableHexes(openField([unit]), unit);
     for (const [key, entry] of reached) {
@@ -184,10 +209,20 @@ describe('reachableHexes', () => {
   });
 
   it('returns only the starting hex for an immobile unit', () => {
-    const radar = makeUnit('r1', 'p1', 'radar', CENTER);
-    const reached = reachableHexes(openField([radar]), radar);
+    const base = makeUnit('b1', 'p1', 'interceptor', CENTER);
+    const reached = reachableHexes(openField([base]), base);
     expect(reached.size).toBe(1);
     expect(reached.get(hexKey(CENTER))?.cost).toBe(0);
+  });
+
+  it('returns only the starting hex for the drone, despite its move 6', () => {
+    // The drone's UNIT_DEFS movement is a straight-line FLIGHT range (spec
+    // §11), not a ground budget. Ground movement is launchers only (§9), so
+    // this fill must refuse it rather than confidently flood 6 hexes out.
+    expect(UNIT_DEFS.drone.movement).toBeGreaterThan(0);
+    const drone = makeUnit('d1', 'p1', 'drone', CENTER);
+    const reached = reachableHexes(openField([drone]), drone);
+    expect(reached.size).toBe(1);
   });
 
   it('is trapped by a ring of mountains', () => {
@@ -217,18 +252,21 @@ describe('reachableHexes', () => {
       return dead;
     });
     const reached = reachableHexes(makeState(map, [unit, ...wall]), unit);
-    expect(reached.size).toBe(19);
+    expect(reached.size).toBe(openReach(BUDGET));
   });
 
-  it('cannot cut through a mountain even when the target is 2 steps away', () => {
-    // THE case that proves distance() alone is the wrong check. The only hex
-    // adjacent to both CENTER and `target` is `chokepoint`; block it and the
-    // target needs 4 steps, well past the launcher's budget of 2 — even though
-    // straight-line distance still says 2.
+  it('cannot cut through a mountain that blocks the only shortest path', () => {
+    // THE case that proves distance() alone is the wrong check.
+    //
+    // A target straight out along the +q axis has exactly ONE shortest path —
+    // every step in the same direction — so blocking its first hex forces a
+    // detour costing BUDGET + 1. That holds for any budget, which is why this
+    // test survives a balance change: straight-line distance still says the
+    // target is exactly a full move away, and it is genuinely unreachable.
     const map = makeMap(21, 21);
-    const target: Hex = { q: CENTER.q + 2, r: CENTER.r };
+    const target: Hex = { q: CENTER.q + BUDGET, r: CENTER.r };
     const chokepoint: Hex = { q: CENTER.q + 1, r: CENTER.r };
-    expect(distance(CENTER, target)).toBe(2);
+    expect(distance(CENTER, target)).toBe(BUDGET);
 
     setTerrain(map, chokepoint, 'mountain');
     const unit = makeUnit('u1', 'p1', 'launcher', CENTER);
@@ -236,7 +274,11 @@ describe('reachableHexes', () => {
 
     expect(reached.has(hexKey(target))).toBe(false);
     expect(reached.has(hexKey(chokepoint))).toBe(false);
-    expect(reached.size).toBe(19 - 2); // the mountain and the hex behind it
+    // ...while a hex the same distance away off the blocked axis still is
+    // reachable, so this is the fill respecting cost, not giving up early.
+    const detour: Hex = { q: CENTER.q + BUDGET, r: CENTER.r - 1 };
+    expect(distance(CENTER, detour)).toBe(BUDGET);
+    expect(reached.has(hexKey(detour))).toBe(true);
   });
 
   it('is clipped by the edge of the map', () => {
@@ -244,7 +286,7 @@ describe('reachableHexes', () => {
     const corner = offsetToAxial({ col: 0, row: 0 });
     const unit = makeUnit('u1', 'p1', 'launcher', corner);
     const reached = reachableHexes(makeState(map, [unit]), unit);
-    expect(reached.size).toBeLessThan(19);
+    expect(reached.size).toBeLessThan(openReach(BUDGET));
     for (const { hex } of reached.values()) {
       expect(tileAt(map, axialToOffset(hex))).toBeDefined();
     }
@@ -261,11 +303,11 @@ describe('validateMove — legal moves', () => {
     expect(result).toEqual({ legal: true, cost: 1 });
   });
 
-  it('allows a full two-step move', () => {
+  it('allows a move that spends the entire movement budget', () => {
     const unit = makeUnit('u1', 'p1', 'launcher', CENTER);
-    const target: Hex = { q: CENTER.q + 2, r: CENTER.r };
+    const target: Hex = { q: CENTER.q + BUDGET, r: CENTER.r };
     const result = validateMove(openField([unit]), 'p1', move('u1', target));
-    expect(result).toEqual({ legal: true, cost: 2 });
+    expect(result).toEqual({ legal: true, cost: BUDGET });
   });
 
   it('allows moving onto a hex a destroyed unit occupies', () => {
@@ -333,7 +375,9 @@ describe('validateMove — illegal moves', () => {
     expect(result).toEqual({ legal: false, reason: 'UNIT_DESTROYED' });
   });
 
-  it.each(['radar', 'interceptor', 'leader'] as const)(
+  // All three static kinds, including the decoy — which must block and behave
+  // exactly like the real bunker in every rule (spec §12).
+  it.each(['interceptor', 'bunker', 'decoy'] as const)(
     'IMMOBILE_UNIT for %s',
     (kind) => {
       const unit = makeUnit('u1', 'p1', kind, CENTER);
@@ -345,6 +389,19 @@ describe('validateMove — illegal moves', () => {
       expect(result).toEqual({ legal: false, reason: 'IMMOBILE_UNIT' });
     },
   );
+
+  it('AIR_UNIT when a MOVE order names the drone', () => {
+    // The drone is not immobile — it moves 6 a round — but only by FLY along a
+    // straight hexLine (spec §11). A MOVE order for it is a category error, so
+    // it gets its own reason rather than the misleading IMMOBILE_UNIT.
+    const drone = makeUnit('d1', 'p1', 'drone', CENTER);
+    const result = validateMove(
+      openField([drone]),
+      'p1',
+      move('d1', { q: CENTER.q + 1, r: CENTER.r }),
+    );
+    expect(result).toEqual({ legal: false, reason: 'AIR_UNIT' });
+  });
 
   it('SAME_HEX when the destination is where it already stands', () => {
     const unit = makeUnit('u1', 'p1', 'launcher', CENTER);
@@ -388,22 +445,22 @@ describe('validateMove — illegal moves', () => {
     },
   );
 
-  it('OUT_OF_RANGE for an open-plains hex 3 steps away', () => {
+  it('OUT_OF_RANGE for an open-plains hex one step past the budget', () => {
     const unit = makeUnit('u1', 'p1', 'launcher', CENTER);
-    const target: Hex = { q: CENTER.q + 3, r: CENTER.r };
-    expect(distance(CENTER, target)).toBe(3);
+    const target: Hex = { q: CENTER.q + BUDGET + 1, r: CENTER.r };
+    expect(distance(CENTER, target)).toBe(BUDGET + 1);
     const result = validateMove(openField([unit]), 'p1', move('u1', target));
     expect(result).toEqual({ legal: false, reason: 'OUT_OF_RANGE' });
   });
 
-  it('OUT_OF_RANGE when a mountain walls off a hex only 2 steps away', () => {
+  it('OUT_OF_RANGE when a mountain walls off a hex within straight-line range', () => {
     // Same scenario as the reachability test, asserted through the public API:
     // the order looks legal by straight-line distance and is not.
     const map = makeMap(21, 21);
-    const target: Hex = { q: CENTER.q + 2, r: CENTER.r };
+    const target: Hex = { q: CENTER.q + BUDGET, r: CENTER.r };
     setTerrain(map, { q: CENTER.q + 1, r: CENTER.r }, 'mountain');
     const unit = makeUnit('u1', 'p1', 'launcher', CENTER);
-    expect(distance(CENTER, target)).toBe(2);
+    expect(distance(CENTER, target)).toBe(BUDGET);
     expect(validateMove(makeState(map, [unit]), 'p1', move('u1', target))).toEqual({
       legal: false,
       reason: 'OUT_OF_RANGE',
