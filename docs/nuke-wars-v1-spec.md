@@ -156,6 +156,14 @@ Movement is simultaneous, so orders can conflict in ways a turn-based game never
 
 **Occupancy:** a living unit blocks both *passage through* and *landing on* its hex, friendly or enemy. Destroyed units block nothing. Ordering a unit to the hex it already occupies is illegal, not a no-op — it would silently waste one of the 4 orders.
 
+**One MOVE order per unit per round.** A player may not spend two of their four orders moving the same launcher twice; this is what makes §7's "Launcher movement: 2 hexes/round" literally true. The cap is a balance lever, not an invariant — it lives in `RULES.moveOrdersPerUnit` in `src/sim/defs.ts` and can be raised during playtesting. Raising it doubles effective mobility and weakens the "firing is a commitment" dynamic, so §7's movement-to-range ratios should be re-examined at the same time.
+
+**Reporting a failed move.** A failed or standoff move emits exactly one event, `MOVE_FAILED`, carrying only the mover's own unit id — no destination, no blocker, no reason code.
+
+The failure itself cannot be hidden: the player watches their unit sit still, and since terrain and friendly units are already visible to them, a failed move necessarily implies enemy contact. What *is* concealed is precision. Because standoffs and blocked advances emit an identical event, the player cannot distinguish "an enemy was parked there" from "an enemy raced me for that hex" — two facts with very different tactical meaning. The event carries no enemy-derived data at all, so it is leak-proof by construction rather than by policy.
+
+Surface it to the player as flavour ("your advance met resistance and was repelled") without naming a hex or a unit.
+
 **Information leak (intentional):** a player whose move fails can see their unit didn't move, and since visible terrain is already known to them, this effectively reveals that an enemy was there. This is accepted rather than worked around. Making contact with the enemy is genuine intelligence, and it is the defender's reward for having positioned well. Surface it as "your advance was halted" without naming the blocking unit or where it came from.
 
 **Design note:** these rules apply the core loop (**commit → dread → reveal**) to maneuver rather than missiles. You commit an advance without knowing whether it will happen.

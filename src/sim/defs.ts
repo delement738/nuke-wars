@@ -48,3 +48,28 @@ export const TERRAIN_DEFS = {
   urban: { passable: true, moveCost: 1 }, // spec §2: visual flavor only in V1
   mountain: { passable: false, moveCost: Infinity }, // spec §2: impassable
 } as const satisfies Record<Terrain, TerrainDef>;
+
+/**
+ * Round-level rules that are numbers rather than logic, kept here for the same
+ * reason as the tables above: they are balance levers, not invariants.
+ *
+ * NOTE: neither is enforced yet. Both are order-*batch* rules — they constrain
+ * a player's whole set of orders for a round, which `validateMove` (one order,
+ * in isolation) structurally cannot see. Enforcement lands with resolve().
+ */
+export const RULES = {
+  /** Orders a player may queue in one round (spec §7). */
+  ordersPerRound: 4,
+
+  /**
+   * MOVE orders a single unit may receive in one round (spec §9).
+   *
+   * At 1, spec §7's "Launcher movement: 2 hexes/round" is literally true.
+   * Raising this to 2 would let a player spend two of their four orders on one
+   * launcher for 4 hexes of travel — which is a legitimate thing to try during
+   * balance testing, but it doubles effective mobility and weakens the "firing
+   * is a commitment" dynamic, so §7's stated range ratios would need revisiting
+   * at the same time.
+   */
+  moveOrdersPerUnit: 1,
+} as const;

@@ -99,6 +99,18 @@ export interface GameState {
  */
 export type GameEvent =
   | { type: 'UNIT_MOVED'; unitId: UnitId; from: Hex; to: Hex }
+  /**
+   * A MOVE order that did not happen — the destination was blocked by a unit
+   * the player couldn't see, or two units bounced off the same hex (spec §9).
+   *
+   * Deliberately carries nothing but the mover's own id: no destination, no
+   * blocker, no reason code. That makes a standoff byte-identical to being
+   * blocked by a stationary enemy, so the player cannot tell whether someone
+   * was parked on that hex or raced them to it — two facts with very different
+   * tactical meaning. The event is leak-proof by construction rather than by
+   * policy: it contains no enemy-derived data for a future change to widen.
+   */
+  | { type: 'MOVE_FAILED'; unitId: UnitId }
   | {
       type: 'LAUNCH_DETECTED';
       unitId: UnitId;
