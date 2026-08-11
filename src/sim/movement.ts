@@ -5,7 +5,7 @@
 // move on this hex?" — and nothing else.
 //
 // It deliberately does NOT apply moves. Mutating state, emitting UNIT_MOVED
-// events, and adjudicating two units racing for the same empty hex belong to
+// events, and adjudicating simultaneous-move conflicts (spec §9) belong to
 // resolve(), in its own session. Keeping validation pure and separate is what
 // lets the UI call reachableHexes() to highlight legal destinations and be
 // guaranteed the highlight matches what the engine will actually accept.
@@ -126,8 +126,9 @@ export function reachableHexes(
  *
  * Note this validates against true state, not fog-filtered state. In V1.5 the
  * server calls it with full knowledge, so a player can legally *order* a move
- * into a hex they can't see is blocked by a hidden enemy. Deciding what happens
- * to such an order at resolution time is the next session's problem.
+ * into a hex they can't see is blocked by a hidden enemy. Per spec §9 such an
+ * order fails entirely at resolution — the unit holds position, no partial
+ * advance. Applying that (and the same-hex standoff rule) belongs to resolve().
  */
 export function validateMove(
   state: GameState,

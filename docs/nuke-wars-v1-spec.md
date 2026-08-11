@@ -47,7 +47,7 @@ Setup/placement phase, Leader relocation + convoy signatures, decoy Leader site,
 ## 3. Gameplay Flow
 
 1. **Start:** fixed symmetric deployment, both sides out of range of each other.
-2. **Order phases (repeating):** each player queues up to 4 orders (move launcher, launch SRM/MRM, recon sweep) -> both confirm -> simultaneous resolution -> animated reveal sequence (launches detected -> intercept attempts -> impacts) -> next round.
+2. **Order phases (repeating):** each player queues up to 4 orders (move launcher, launch SRM/MRM, recon sweep) -> both confirm -> simultaneous resolution -> animated reveal sequence (launches detected -> intercept attempts -> impacts) -> next round. Movement conflicts during simultaneous resolution are governed by **§9**.
 3. **Grace rules:** Leader untargetable rounds 1–3. No launches on round 1.
 4. **Endgame:** Leader bunker destroyed -> **DEAD HAND**: the decapitated player gets one final round to manually launch everything surviving. Then final adjudication.
 
@@ -137,3 +137,25 @@ Victory conditions are evaluated only after a full resolution completes — neve
 8. Deploy: static client (Vercel/Netlify) + socket server (Fly.io/Railway).
 
 Do not start V2 features until two humans have played V1 to completion multiple times.
+
+---
+
+## 9. Movement Resolution Rules
+
+Movement is simultaneous, so orders can conflict in ways a turn-based game never has to answer. These rulings are binding on `resolve()`.
+
+**Foundational rule: every move is validated and applied against the state as it stood at the *start* of the round.** No move may depend on another move having already resolved. This is what keeps resolution order-independent, which the determinism rule (§6) requires.
+
+| Situation | Ruling | Why |
+|---|---|---|
+| Two units ordered into the same empty hex | **Standoff — neither moves.** | Symmetric, deterministic, needs no tiebreak. Same solution Diplomacy has used for simultaneous orders for a century. A seeded coin flip would also be deterministic but makes a key positional outcome unexplainable; player priority would break 1v1 symmetry. |
+| Two units ordered to swap hexes | **Both orders illegal.** | Falls out of the occupied-tile rule for free: at round start each destination is occupied. No special case needed. |
+| Unit ordered into a hex another unit is vacating this round | **Illegal — no chaining or following.** | The hex is occupied at round start. Permitting it would make resolution order-dependent. |
+| Move blocked by a hidden enemy unit | **The order fails entirely; the unit holds position. No partial advance.** | Partial movement would require path reconstruction plus deterministic tiebreaks between equal-cost routes — real complexity in the most correctness-sensitive code. More importantly, a failed order is what gives recon sweeps their value: advancing into unscouted ground risks wasting one of your 4 orders. |
+| Move blocked by terrain or a unit the player can see | **Rejected at order entry.** | The UI validates against fog-filtered state, so these never reach resolution. |
+
+**Occupancy:** a living unit blocks both *passage through* and *landing on* its hex, friendly or enemy. Destroyed units block nothing. Ordering a unit to the hex it already occupies is illegal, not a no-op — it would silently waste one of the 4 orders.
+
+**Information leak (intentional):** a player whose move fails can see their unit didn't move, and since visible terrain is already known to them, this effectively reveals that an enemy was there. This is accepted rather than worked around. Making contact with the enemy is genuine intelligence, and it is the defender's reward for having positioned well. Surface it as "your advance was halted" without naming the blocking unit or where it came from.
+
+**Design note:** these rules apply the core loop (**commit → dread → reveal**) to maneuver rather than missiles. You commit an advance without knowing whether it will happen.
