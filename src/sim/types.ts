@@ -79,8 +79,9 @@ export type Outcome =
 
 /**
  * The single source of truth resolve() operates on — the *full* state, both
- * players' true positions, no fog applied. filterForPlayer() (a later,
- * separate step) derives what each player is allowed to see from this.
+ * players' true positions, unfiltered. filterForPlayer() (a later, separate
+ * step) derives what each player is allowed to see from this, per the spec §11
+ * detection rules.
  */
 export interface GameState {
   round: number;
