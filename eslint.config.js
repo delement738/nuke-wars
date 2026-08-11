@@ -18,5 +18,13 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    rules: {
+      // An `_` prefix marks an argument that is deliberately never read.
+      // resolve()'s `_seed` is why this exists: spec §6 requires the parameter
+      // to be present for forward compatibility while forbidding V1 resolution
+      // from reading it, so the underscore is the signal that its absence from
+      // the body is intentional and not a missing implementation.
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+    },
   },
 ])
