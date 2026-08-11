@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { UNIT_DEFS } from './defs';
-import { axialToOffset, hexKey, neighbors, offsetToAxial, type Hex } from './hex';
+import { RULES, SPAWNS, UNIT_DEFS } from './defs';
+import {
+  axialToOffset,
+  distance,
+  hexKey,
+  hexLine,
+  neighbors,
+  offsetToAxial,
+  type Hex,
+} from './hex';
 import { tileAt, type MapData, type Terrain, type TileData } from './map';
 import { resolve } from './resolve';
 import type {
@@ -68,8 +76,21 @@ function launch(unitId: string, target: Hex): Order {
   return { type: 'LAUNCH', unitId, target };
 }
 
+function fly(unitId: string, destination: Hex): Order {
+  return { type: 'FLY', unitId, destination };
+}
+
 /** A hex comfortably inside a 21x21 map, so edge clipping never interferes. */
 const CENTER: Hex = offsetToAxial({ col: 10, row: 10 });
+
+/** The drone's flight range, read from the balance table rather than hardcoded. */
+const FLIGHT = UNIT_DEFS.drone.movement;
+
+/** A hex exactly `steps` away, walking due north (up the board's long axis). */
+function north(from: Hex, steps: number): Hex {
+  const offset = axialToOffset(from);
+  return offsetToAxial({ col: offset.col, row: offset.row - steps });
+}
 
 function openField(units: Unit[] = []): GameState {
   return makeState(makeMap(21, 21), units);
@@ -82,8 +103,23 @@ function positionOf(state: GameState, id: UnitId): Hex {
   return unit.position;
 }
 
+function unitOf(state: GameState, id: UnitId): Unit {
+  const unit = state.units.find((u) => u.id === id);
+  if (!unit) throw new Error(`no unit ${id}`);
+  return unit;
+}
+
 function eventsFor(events: GameEvent[], id: UnitId): GameEvent[] {
   return events.filter((e) => 'unitId' in e && e.unitId === id);
+}
+
+/** The DRONE_MOVED a drone emits when it stays put — its own hex's swath. */
+function hovered(unitId: string, hex: Hex): GameEvent {
+  return { type: 'DRONE_MOVED', unitId, from: hex, to: hex, path: [hex] };
+}
+
+function spotted(events: GameEvent[]): GameEvent[] {
+  return events.filter((e) => e.type === 'ASSET_SPOTTED');
 }
 
 const NO_ORDERS: Order[] = [];
@@ -312,7 +348,9 @@ describe('resolve() — which failures are reported', () => {
     const result = resolve(state, [move('eye', neighbors(CENTER)[0])], NO_ORDERS, 0);
 
     expect(positionOf(result.state, 'eye')).toEqual(CENTER);
-    expect(result.events).toEqual([]);
+    // No UNIT_MOVED and no MOVE_FAILED: the rejection was caused by public
+    // information, so nothing is reported. The one event is phase 1's hover.
+    expect(result.events).toEqual([hovered('eye', CENTER)]);
   });
 
   it('drops a MOVE naming an immobile asset', () => {
@@ -408,23 +446,472 @@ describe('resolve() — one order per unit', () => {
 // --- orders belonging to later build-order steps ----------------------------
 
 describe('resolve() — orders not yet implemented', () => {
-  it('accepts LAUNCH and FLY orders without acting on them or throwing', () => {
-    const state = openField([
-      makeUnit('a', 'p1', 'launcher', CENTER),
-      makeUnit('eye', 'p1', 'drone', offsetToAxial({ col: 10, row: 12 })),
-    ]);
+  it('accepts a LAUNCH order without acting on it or throwing (step 6)', () => {
+    const state = openField([makeUnit('a', 'p1', 'launcher', CENTER)]);
 
     const result = resolve(
       state,
-      [
-        launch('a', offsetToAxial({ col: 10, row: 6 })),
-        { type: 'FLY', unitId: 'eye', destination: offsetToAxial({ col: 10, row: 7 }) },
-      ],
+      [launch('a', offsetToAxial({ col: 10, row: 6 }))],
       NO_ORDERS,
       0,
     );
 
     expect(result.events).toEqual([]);
+  });
+});
+
+// --- phase 1: recon flight (spec §3, §10, §11) ------------------------------
+
+describe('resolve() — phase 1: drone flight', () => {
+  it('flies the drone and logs the path the swath came from', () => {
+    const destination = north(CENTER, FLIGHT);
+    const state = openField([makeUnit('eye', 'p1', 'drone', CENTER)]);
+
+    const result = resolve(state, [fly('eye', destination)], NO_ORDERS, 0);
+
+    expect(positionOf(result.state, 'eye')).toEqual(destination);
+    expect(result.events).toEqual([
+      {
+        type: 'DRONE_MOVED',
+        unitId: 'eye',
+        from: CENTER,
+        to: destination,
+        path: hexLine(CENTER, destination),
+      },
+    ]);
+  });
+
+  it('an un-ordered drone hovers, and a hovering drone still watches', () => {
+    const state = openField([
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('z', 'p2', 'launcher', neighbors(CENTER)[0]),
+    ]);
+
+    const result = resolve(state, NO_ORDERS, NO_ORDERS, 0);
+
+    expect(positionOf(result.state, 'eye')).toEqual(CENTER);
+    expect(result.events[0]).toEqual(hovered('eye', CENTER));
+    // The corridor around its own hex is a real swath — this is what makes
+    // "give no order to hover" a choice rather than a wasted round.
+    expect(result.state.intel.p1.contacts).toEqual([
+      { hex: neighbors(CENTER)[0], source: 'RECON' },
+    ]);
+  });
+
+  it('drops an out-of-range FLY silently — the drone hovers instead', () => {
+    const state = openField([makeUnit('eye', 'p1', 'drone', CENTER)]);
+
+    const result = resolve(state, [fly('eye', north(CENTER, FLIGHT + 1))], NO_ORDERS, 0);
+
+    expect(positionOf(result.state, 'eye')).toEqual(CENTER);
+    // No failure event: nothing hidden caused this, so there is nothing to
+    // report (the air-layer counterpart of §9's MOVE_FAILED policy).
+    expect(result.events).toEqual([hovered('eye', CENTER)]);
+  });
+
+  it('FLY + MOVE for one drone is over budget — it hovers and does neither', () => {
+    const destination = north(CENTER, 3);
+    const state = openField([makeUnit('eye', 'p1', 'drone', CENTER)]);
+
+    const result = resolve(
+      state,
+      [fly('eye', destination), move('eye', neighbors(CENTER)[0])],
+      NO_ORDERS,
+      0,
+    );
+
+    expect(positionOf(result.state, 'eye')).toEqual(CENTER);
+    expect(result.events).toEqual([hovered('eye', CENTER)]);
+  });
+
+  it('ignores a FLY order aimed at the enemy’s drone', () => {
+    const state = openField([makeUnit('spy', 'p2', 'drone', CENTER)]);
+
+    // p1 submits an order naming p2's drone; it is never even consulted, since
+    // each drone reads only its own owner's order book.
+    const result = resolve(state, [fly('spy', north(CENTER, 4))], NO_ORDERS, 0);
+
+    expect(positionOf(result.state, 'spy')).toEqual(CENTER);
+    expect(result.events).toEqual([hovered('spy', CENTER)]);
+  });
+
+  it('photographs launchers at their PRE-move positions (§3 phase order)', () => {
+    const launcherStart = neighbors(CENTER)[0];
+    const away = north(launcherStart, UNIT_DEFS.launcher.movement);
+    const state = openField([
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('z', 'p2', 'launcher', launcherStart),
+    ]);
+
+    const result = resolve(state, NO_ORDERS, [move('z', away)], 0);
+
+    // Recon flew in phase 1, the launcher drove off in phase 5 — so the contact
+    // is already stale when the player acts on it. Shooting at it is a bet.
+    expect(positionOf(result.state, 'z')).toEqual(away);
+    expect(result.state.intel.p1.contacts).toEqual([
+      { hex: launcherStart, source: 'RECON' },
+    ]);
+  });
+
+  it('a flying drone does not block a launcher’s advance (§2 air layer)', () => {
+    const contested = neighbors(CENTER)[0];
+    const state = openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      makeUnit('spy', 'p2', 'drone', north(CENTER, 3)),
+    ]);
+
+    // p2 parks its drone on the exact hex p1's launcher is driving to.
+    const result = resolve(state, [move('a', contested)], [fly('spy', contested)], 0);
+
+    // If the drone blocked, it would be a third detector by the back door:
+    // park it, watch the advance fail, and you have found a unit for free.
+    expect(positionOf(result.state, 'a')).toEqual(contested);
+    expect(positionOf(result.state, 'spy')).toEqual(contested);
+    expect(eventsFor(result.events, 'a')).toEqual([
+      { type: 'UNIT_MOVED', unitId: 'a', from: CENTER, to: contested },
+    ]);
+  });
+});
+
+// --- recon reveals and the two-part intel state (spec §11) ------------------
+
+describe('resolve() — recon reveals', () => {
+  it('files a spotted launcher as a one-round contact', () => {
+    const target = north(CENTER, 4);
+    const state = openField([
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('z', 'p2', 'launcher', target),
+    ]);
+
+    const result = resolve(state, [fly('eye', target)], NO_ORDERS, 0);
+
+    expect(spotted(result.events)).toEqual([
+      { type: 'ASSET_SPOTTED', kind: 'launcher', hex: target, owner: 'p2' },
+    ]);
+    expect(result.state.intel.p1.contacts).toEqual([
+      { hex: target, source: 'RECON' },
+    ]);
+    expect(result.state.intel.p1.staticReveals).toEqual([]);
+  });
+
+  it('files static assets permanently, and stores the DECOY truthfully', () => {
+    const line = hexLine(CENTER, north(CENTER, FLIGHT));
+    const state = openField([
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('real', 'p2', 'bunker', line[2]),
+      makeUnit('fake', 'p2', 'decoy', neighbors(line[4])[0]),
+    ]);
+
+    const result = resolve(state, [fly('eye', line[line.length - 1])], NO_ORDERS, 0);
+
+    // resolve() never lies. The decoy -> bunker mask is the visibility filter's
+    // job alone (step 8) — the sim stores the truth, 'decoy' and all.
+    expect(result.state.intel.p1.staticReveals).toEqual([
+      { hex: line[2], kind: 'bunker', round: 1 },
+      { hex: neighbors(line[4])[0], kind: 'decoy', round: 1 },
+    ]);
+    expect(result.state.intel.p1.contacts).toEqual([]);
+  });
+
+  it('cannot photograph an interceptor base — it dies one hex short', () => {
+    // NOT a quirk of this fixture: while RULES.reconSwathRadius <=
+    // RULES.interceptorCoverageRadius, any base near enough to fall inside the
+    // swath is covering a hex the drone must enter to get it. Brute-forced over
+    // every flight geometry — see the note on reconSwathRadius in defs.ts.
+    expect(RULES.reconSwathRadius).toBeLessThanOrEqual(
+      RULES.interceptorCoverageRadius,
+    );
+
+    const destination = north(CENTER, FLIGHT);
+    const line = hexLine(CENTER, destination);
+    const state = openField([
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('base', 'p2', 'interceptor', line[3]),
+    ]);
+
+    const result = resolve(state, [fly('eye', destination)], NO_ORDERS, 0);
+
+    expect(unitOf(result.state, 'eye').destroyed).toBe(true);
+    expect(result.state.intel.p1.staticReveals).toEqual([]);
+    // All the owner gets is the death hex, leaving 7 candidates (§6, §11).
+    expect(result.events).toContainEqual({
+      type: 'DRONE_DOWNED',
+      unitId: 'eye',
+      owner: 'p1',
+      hex: line[2],
+    });
+  });
+
+  it('never reveals the enemy drone — drones do not see each other', () => {
+    const target = north(CENTER, 4);
+    const state = openField([
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('spy', 'p2', 'drone', target),
+    ]);
+
+    const result = resolve(state, [fly('eye', target)], NO_ORDERS, 0);
+
+    expect(spotted(result.events)).toEqual([]);
+    expect(result.state.intel.p1.contacts).toEqual([]);
+    expect(result.state.intel.p1.staticReveals).toEqual([]);
+  });
+
+  it('never files your own assets as intel, nor an enemy corpse', () => {
+    const target = north(CENTER, 3);
+    const corpse = makeUnit('z', 'p2', 'launcher', neighbors(target)[0]);
+    corpse.destroyed = true;
+    const state = openField([
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('a', 'p1', 'launcher', neighbors(CENTER)[0]),
+      makeUnit('mine', 'p1', 'bunker', neighbors(target)[3]),
+      corpse,
+    ]);
+
+    const result = resolve(state, [fly('eye', target)], NO_ORDERS, 0);
+
+    expect(spotted(result.events)).toEqual([]);
+    expect(result.state.intel.p1).toEqual({ staticReveals: [], contacts: [] });
+  });
+
+  it('ignores anything outside the corridor', () => {
+    const target = north(CENTER, 4);
+    const line = hexLine(CENTER, target);
+    const mid = axialToOffset(line[2]);
+    const outside = offsetToAxial({ col: mid.col + 3, row: mid.row });
+    // Guard the premise: nothing on the flight path comes within reach of it.
+    const closest = Math.min(...line.map((hex) => distance(hex, outside)));
+    expect(closest).toBeGreaterThan(RULES.reconSwathRadius);
+
+    const state = openField([
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('z', 'p2', 'launcher', outside),
+    ]);
+
+    const result = resolve(state, [fly('eye', target)], NO_ORDERS, 0);
+
+    expect(result.state.intel.p1.contacts).toEqual([]);
+  });
+
+  it('rebuilds contacts from scratch every round — no stale ghost markers', () => {
+    const seen = north(CENTER, 2);
+    const state = openField([
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('z', 'p2', 'launcher', seen),
+    ]);
+
+    // Overfly the launcher and keep going, so the drone ends the round well
+    // clear of it — the start hex is always in next round's swath.
+    const first = resolve(state, [fly('eye', north(CENTER, FLIGHT))], NO_ORDERS, 0);
+    expect(first.state.intel.p1.contacts).toEqual([{ hex: seen, source: 'RECON' }]);
+
+    // Next round it looks somewhere else entirely.
+    const second = resolve(
+      first.state,
+      [fly('eye', north(CENTER, FLIGHT + 4))],
+      NO_ORDERS,
+      0,
+    );
+
+    // The sighting is gone from the map after exactly one order phase. Its
+    // permanent record lives in the event log, not here (§11).
+    expect(second.state.intel.p1.contacts).toEqual([]);
+  });
+
+  it('keeps a static reveal forever, once, with its first-seen round', () => {
+    const site = north(CENTER, 2);
+    const state = openField([
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('real', 'p2', 'bunker', site),
+    ]);
+
+    const first = resolve(state, [fly('eye', site)], NO_ORDERS, 0);
+    const second = resolve(first.state, [fly('eye', north(site, 2))], NO_ORDERS, 0);
+
+    expect(second.state.round).toBe(3);
+    // Re-photographing a building that cannot move is not news: one entry, and
+    // `round` still reads 1.
+    expect(second.state.intel.p1.staticReveals).toEqual([
+      { hex: site, kind: 'bunker', round: 1 },
+    ]);
+    // ...but the sighting event fires again, because the drone did see it.
+    expect(spotted(second.events)).toHaveLength(1);
+  });
+
+  it('records an asset seen twice in one swath only once', () => {
+    // A launcher one hex off the path sits inside the corridor of several
+    // consecutive path hexes.
+    const target = north(CENTER, 4);
+    const line = hexLine(CENTER, target);
+    const beside = neighbors(line[2])[0];
+    const state = openField([
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('z', 'p2', 'launcher', beside),
+    ]);
+
+    const result = resolve(state, [fly('eye', target)], NO_ORDERS, 0);
+
+    expect(spotted(result.events)).toHaveLength(1);
+    expect(result.state.intel.p1.contacts).toEqual([{ hex: beside, source: 'RECON' }]);
+  });
+
+  it('both players’ drones fly and report in the same round', () => {
+    const state = openField([
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('a', 'p1', 'launcher', neighbors(CENTER)[0]),
+      makeUnit('spy', 'p2', 'drone', north(CENTER, 5)),
+      makeUnit('z', 'p2', 'launcher', north(CENTER, 4)),
+    ]);
+
+    // The two sweeps cross: p1 flies north over z, p2 flies south over a.
+    const result = resolve(
+      state,
+      [fly('eye', north(CENTER, 4))],
+      [fly('spy', north(CENTER, -1))],
+      0,
+    );
+
+    expect(result.state.intel.p1.contacts).toEqual([
+      { hex: north(CENTER, 4), source: 'RECON' },
+    ]);
+    expect(result.state.intel.p2.contacts).toEqual([
+      { hex: neighbors(CENTER)[0], source: 'RECON' },
+    ]);
+  });
+});
+
+// --- drone loss and respawn (spec §10, §11) ---------------------------------
+
+describe('resolve() — drone loss and respawn', () => {
+  /** A drone at CENTER flying north into a base that covers `line[2]`. */
+  function ambush(): { state: GameState; line: Hex[]; destination: Hex } {
+    const destination = north(CENTER, FLIGHT);
+    const line = hexLine(CENTER, destination);
+    const state = openField([
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('base', 'p2', 'interceptor', line[3]),
+    ]);
+    return { state, line, destination };
+  }
+
+  it('is destroyed entering coverage, and the wreck sits on the death hex', () => {
+    const { state, line, destination } = ambush();
+
+    const result = resolve(state, [fly('eye', destination)], NO_ORDERS, 0);
+
+    const drone = unitOf(result.state, 'eye');
+    expect(drone.destroyed).toBe(true);
+    expect(drone.hp).toBe(0);
+    expect(drone.position).toEqual(line[2]);
+    expect(result.state.droneRespawnIn.p1).toBe(RULES.droneRespawnDelay - 1);
+  });
+
+  it('logs the transmitted path and the death hex separately', () => {
+    const { state, line, destination } = ambush();
+
+    const result = resolve(state, [fly('eye', destination)], NO_ORDERS, 0);
+
+    expect(result.events).toEqual([
+      // `path`/`to` stop one hex short of the kill: a downed drone transmits
+      // nothing from where it died, so a client building the reveal overlay
+      // from `path` is correct without knowing that rule.
+      {
+        type: 'DRONE_MOVED',
+        unitId: 'eye',
+        from: CENTER,
+        to: line[1],
+        path: [line[0], line[1]],
+      },
+      { type: 'DRONE_DOWNED', unitId: 'eye', owner: 'p1', hex: line[2] },
+    ]);
+  });
+
+  it('keeps intel from before the kill, and sees nothing BEYOND the death hex', () => {
+    const { state, line, destination } = ambush();
+    state.units.push(makeUnit('early', 'p2', 'launcher', line[1]));
+    // On the death hex itself. Still spotted — the drone photographed it from
+    // line[1], one hex back, before it ever flew in. "Reveals nothing FROM its
+    // death hex" (§11) means the death hex contributes no corridor of its own,
+    // not that the hex is invisible.
+    state.units.push(makeUnit('onDeathHex', 'p2', 'launcher', line[2]));
+    // Two hexes past the kill — outside the last safe hex's corridor, so the
+    // flight ends without ever seeing it.
+    state.units.push(makeUnit('beyond', 'p2', 'launcher', line[4]));
+
+    const result = resolve(state, [fly('eye', destination)], NO_ORDERS, 0);
+
+    expect(result.state.intel.p1.contacts).toEqual([
+      { hex: line[1], source: 'RECON' },
+      { hex: line[2], source: 'RECON' },
+    ]);
+    // Ordering is chronological: it saw, then it died.
+    expect(result.events.map((e) => e.type)).toEqual([
+      'DRONE_MOVED',
+      'ASSET_SPOTTED',
+      'ASSET_SPOTTED',
+      'DRONE_DOWNED',
+    ]);
+  });
+
+  it('costs exactly one blind round, then respawns at the fixed spawn hex', () => {
+    const { state, destination } = ambush();
+    const spawn = offsetToAxial(SPAWNS.p1.drone);
+
+    // Round 1: shot down.
+    const downed = resolve(state, [fly('eye', destination)], NO_ORDERS, 0);
+    expect(downed.state.droneRespawnIn.p1).toBe(1);
+    expect(unitOf(downed.state, 'eye').destroyed).toBe(true);
+
+    // Round 2: the blind round. The order is submitted and simply has no drone
+    // to act on, so phase 1 produces no flight and no swath at all.
+    const blind = resolve(downed.state, [fly('eye', destination)], NO_ORDERS, 0);
+    expect(blind.events.filter((e) => e.type === 'DRONE_MOVED')).toEqual([]);
+
+    // ...and it comes back for round 3's order phase.
+    expect(blind.state.droneRespawnIn.p1).toBe(0);
+    const drone = unitOf(blind.state, 'eye');
+    expect(drone.destroyed).toBe(false);
+    expect(drone.hp).toBe(UNIT_DEFS.drone.hp);
+    expect(drone.position).toEqual(spawn);
+    expect(blind.events).toContainEqual({
+      type: 'DRONE_RESPAWNED',
+      unitId: 'eye',
+      hex: spawn,
+    });
+
+    // Round 3: it is orderable again.
+    const back = resolve(blind.state, [fly('eye', north(spawn, 3))], NO_ORDERS, 0);
+    expect(positionOf(back.state, 'eye')).toEqual(north(spawn, 3));
+  });
+
+  it('a blind player keeps permanent reveals but loses launcher contacts', () => {
+    const { state, destination, line } = ambush();
+    state.units.push(makeUnit('real', 'p2', 'bunker', line[1]));
+    state.units.push(makeUnit('z', 'p2', 'launcher', neighbors(line[1])[0]));
+
+    const downed = resolve(state, [fly('eye', destination)], NO_ORDERS, 0);
+    expect(downed.state.intel.p1.staticReveals).toHaveLength(1);
+    expect(downed.state.intel.p1.contacts).toHaveLength(1);
+
+    const blind = resolve(downed.state, NO_ORDERS, NO_ORDERS, 0);
+
+    // "Blind" means no drone, not amnesia: the bunker cannot move, so that
+    // sighting stays true. The launcher contact expires on the normal schedule.
+    expect(blind.state.intel.p1.staticReveals).toHaveLength(1);
+    expect(blind.state.intel.p1.contacts).toEqual([]);
+  });
+
+  it('a friendly base never engages its owner’s drone', () => {
+    const destination = north(CENTER, FLIGHT);
+    const line = hexLine(CENTER, destination);
+    const state = openField([
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('base', 'p1', 'interceptor', line[3]),
+    ]);
+
+    const result = resolve(state, [fly('eye', destination)], NO_ORDERS, 0);
+
+    expect(unitOf(result.state, 'eye').destroyed).toBe(false);
+    expect(result.state.droneRespawnIn.p1).toBe(0);
   });
 });
 
@@ -454,7 +941,11 @@ describe('resolve() — round bookkeeping and purity', () => {
 // --- determinism (spec §6) --------------------------------------------------
 
 describe('resolve() — determinism', () => {
-  /** A round with a move, a standoff, a block, and a dropped order in it. */
+  /**
+   * A round with every kind of outcome in it: a move, a standoff, a block, a
+   * dropped order, a drone that sweeps and survives, and a drone shot down
+   * mid-flight.
+   */
   function busyRound(): {
     state: GameState;
     p1: Order[];
@@ -462,19 +953,45 @@ describe('resolve() — determinism', () => {
   } {
     const n = neighbors(CENTER);
     const far = offsetToAxial({ col: 4, row: 4 });
+    const droneStart = offsetToAxial({ col: 15, row: 15 });
+    const droneDest = north(droneStart, FLIGHT);
+    const droneLane = hexLine(droneStart, droneDest);
+    const spyStart = offsetToAxial({ col: 3, row: 15 });
     const state = openField([
       makeUnit('a', 'p1', 'launcher', n[0]),
       makeUnit('b', 'p1', 'launcher', far),
-      makeUnit('eye', 'p1', 'drone', offsetToAxial({ col: 15, row: 15 })),
+      makeUnit('eye', 'p1', 'drone', droneStart),
       makeUnit('z', 'p2', 'launcher', n[3]),
       makeUnit('y', 'p2', 'launcher', offsetToAxial({ col: 18, row: 4 })),
+      makeUnit('spy', 'p2', 'drone', spyStart),
+      // Sits on p1's drone lane: 'eye' dies entering droneLane[2]...
+      makeUnit('base', 'p2', 'interceptor', droneLane[3]),
+      // ...but not before photographing this one.
+      makeUnit('w', 'p2', 'launcher', droneLane[1]),
     ]);
     return {
       state,
-      p1: [move('a', CENTER), move('b', neighbors(far)[0]), move('eye', CENTER)],
-      p2: [move('z', CENTER), move('y', neighbors(offsetToAxial({ col: 18, row: 4 }))[0])],
+      p1: [move('a', CENTER), move('b', neighbors(far)[0]), fly('eye', droneDest)],
+      p2: [
+        move('z', CENTER),
+        move('y', neighbors(offsetToAxial({ col: 18, row: 4 }))[0]),
+        fly('spy', north(spyStart, FLIGHT)),
+      ],
     };
   }
+
+  it('the fixture really does exercise the recon phase', () => {
+    // Guards the tests below: if a refactor stopped downing the drone, they
+    // would still pass while covering nothing.
+    const { state, p1, p2 } = busyRound();
+    const types = new Set(resolve(state, p1, p2, 0).events.map((e) => e.type));
+
+    expect(types).toContain('DRONE_MOVED');
+    expect(types).toContain('DRONE_DOWNED');
+    expect(types).toContain('ASSET_SPOTTED');
+    expect(types).toContain('UNIT_MOVED');
+    expect(types).toContain('MOVE_FAILED');
+  });
 
   it('produces deep-equal results from identical inputs', () => {
     const first = busyRound();

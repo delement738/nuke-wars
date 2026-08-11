@@ -98,6 +98,9 @@ export type Order =
 /** Narrowed to the MOVE variant — the input shape the movement engine takes. */
 export type MoveOrder = Extract<Order, { type: 'MOVE' }>;
 
+/** Narrowed to the FLY variant — the input shape the recon engine takes. */
+export type FlyOrder = Extract<Order, { type: 'FLY' }>;
+
 export type GamePhase =
   | 'SETUP'
   | 'ORDER_PHASE'
