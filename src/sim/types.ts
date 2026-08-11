@@ -209,22 +209,34 @@ export interface GameState {
  * append-only and permanent: map contacts expire after a round, log entries
  * never do, which is what gives a player the full history of every launch
  * they have detected (spec §11).
+ *
+ * **Every owner-only event carries `owner` explicitly.** The filter's signature
+ * is `filterEventsForPlayer(events, playerId)` (spec §6) — it is handed the log
+ * and nothing else, so it cannot look a `unitId` up in a `GameState` to find out
+ * whose event this is. A `UnitId` is an opaque string by design (nothing may
+ * derive meaning from it, §6's note on missile ids), so the audience has to be
+ * stated on the event itself or the filter cannot route it at all. This leaks
+ * nothing: the only player who ever receives one of these is the owner, who
+ * knows their own units. `DRONE_DOWNED` set this precedent — it is public, and
+ * carries `owner` because the *content* names a player.
  */
 export type GameEvent =
   // --- Owner only -----------------------------------------------------------
-  | { type: 'UNIT_MOVED'; unitId: UnitId; from: Hex; to: Hex }
+  | { type: 'UNIT_MOVED'; unitId: UnitId; owner: PlayerId; from: Hex; to: Hex }
   /**
    * A MOVE order that did not happen — the destination was blocked by a unit
    * the player couldn't see, or two units bounced off the same hex (spec §9).
    *
-   * Deliberately carries nothing but the mover's own id: no destination, no
-   * blocker, no reason code. That makes a standoff byte-identical to being
-   * blocked by a stationary enemy, so the player cannot tell whether someone
-   * was parked on that hex or raced them to it — two facts with very different
-   * tactical meaning. The event is leak-proof by construction rather than by
-   * policy: it contains no enemy-derived data for a future change to widen.
+   * Deliberately carries nothing but the mover's own id and side: no
+   * destination, no blocker, no reason code. That makes a standoff
+   * byte-identical to being blocked by a stationary enemy, so the player cannot
+   * tell whether someone was parked on that hex or raced them to it — two facts
+   * with very different tactical meaning. The event is leak-proof by
+   * construction rather than by policy: both fields describe the *recipient's
+   * own* unit, so there is no enemy-derived data here for a future change to
+   * widen.
    */
-  | { type: 'MOVE_FAILED'; unitId: UnitId }
+  | { type: 'MOVE_FAILED'; unitId: UnitId; owner: PlayerId }
   /**
    * Non-lethal bunker damage — the real bunker taking 1 of its 2 hits.
    *
@@ -233,24 +245,47 @@ export type GameEvent =
    * so *silence after a hit* is exactly what identifies the real bunker
    * (spec §6, §12).
    */
-  | { type: 'BUNKER_HIT'; unitId: UnitId; hex: Hex; hpRemaining: number }
+  | {
+      type: 'BUNKER_HIT';
+      unitId: UnitId;
+      owner: PlayerId;
+      hex: Hex;
+      hpRemaining: number;
+    }
   // --- Spotting player only (recon results, spec §11) -----------------------
-  | { type: 'DRONE_MOVED'; unitId: UnitId; from: Hex; to: Hex; path: Hex[] }
+  /**
+   * `owner` is the drone's owner, i.e. the spotting player — the flight and
+   * everything it transmits belong to the same side.
+   */
+  | {
+      type: 'DRONE_MOVED';
+      unitId: UnitId;
+      owner: PlayerId;
+      from: Hex;
+      to: Hex;
+      path: Hex[];
+    }
   /**
    * One asset seen inside this round's swath. `kind` is the truth here,
    * including 'decoy'; the visibility filter narrows it to MaskedStaticKind on
    * the way out. Launchers become one-round contacts, static kinds become
    * permanent reveals (spec §11 rule 3).
+   *
+   * CAREFUL — `owner` here is the owner of the asset that was SPOTTED, which is
+   * the enemy of the audience. This is the one owner-only event whose `owner`
+   * field is not its recipient: the spotting player is the *other* one. The
+   * filter must route this event to `owner`'s opponent, and it is the only
+   * event where reading `owner` as "who may see this" is exactly backwards.
    */
   | { type: 'ASSET_SPOTTED'; kind: UnitKind; hex: Hex; owner: PlayerId }
   /**
    * A replacement drone has spawned (spec §11).
    *
-   * NOTE: not in the spec §6 visibility table — flagged for a spec amendment.
-   * Owner only is the obvious audience; the enemy learning your recon is back
-   * online would be free intel they did nothing to earn.
+   * Owner only: the enemy learning your recon is back online would be free
+   * intel they did nothing to earn. The spawn hex is public knowledge (§12);
+   * what is private is the timing.
    */
-  | { type: 'DRONE_RESPAWNED'; unitId: UnitId; hex: Hex }
+  | { type: 'DRONE_RESPAWNED'; unitId: UnitId; owner: PlayerId; hex: Hex }
   // --- Both players ---------------------------------------------------------
   /**
    * Launches are loud: detection is automatic, universal, and unsuppressable
