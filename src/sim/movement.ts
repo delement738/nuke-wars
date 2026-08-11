@@ -39,14 +39,26 @@ export interface ReachableHex {
 }
 
 /**
- * Hexes blocked by other living units. Per the agreed V1 rule, an occupied tile
+ * Hexes blocked by other living GROUND units. Per spec §9, an occupied tile
  * blocks both *passing through* and *landing on* — you cannot route a launcher
- * through another piece. Destroyed units block nothing.
+ * through another piece, friendly or enemy. Destroyed units block nothing.
+ *
+ * Drones are excluded because they are not on the ground layer at all: "the
+ * drone neither blocks nor is blocked" (spec §2, §9). This mattered from the
+ * moment drones started flying (build-order step 5) — before that they sat on
+ * their spawn hexes and the omission was invisible. A drone that blocked would
+ * be a third detector by the back door: park it on a hex, watch an enemy
+ * launcher's advance fail, and you have found a unit no rule says you may see.
+ *
+ * The decoy, by contrast, blocks exactly like any other ground unit, and must —
+ * if it were passable, walking a launcher through a suspected site would
+ * identify the fake for free (spec §12).
  */
 function occupiedHexes(state: GameState, mover: Unit): Set<string> {
   const blocked = new Set<string>();
   for (const other of state.units) {
     if (other.id === mover.id || other.destroyed) continue;
+    if (other.kind === 'drone') continue;
     blocked.add(hexKey(other.position));
   }
   return blocked;

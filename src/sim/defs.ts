@@ -219,6 +219,28 @@ export const RULES = {
   interceptorCoverageRadius: 1,
 
   /**
+   * How far to either side of its flight path the drone photographs (spec §11).
+   * At 1 the swath is the classic "3 wide" corridor: every hex the drone safely
+   * traverses, plus that hex's 6 neighbours.
+   *
+   * READ THIS BEFORE TUNING EITHER RADIUS — the two interact in a way that is
+   * invisible in the numbers. While this is <= `interceptorCoverageRadius`, a
+   * drone can never photograph an interceptor base: any base close enough to
+   * fall inside the swath is, by the same distance, covering a hex the drone
+   * must enter to get it — so the drone is destroyed one step before the
+   * picture is taken (verified by brute force over every flight geometry).
+   * Bases are then findable only by *inference* from the public 7-candidate
+   * clues, `MISSILE_INTERCEPTED` and `DRONE_DOWNED`.
+   *
+   * Raising this to 2 is the one-number change that makes §12's "finding
+   * interceptor bases narrows the bunker hunt" true: the drone could then fly
+   * past at distance 2, outside the bubble, and still see the base. It also
+   * widens every other reveal from a 3-wide corridor to a 5-wide one, which is
+   * a large buff to recon overall — hence a playtest decision, not a bug fix.
+   */
+  reconSwathRadius: 1,
+
+  /**
    * Missiles one base may destroy per round (spec §10). Drone kills are free
    * and do not consume it.
    *
