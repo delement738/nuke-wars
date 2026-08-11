@@ -64,6 +64,8 @@ A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, dr
 
 - 2026-08-11: **build-order step 3 — `hexLine()` DONE (`feature/hex-line`).** Cube-lerp line drawing with the pinned epsilon nudge in `hex.ts`, plus private `cubeRound`. Returns both endpoints (`a` first, `b` last, length `distance + 1`) and stays rule-free: no range cap, no terrain, no legality — `hexLine(a, a)` returns `[a]` rather than throwing, because "the drone may not fly to its own hex" is a validator rule. **Spec §10 amended:** the nudge is applied to **both endpoints**, not just `a` — it matches the redblobgames reference the method is cited from (so the V1.5 server can copy standard code and agree), and it makes lines **reversible**, which nudging only `a` does not. §10 also now records the third offset (**-3e-6**, forced by q + r + s = 0), which the two pinned constants imply but never stated. One bug caught by the tests: `Math.round(-0.4)` returns **negative zero**, which is not deep-equal to `0` — left in, it would have broken step 4's determinism test; `cubeRound` now normalises it. 124 tests passing.
 
+- 2026-08-11: **housekeeping, no logic changed (`chore/housekeeping`).** Deleted the seven merged feature/docs branches (local and on GitHub) now that steps 1–3 are all in `main`. Removed four unreferenced Vite-scaffold assets (`src/assets/react.svg`, `vite.svg`, `hero.png`, `public/icons.svg` — the last is the template's social-icon sheet); `src/assets/` is gone entirely and `public/favicon.svg` stays, since `index.html` references it. Cleared the stale "Known issues" entry that still claimed a code/spec mismatch. Verified clean: 124 tests, `eslint`, and `tsc -b` all pass; the `build-order step` citations in `types.ts` were checked against spec §8 and already use post-pivot numbering.
+
 ### Next up: build-order step 4 — `resolve()` skeleton + ground-movement phase (§9 standoffs, one-order-per-unit batch validation, `UNIT_MOVED`/`MOVE_FAILED`, and the determinism test — same inputs twice, deep-equal outputs).
 
 **Gotchas for future sessions — each of these is load-bearing, don't "simplify" any of them:**
@@ -86,4 +88,4 @@ A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, dr
 - None blocking. All §7 numbers are untested first drafts (validate by playtest after step 10); the §10 unit-id intercept tiebreak is accepted-arbitrary by design.
 
 ### Known issues
-- Code/spec mismatch until the migration session lands (see warning above). Nothing else outstanding: the pivot docs were committed on `docs/v1-pivot` and merged into `main` on 2026-08-11, so `main` carries the post-pivot design with pre-pivot code.
+- None. The code/spec mismatch previously listed here was closed when build-order step 2 (pivot migration) landed on 2026-08-11 — `main` now carries post-pivot design *and* post-pivot code, as the status header above states.
