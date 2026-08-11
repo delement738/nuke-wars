@@ -14,6 +14,10 @@ const FILL: Record<string, number> = {
 // north/south of each other — the offset (odd-q) instead shifts alternating
 // *columns* vertically, and adjacent columns are the diagonal NE/SE/NW/SW
 // neighbors.
+//
+// That is exactly why the game is fought north/south (spec §7): a flat-top hex
+// has a true N and S neighbor and none directly E or W, so advancing up the
+// board is a straight line. P1 holds the southern (high-row) edge.
 function hexCenter(col: number, row: number) {
   const h = Math.sqrt(3) * HEX;
   return {
@@ -85,6 +89,21 @@ export default function GameCanvas() {
 
         world.addChild(g);
       }
+
+      // --- Initial framing ---
+      // The board is portrait now (16 wide x 19 tall, ~900px) and taller than
+      // most browser windows, so fit it on first paint instead of dropping the
+      // player at the top-left with P1's whole southern half off-screen.
+      // Clamped to the same 0.5–2.5 range the wheel handler enforces.
+      const bounds = world.getLocalBounds();
+      const fit = Math.min(
+        app.screen.width / bounds.width,
+        app.screen.height / bounds.height,
+      );
+      const scale = Math.min(2.5, Math.max(0.5, fit));
+      world.scale.set(scale);
+      world.x = (app.screen.width - bounds.width * scale) / 2 - bounds.x * scale;
+      world.y = (app.screen.height - bounds.height * scale) / 2 - bounds.y * scale;
 
       // --- Pan (drag) ---
       let dragging = false;
