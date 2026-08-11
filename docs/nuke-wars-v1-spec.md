@@ -163,7 +163,7 @@ Victory conditions are evaluated only after a full resolution completes — neve
 
 | Parameter | Value |
 |---|---|
-| Map size | 19 wide x 15 tall, mirrored |
+| Map size | 16 wide x 19 tall, symmetric under a 180° rotation (see note below) |
 | Orders | 1 per living asset per round (no global cap — with 3 launchers + 1 drone, 4 is the natural maximum) |
 | Round cap | 25 |
 | Launchers | 3 per player, 1 HP, move 3 hexes/round OR launch |
@@ -176,18 +176,22 @@ Victory conditions are evaluated only after a full resolution completes — neve
 | Bunker | 1 per player, 2 direct hits |
 | Decoy bunker | 1 per player, 1 direct hit, no effect on any win condition |
 | Interceptor placement exclusion | ≥ 3 hexes from **both** your bunker and your decoy (identical rule for both — §12) |
-| Home zones (placement + spawns) | P1 columns 0–5, P2 columns 13–18 (offset coords) |
-| Fixed spawns P1 | launchers (2,3), (2,7), (2,11); drone (1,7) — P2 mirrored: (16,3), (16,7), (16,11); drone (17,7) |
+| Home zones (placement + spawns) | **P1 rows 13–18 (south), P2 rows 0–5 (north)** — full-width 6-row bands, 7 rows of neutral ground between them (offset coords) |
+| Fixed spawns P1 | launchers (2,16), (8,16), (13,16); drone (8,17) — P2 is their half-turn image: (13,2), (7,2), (2,2); drone (7,1) |
 | Match length target | 10–20 minutes |
 
-**Tuning intuition:** launcher speed 3 vs missile range 6 vs map width 19 gives ~2 rounds of maneuver before first exchanges are possible, and the drone reaches the enemy home zone on round 2 — first blood around round 3 without any grace-period rule. The pre-pivot grace rules (no launches round 1, leader untargetable rounds 1–3) were **cut as redundant: starting geometry enforces them.** If spawn positions or ranges change, re-check that this stays true.
+**The board is fought north/south.** P1 holds the southern edge and advances north; P2 holds the northern edge and advances south. Row 0 is the top of the screen, so P1's home rows are the *high* numbers. This is not cosmetic — hexes are **flat-top**, which means every hex has a true north and south neighbour and none directly east or west, so an advance up the board is a straight line rather than a zigzag. The north/south axis is the long one (19) precisely because it is the axis of approach.
+
+**Why a 180° rotation rather than a mirror.** The map is flat-top hexes in odd-q offset coordinates, where odd columns sit half a hex lower than even ones. A top/bottom mirror is therefore geometrically impossible: reflecting the row index lands odd columns half a hex off the grid, and the two halves end up at subtly different distances from their owner's spawns — an invisible unfairness no playtest would ever isolate. A half-turn about the map centre is a true isometry (distances, adjacency and movement costs all survive it), **but only while the map width is even** — hence 16, not 15 or 19. `generateMap` throws on an odd width, and `map.test.ts` checks distance preservation across every pair of hexes on the board. The visible consequence is that the two sides' launcher *columns* differ (P1's col 2 answers P2's col 13); their geometry is identical.
+
+**Tuning intuition:** launcher speed 3 vs missile range 6 vs the 14 rows between the two launcher lines gives ~2 rounds of maneuver before first exchanges are possible, and the drone reaches the enemy home zone on round 2 — first blood around round 3 without any grace-period rule. The pre-pivot grace rules (no launches round 1, leader untargetable rounds 1–3) were **cut as redundant: starting geometry enforces them.** If spawn positions or ranges change, re-check that this stays true.
 
 ---
 
 ## 8. Build Order (one focused session each)
 
 **V1 — hotseat**
-1. [DONE] Hex map render (Pixi): mirrored terrain, pan/zoom, hover/select.
+1. [DONE] Hex map render (Pixi): rotationally symmetric terrain, pan/zoom, hover/select.
 2. **Pivot migration:** rewrite `types.ts` (unit kinds `launcher | interceptor | drone | bunker | decoy`, new Order/Event shapes, GameState with per-player intel — permanent static reveals + this-round launcher contacts (§11) — and drone respawn tracking, drop MissileStock/recon-sweep fields) and `defs.ts` (new UNIT_DEFS incl. the decoy row, `RULES.ordersPerUnit`); update movement tests' kind names; add spawn-hex terrain guarantee to `map.ts`. Types shown for approval before logic, per workflow.
 3. **`hexLine()`** in `hex.ts` + tests: cube-lerp line drawing with the pinned epsilon nudge (§10). One primitive, used by both missiles and drones.
 4. **`resolve()` skeleton + ground movement phase:** §9 application, one-order-per-unit batch validation, `UNIT_MOVED`/`MOVE_FAILED`, plus the determinism test (same inputs twice -> deep-equal outputs).
@@ -314,7 +318,7 @@ A launch logged in round 4 is a record of where a launcher *was* in round 4. By 
 
 **Drone loss & respawn:** when your drone is shot down you play the **next full round with no drone**. "Blind" means *no drone only*: launch detection still works, and your permanent static reveals are all kept (one-round launcher sightings still expire on the normal schedule — nothing preserves them). The round after that, a fresh drone spawns at your fixed drone spawn hex at the start of the order phase. Respawns are unlimited: recon can be taxed and delayed, never permanently denied.
 
-**Terrain is public.** Both players see the whole map from the start — it is mirrored and symmetric, so hiding it would achieve nothing. Hidden information covers *assets only*, never tiles. The visibility filter must never strip or mask `MapData`.
+**Terrain is public.** Both players see the whole map from the start — it is rotationally symmetric, so hiding it would achieve nothing. Hidden information covers *assets only*, never tiles. The visibility filter must never strip or mask `MapData`.
 
 ### Why launcher sightings expire (design note — do not "fix" this)
 
@@ -330,11 +334,11 @@ An earlier draft kept permanent "last seen (hex, round N)" ghost markers. They w
 
 **Secret placement (SETUP phase, hotseat: P1 places while P2 looks away, then swap):** each player places, in order:
 
-1. **Bunker** — any passable, non-spawn hex in their home zone (columns 0–5 / 13–18).
+1. **Bunker** — any passable, non-spawn hex in their home zone (P1 rows 13–18 in the south / P2 rows 0–5 in the north).
 2. **Decoy bunker** — the same constraints as the bunker, on a different hex. No minimum or maximum distance from the real bunker (see the design note below).
 3. **2 Interceptor bases** — any passable, non-spawn, unoccupied hexes in their home zone, each **at least 3 hexes from both their own bunker and their own decoy** (so both sites and their neighbors sit outside all friendly coverage — no point-blank shield; defending approach *lanes* at a distance is legal and is the intended skill).
 
-Each step validates against the rules above, and the UI must offer only legal hexes. A 6×15 home zone is far larger than two radius-2 exclusion zones, so no bunker/decoy pair can box a player out of legal base positions — but placement validation is still a pure function in `src/sim/`, tested, and the single authority both the UI and the engine call.
+Each step validates against the rules above, and the UI must offer only legal hexes. A 6-row × 16-column home zone (96 hexes) is far larger than two radius-2 exclusion zones, so no bunker/decoy pair can box a player out of legal base positions — but placement validation is still a pure function in `src/sim/`, tested, and the single authority both the UI and the engine call.
 
 **Why the exclusion rule exists:** without it, both bases sit on top of the bunker, the drone dies before it can ever see it, and missiles can't reach it — an unfindable, unkillable turtle. The rule forces the bunker to be defended by *concealment and geography*, never by walls.
 
@@ -352,7 +356,7 @@ This is not stylistic. Any asymmetry becomes a *rules-derived tell* — a way fo
 - *Finding interceptor bases narrows the bunker hunt.* Because bases must sit ≥3 from both sites, an attacker who spots both bases can rule out every hex within 2 of either. Recon that finds defenses is therefore also recon that finds the leader — a genuine second use for drone intel.
 - *Tuning lever if the bluff proves too cheap in playtest:* raise the decoy to 2 HP. It then becomes fully symmetric with the real bunker and is distinguishable only by the absence of dead hand when it dies — a longer, more expensive bluff. V1 ships at 1 HP deliberately, for a faster resolution.
 
-There is no placement of launchers or the drone; asymmetric openings come from secret bunker/decoy/base placement plus mirrored terrain.
+There is no placement of launchers or the drone; asymmetric openings come from secret bunker/decoy/base placement plus rotationally symmetric terrain.
 
 ---
 

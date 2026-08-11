@@ -31,8 +31,10 @@ export interface UnitDef {
    * orders outright for exactly that reason.
    *
    * Tuning note: launcher movement is meaningless in isolation — what matters
-   * is its ratio to missile range (6) and map width (19). At 3, a launcher
-   * gets roughly two rounds of maneuver before first contact, and cannot
+   * is its ratio to missile range (6) and the length of the north/south axis
+   * the two sides advance along (map height 19, 14 rows between the opposing
+   * spawn lines). At 3, a launcher gets roughly two rounds of maneuver before
+   * first contact, and cannot
    * outrun retaliation after a launch reveals its origin, which is what makes
    * firing a commitment rather than a hit-and-run (spec §3, §7).
    */
@@ -68,26 +70,37 @@ export const TERRAIN_DEFS = {
 /**
  * Fixed spawn hexes, in map col/row offset coordinates (spec §7, §12).
  *
+ * The board is fought north/south: **P1 holds the south (high row numbers) and
+ * advances north; P2 holds the north (row 0 is the top of the screen) and
+ * advances south.** Row 16 is two rows in from P1's edge, row 2 two rows in
+ * from P2's — 14 rows of ground between the two launcher lines.
+ *
  * These are PUBLIC knowledge — both players know where the other's launchers
  * and drone start. `generateMap` forces all 8 to plains so a spawn can never
  * land on a mountain, and placement may never use one.
+ *
+ * Each P1 spawn's half-turn image (`rotate180`) is itself a listed P2 spawn,
+ * which is what lets `generateMap` force spawns to plains after the copy pass
+ * without breaking the map's symmetry — `map.test.ts` pins that pairing down.
+ * The columns are not identical between the two sides because the symmetry is
+ * a rotation, not a mirror: P1's launcher at col 2 answers P2's at col 13.
  */
 export const SPAWNS = {
   p1: {
     launchers: [
-      { col: 2, row: 3 },
-      { col: 2, row: 7 },
-      { col: 2, row: 11 },
+      { col: 2, row: 16 },
+      { col: 8, row: 16 },
+      { col: 13, row: 16 },
     ],
-    drone: { col: 1, row: 7 },
+    drone: { col: 8, row: 17 },
   },
   p2: {
     launchers: [
-      { col: 16, row: 3 },
-      { col: 16, row: 7 },
-      { col: 16, row: 11 },
+      { col: 2, row: 2 },
+      { col: 7, row: 2 },
+      { col: 13, row: 2 },
     ],
-    drone: { col: 17, row: 7 },
+    drone: { col: 7, row: 1 },
   },
 } as const satisfies Record<
   PlayerId,
@@ -158,10 +171,16 @@ export const RULES = {
    */
   bunkerExclusionRadius: 3,
 
-  /** Placement zones, as inclusive col ranges in offset coords (spec §7). */
-  homeZoneCols: {
-    p1: { min: 0, max: 5 },
-    p2: { min: 13, max: 18 },
+  /**
+   * Placement zones, as inclusive ROW ranges in offset coords (spec §7).
+   *
+   * The board is fought north/south, so a home zone is a 6-row band across the
+   * full 16-column width: P1's is the south edge, P2's the north, with 7 rows
+   * of neutral ground (6–12) between them.
+   */
+  homeZoneRows: {
+    p1: { min: 13, max: 18 },
+    p2: { min: 0, max: 5 },
   },
 
   /**
