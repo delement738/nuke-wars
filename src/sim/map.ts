@@ -1,5 +1,6 @@
 // PURE SIMULATION CODE — no React or Pixi imports allowed in src/sim/, ever.
 
+import { ALL_SPAWN_HEXES } from './defs';
 import type { Offset } from './hex';
 
 export type Terrain = 'plains' | 'mountain' | 'urban';
@@ -61,7 +62,23 @@ export function generateMap(width = 19, height = 15, seed = 42): MapData {
     }
   }
 
-  return { width, height, tiles };
+  const map: MapData = { width, height, tiles };
+
+  // Spec §12: the 8 fixed spawn hexes are guaranteed plains. Without this a
+  // seed could drop a mountain on a launcher's starting hex, which is not a
+  // "hard map" — it is an immobile launcher and an unplayable game.
+  //
+  // Applied after mirroring rather than to the left half, because the spawn
+  // list names both players' hexes explicitly. Symmetry survives regardless:
+  // every P1 spawn's mirror image is itself a listed P2 spawn. A spawn that
+  // rolled urban is converted too, so a player can end up with 5 urban hexes
+  // instead of 6 — harmless, since urban is visual flavour only in V1 (§2).
+  for (const spawn of ALL_SPAWN_HEXES) {
+    const tile = tileAt(map, spawn);
+    if (tile) tile.terrain = 'plains';
+  }
+
+  return map;
 }
 
 /**
