@@ -1,5 +1,7 @@
 // PURE SIMULATION CODE — no React or Pixi imports allowed in src/sim/, ever.
 
+import type { Offset } from './hex';
+
 export type Terrain = 'plains' | 'mountain' | 'urban';
 
 export interface TileData {
@@ -60,4 +62,25 @@ export function generateMap(width = 19, height = 15, seed = 42): MapData {
   }
 
   return { width, height, tiles };
+}
+
+/**
+ * The tile at a col/row, or `undefined` if the position is off the map.
+ *
+ * O(1): `generateMap` fills `tiles` in column-major order (every row of col 0,
+ * then every row of col 1...), so a tile's index is `col * height + row`.
+ * That shortcut depends on the fill order above, so `tileAt` is unit-tested
+ * against a linear search across the whole map — if the two ever disagree,
+ * the test fails rather than movement silently reading the wrong terrain.
+ *
+ * Note this is the *only* correct way to bounds-check a position: the map is a
+ * rectangle in col/row, which is a slanted parallelogram in axial space, so
+ * there's no clean "is this hex on the map" test in axial coordinates.
+ */
+export function tileAt(map: MapData, offset: Offset): TileData | undefined {
+  const { col, row } = offset;
+  if (col < 0 || col >= map.width || row < 0 || row >= map.height) {
+    return undefined;
+  }
+  return map.tiles[col * map.height + row];
 }

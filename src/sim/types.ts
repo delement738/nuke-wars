@@ -59,6 +59,9 @@ export type Order =
   | { type: 'LAUNCH'; unitId: UnitId; missile: MissileType; target: Hex }
   | { type: 'RECON'; center: Hex };
 
+/** Narrowed to the MOVE variant — the input shape the movement engine takes. */
+export type MoveOrder = Extract<Order, { type: 'MOVE' }>;
+
 export type GamePhase =
   | 'ORDER_PHASE'
   | 'RESOLUTION'
