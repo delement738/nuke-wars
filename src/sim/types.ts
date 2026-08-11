@@ -290,3 +290,18 @@ export type GameEvent =
   /** `playerId` is the decapitated player — the one who gets the final round. */
   | { type: 'DEAD_HAND_TRIGGERED'; playerId: PlayerId }
   | { type: 'GAME_OVER'; outcome: Outcome };
+
+/**
+ * What `resolve()` hands back (spec §6): the next state, plus the ordered event
+ * log for *this* resolution only.
+ *
+ * The log is deliberately not a field on GameState. Each client appends the
+ * events it is allowed to see to its own permanent history (spec §11), so the
+ * engine never carries the log from round to round — it would otherwise grow
+ * inside the state that gets copied every resolution, and every visibility
+ * filter would have to re-filter the entire match's history.
+ */
+export interface ResolveResult {
+  state: GameState;
+  events: GameEvent[];
+}
