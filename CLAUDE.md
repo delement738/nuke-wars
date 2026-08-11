@@ -77,4 +77,4 @@ Checklist: `UnitKind = 'launcher' | 'interceptor' | 'drone' | 'bunker' | 'decoy'
 - None blocking. All §7 numbers are untested first drafts (validate by playtest after step 10); the §10 unit-id intercept tiebreak is accepted-arbitrary by design.
 
 ### Known issues
-- Code/spec mismatch until the migration session lands (see warning above). Docs changes are uncommitted as of the pivot session — commit when ready.
+- Code/spec mismatch until the migration session lands (see warning above). Nothing else outstanding: the pivot docs were committed on `docs/v1-pivot` and merged into `main` on 2026-08-11, so `main` carries the post-pivot design with pre-pivot code.
