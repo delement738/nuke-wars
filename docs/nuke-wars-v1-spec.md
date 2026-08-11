@@ -34,7 +34,7 @@ Both the bunker and a **decoy bunker** are hidden, and to the enemy they are ind
 |---|---|---|---|---|
 | **Mobile Launcher** | 3 | 3 hexes/round, ground | 1 hit | The only offense. Each round: move **or** launch one missile (range 6) — never both. Cannot target drones. |
 | **Interceptor Base** | 2 | Static (placed at setup) | 1 hit | Covers its own hex + 6 neighbors (radius 1). Destroys **at most 1 enemy missile per round** whose flight path crosses its coverage. Also destroys any enemy drone that enters coverage (does not consume the missile intercept). |
-| **Recon Drone** | 1 | 6 hexes/round, air | — | Flies a straight line each round, revealing a 3-wide swath. The **only** way to find enemy bunker sites — though recon alone cannot tell the real one from the decoy. Killed only by enemy interceptor coverage. Respawns after 1 blind round. |
+| **Recon Drone** | 1 | 6 hexes/round, air | — | Flies a straight line each round, revealing a 3-wide swath. The **only** way to find enemy bunker sites and interceptor bases — though recon alone cannot tell the real bunker from the decoy. Spotted launchers stay on your map for one round; spotted static assets stay forever (§11). Killed only by enemy interceptor coverage. Respawns after 1 blind round. |
 | **Bunker** | 1 | Static (placed at setup) | 2 direct hits | The leader. Hidden until a drone swath reveals it; once revealed, revealed forever (it cannot move). Its destruction triggers dead hand. |
 | **Decoy Bunker** | 1 | Static (placed at setup) | 1 direct hit | Empty concrete. Identical to the real bunker in every observable way (§12) — same placement rules, reported as a bunker by enemy recon. Destroying it wins nothing and triggers nothing; it costs the attacker a missile, a launcher's round, and the exposure of having fired. |
 
@@ -44,7 +44,7 @@ Both the bunker and a **decoy bunker** are hidden, and to the enemy they are ind
 
 **Terrain:** **Plains** (normal), **Mountains** (impassable to launchers; missiles and drones fly over freely), **Urban** (visual flavor only in V1).
 
-**Roster discipline:** V1 fields exactly five asset types — one mobile offensive unit, one static defense, one recon unit, one leader piece, one decoy — plus a single missile type. That is 8 assets per player and nothing else. Depth comes from interactions (interceptor geometry × fog × the real-or-fake read × counter-battery exposure), not roster size.
+**Roster discipline:** V1 fields exactly five asset types — one mobile offensive unit, one static defense, one recon unit, one leader piece, one decoy — plus a single missile type. That is 8 assets per player and nothing else. Depth comes from interactions (interceptor geometry × concealment × the real-or-fake read × counter-battery exposure), not roster size.
 
 ### Deferred to V2+
 See `docs/v2-backlog.md`, including everything cut in the 2026-08-11 pivot.
@@ -128,7 +128,7 @@ Victory conditions are evaluated only after a full resolution completes — neve
 **Four layers, strictly separated:**
 
 1. **Simulation engine** — pure TypeScript, zero React/Pixi/network imports. One pure function: `resolve(state, ordersP1, ordersP2, seed) -> newState + eventLog`. Fully unit-tested. In V1.5 this runs server-side and authoritative, unchanged.
-2. **Fog filter** — pure functions `filterForPlayer(state, playerId) -> visibleState` and `filterEventsForPlayer(events, playerId) -> visibleEvents` (visibility table below). In hotseat they hide the inactive player's info; in V1.5 the server applies them before sending, making cheating impossible by construction.
+2. **Visibility filter** — pure functions `filterForPlayer(state, playerId) -> visibleState` and `filterEventsForPlayer(events, playerId) -> visibleEvents` (visibility table below; the detection rules they implement are §11). In hotseat they hide the inactive player's info; in V1.5 the server applies them before sending, making cheating impossible by construction.
 3. **Presentation** — Pixi + React. Reads visible state, renders, builds pending orders. Never mutates game state.
 4. **Network (V1.5)** — rooms, order collection window, countdown enforcement, reconnect, per-player broadcast.
 
@@ -136,17 +136,19 @@ Victory conditions are evaluated only after a full resolution completes — neve
 
 **Event log rule:** `resolve()` emits an ordered event list. Clients animate from events, never by diffing states. Also the replay format.
 
-**Event visibility table** (this replaces the old open question "how does the event log respect fog"):
+**The log is permanent; map markers are not.** Each player keeps every event they were allowed to see for the whole match — the full history of detected launches is always readable. Map detections expire on the §11 schedule (launchers after one round, static assets never). The log is history; the map is live intel. Do not conflate them.
+
+**Event visibility table** (which player may see which event — the detection rules these serve are §11):
 
 | Event | Visible to |
 |---|---|
-| `LAUNCH_DETECTED` (origin, target) | **Both** — launches are loud; origin auto-detection is a core intel source |
+| `LAUNCH_DETECTED` (origin, target) | **Both** — launches are loud, and detection is automatic and unsuppressable. The origin marks an enemy launcher on the defender's map for **one round** (§11); the log entry itself is permanent |
 | `MISSILE_INTERCEPTED` (hex) | **Both** — probing lanes with missiles is legitimate, risky recon |
 | `IMPACT` (hex only — **never** says what it hit) | **Both.** Emitted for **every** missile that reaches its target hex, including hits on empty ground. This is load-bearing: if `IMPACT` only fired when something was struck, its mere presence would reveal that the hex was occupied, and blind-fire probing would find bunkers and bases for free — defeating both the `BUNKER_HIT` secrecy rule below and "only drones find bunkers" |
 | `UNIT_DESTROYED` (unitId, kind, hex) | **Both** — kills are observable. Reports a destroyed decoy **truthfully as a decoy**: masking it as "bunker" would fool nobody, since the absence of dead hand gives it away in the same instant, and a lie the engine has to maintain is a bug waiting to happen |
 | `BUNKER_HIT` (non-lethal bunker damage) | **Owner only.** To the attacker, a non-lethal bunker hit is indistinguishable from hitting empty ground — this preserves "only drones find bunkers" against blind-fire probing. Decoys never emit it (they die to the hit that would cause it), so *silence after a hit* is exactly what identifies the real bunker |
 | `DRONE_DOWNED` (hex) | **Both** (the defender knows their own base locations, so this leaks nothing to them; the owner learns only the death hex — the killing base is somewhere within 1, i.e. 7 candidates) |
-| `DRONE_MOVED`, `ASSET_SPOTTED` (recon results) | **Spotting player only.** A spotted decoy is reported with `kind: 'bunker'` — the fog filter applies the mask, so `resolve()` never lies and the sim stays honest internally (§11) |
+| `DRONE_MOVED`, `ASSET_SPOTTED` (recon results) | **Spotting player only.** A spotted decoy is reported with `kind: 'bunker'` — the visibility filter applies the mask, so `resolve()` never lies and the sim stays honest internally (§11) |
 | `UNIT_MOVED`, `MOVE_FAILED` | **Owner only** (`MOVE_FAILED` carries only the mover's unit id, §9) |
 | `DEAD_HAND_TRIGGERED`, `GAME_OVER` | **Both** |
 
@@ -166,6 +168,8 @@ Victory conditions are evaluated only after a full resolution completes — neve
 | Interceptor bases | 2 per player, 1 HP, coverage radius 1, max 1 missile intercept per round each; drone kills are free |
 | Recon drone | 1 per player, 6 hexes/round straight-line, reveal swath = path + neighbors (3 wide) |
 | Drone respawn | 1 full blind round, then respawns at the drone spawn hex |
+| Launcher sighting (recon or detected launch) | Visible for **1 round** — the next order phase only (§11) |
+| Static sighting (bunker, decoy, interceptor base) | **Permanent**, until the asset is publicly destroyed (§11) |
 | Bunker | 1 per player, 2 direct hits |
 | Decoy bunker | 1 per player, 1 direct hit, no effect on any win condition |
 | Interceptor placement exclusion | ≥ 3 hexes from **both** your bunker and your decoy (identical rule for both — §12) |
@@ -181,18 +185,18 @@ Victory conditions are evaluated only after a full resolution completes — neve
 
 **V1 — hotseat**
 1. [DONE] Hex map render (Pixi): mirrored terrain, pan/zoom, hover/select.
-2. **Pivot migration:** rewrite `types.ts` (unit kinds `launcher | interceptor | drone | bunker | decoy`, new Order/Event shapes, GameState with intel + drone respawn tracking, drop MissileStock/recon-sweep fields) and `defs.ts` (new UNIT_DEFS incl. the decoy row, `RULES.ordersPerUnit`); update movement tests' kind names; add spawn-hex terrain guarantee to `map.ts`. Types shown for approval before logic, per workflow.
+2. **Pivot migration:** rewrite `types.ts` (unit kinds `launcher | interceptor | drone | bunker | decoy`, new Order/Event shapes, GameState with per-player intel — permanent static reveals + this-round launcher contacts (§11) — and drone respawn tracking, drop MissileStock/recon-sweep fields) and `defs.ts` (new UNIT_DEFS incl. the decoy row, `RULES.ordersPerUnit`); update movement tests' kind names; add spawn-hex terrain guarantee to `map.ts`. Types shown for approval before logic, per workflow.
 3. **`hexLine()`** in `hex.ts` + tests: cube-lerp line drawing with the pinned epsilon nudge (§10). One primitive, used by both missiles and drones.
 4. **`resolve()` skeleton + ground movement phase:** §9 application, one-order-per-unit batch validation, `UNIT_MOVED`/`MOVE_FAILED`, plus the determinism test (same inputs twice -> deep-equal outputs).
-5. **Recon phase:** drone flight, interception, swath reveals, intel/ghost-marker state, respawn countdown.
+5. **Recon phase:** drone flight, interception, swath reveals, intel state (permanent static reveals + expiring launcher contacts, §11), respawn countdown.
 6. **Launch/intercept/impact phases:** step-wise intercept assignment (§10), stacking damage, `UNIT_DESTROYED`/`BUNKER_HIT`, decoy destruction.
 7. **Dead hand + outcomes + state machine**, including setup-placement validation as pure functions (home zone, terrain, spawn hexes, the ≥3 exclusion against *both* bunker and decoy).
-8. **Fog filter:** `filterForPlayer` + `filterEventsForPlayer` per the §6 visibility table, including the decoy→bunker mask (§12). This is the single place in the codebase permitted to know a decoy is a decoy; test it explicitly.
-9. **Wire sim -> renderer:** Zustand store owns state; canvas draws units/intel/highlights; single-player sandbox vs a static dummy opponent.
+8. **Visibility filter:** `filterForPlayer` + `filterEventsForPlayer` per the §6 visibility table and the §11 detection rules, including the decoy→bunker mask (§12). This is the single place in the codebase permitted to know a decoy is a decoy; test it explicitly, and test that a launcher contact is gone one round later.
+9. **Wire sim -> renderer:** Zustand store owns state; canvas draws units/intel/highlights; HUD keeps the running event log (all detected launches, §11); single-player sandbox vs a static dummy opponent.
 10. **Setup placement UI + order builder + hotseat handoff** (bunker → decoy → 2 bases per player, then orders; placement and resolution reveals are viewed per-player with a pass-the-screen handoff, since both contain private intel). **<- V1 done: playable and testable for fun.**
 
 **V1.5 — networked**
-11. WebSocket server: rooms, order collection, authoritative resolve, per-player fog filter.
+11. WebSocket server: rooms, order collection, authoritative resolve, per-player visibility filter.
 12. Countdown timer, ready-up, reconnect handling.
 13. Deploy: static client (Vercel/Netlify) + socket server (Fly.io/Railway).
 
@@ -211,8 +215,8 @@ Ground movement (launchers only — the drone is exempt, §11) resolves in phase
 | Two units ordered into the same empty hex | **Standoff — neither moves.** | Symmetric, deterministic, needs no tiebreak. Same solution Diplomacy has used for a century. |
 | Two units ordered to swap hexes | **Both orders illegal.** | Falls out of the occupied-tile rule for free: at phase start each destination is occupied. |
 | Unit ordered into a hex another unit is vacating this round | **Illegal — no chaining or following.** | The hex is occupied at phase start. Permitting it would make resolution order-dependent. |
-| Move blocked by a hidden enemy unit | **The order fails entirely; the unit holds position. No partial advance.** | Partial movement would require path reconstruction plus tiebreaks between equal-cost routes. More importantly, a failed order is part of what makes recon valuable: advancing into unscouted ground risks wasting that launcher's entire round. |
-| Move blocked by terrain or a unit the player can see | **Rejected at order entry.** | The UI validates against fog-filtered state, so these never reach resolution. |
+| Move blocked by an undetected enemy unit | **The order fails entirely; the unit holds position. No partial advance.** | Partial movement would require path reconstruction plus tiebreaks between equal-cost routes. More importantly, a failed order is part of what makes recon valuable: advancing into unscouted ground risks wasting that launcher's entire round. |
+| Move blocked by terrain or a unit the player can currently see | **Rejected at order entry.** | The UI validates against the visibility-filtered state (§11), so these never reach resolution. Note a launcher contact that has expired is *not* visible — you can legally order a move into a hex where you saw a launcher two rounds ago, and it can fail. |
 
 **Occupancy:** a living ground unit (launcher, interceptor base, bunker, **decoy**) blocks both *passage through* and *landing on* its hex, friendly or enemy. Destroyed units block nothing. The drone neither blocks nor is blocked. Ordering a unit to the hex it already occupies is illegal, not a no-op — it would silently waste that unit's round.
 
@@ -222,7 +226,7 @@ The decoy blocking movement is not a detail — it is required by §12. If it we
 
 **Reporting a failed move.** A failed or standoff move emits exactly one event, `MOVE_FAILED`, carrying only the mover's own unit id — no destination, no blocker, no reason code. Standoffs and blocked advances are byte-identical, so the player cannot distinguish "an enemy was parked there" from "an enemy raced me for that hex." The event carries no enemy-derived data, so it is leak-proof by construction. Surface it as flavour ("your advance met resistance") without naming a hex or unit.
 
-**Information leak (intentional):** a player whose move fails learns an enemy ground unit is adjacent-ish to that path. Making contact is genuine intelligence, and it is the defender's reward for positioning well.
+**Information leak (intentional):** a player whose move fails learns an enemy ground unit is adjacent-ish to that path. Making contact is genuine intelligence, and it is the defender's reward for positioning well. It is *not* a detection: nothing appears on the map (§11).
 
 ---
 
@@ -245,20 +249,71 @@ One geometric primitive powers both missiles and drone flight: **`hexLine(a, b)`
 
 ---
 
-## 11. Recon & Intel
+## 11. Detection & Intel
+
+### The detection rules — this is the entire system
+
+1. **The map is public, and your own assets are always visible to you.** Only *enemy assets* are ever hidden.
+2. **An enemy asset appears on your map only when you detect it.** There are exactly two detectors: your **recon drone's swath** and **automatic launch detection**. Nothing else on the board reveals an enemy asset — no adjacency, no line of sight, no "you can see 2 hexes around your units."
+3. **How long a detection lasts depends only on whether the thing can move.**
+   - **Mobile (launchers) — one round.** The sighting is on your map for your next order phase, then it is gone. A launcher moves 3 hexes a round, so an older sighting is a guess, not intel.
+   - **Static (bunker, decoy, interceptor bases) — permanent.** They cannot move, so the sighting stays true forever. It leaves your map only when the asset is publicly destroyed.
+4. **No detection ever tells the real bunker from the decoy.** Both enter your map as a *bunker site* and stay labelled that way until a missile proves otherwise (§12).
+
+Everything below is detail on those four rules.
+
+### The two detectors
+
+| Detector | Fires in | What it puts on your map | For how long |
+|---|---|---|---|
+| **Recon drone swath** | Phase 1 | Every enemy asset in the swath — launchers, interceptor bases, and bunker/decoy sites | Launchers: 1 round. Static assets: permanent |
+| **Launch detection** | Phase 2 | The origin hex of every enemy missile fired this round (`LAUNCH_DETECTED`, §6). Automatic and unavoidable — launches are loud; no equipment is needed to detect one and nothing can suppress it | 1 round — a launcher can relocate next round, so the marker expires with it |
+
+A launch origin is a *launcher* sighting, so it follows the mobile rule. The `LAUNCH_DETECTED` event stays in your log permanently (below); the map marker does not.
+
+### Exactly when a one-round sighting is visible
+
+**A detection made during round N's resolution is on your map for the whole of round N+1's order phase, and is cleared when round N+1 resolves.** You get exactly one order phase to act on it. Two consequences the design leans on:
+
+- **A recon sighting can already be stale when you get it.** Recon flies in phase 1 and launchers move in phase 5 of the *same* round, so the launcher you photographed may have driven off before you ever issue an order. Shooting at a recon contact is a bet.
+- **A launch origin cannot be stale.** A launcher that fires cannot also move (one order per unit, §9), so it is still sitting on the origin hex when the round ends, and your counter-battery missile lands in phase 3 — before it can move in phase 5 (§3). A detected launch is therefore a live target for exactly one round, which is what makes firing a hard commitment.
+
+### What does *not* detect anything
+
+These are public events (§6). They report that something happened at a hex; they never place an enemy asset on your map.
+
+- **`IMPACT`** — emitted for every missile arrival, including hits on empty ground, precisely so its presence leaks nothing about occupancy.
+- **`MISSILE_INTERCEPTED`** — tells you an enemy base covers that hex, i.e. the base is one of 7 candidates. That is an inference you draw, not a reveal; the base is not marked until recon actually sees it.
+- **`DRONE_DOWNED`** — same shape of clue, same 7 candidates.
+- **`MOVE_FAILED`** — you learn only that *your own* move was blocked, with no hex, no blocker, and no reason (§9).
+- **Drones are never detectable at all.** No swath and no event ever reveals an enemy drone to you; drones do not reveal each other (§2). The only thing that touches an enemy drone is interceptor coverage, which kills it.
+
+### The event log is permanent history, not live intel
+
+Each player keeps an **append-only log of every event they were allowed to see** (§6), for the whole match — it is also the replay format. So the full record of **every launch you have detected**, with its round, origin hex and target hex, stays readable for the rest of the game.
+
+The log and the map say different things on purpose:
+
+- **The log** answers *"where have they fired from before?"* — pattern, tempo, which corner of the board they operate in.
+- **The map** answers *"where is an enemy launcher right now?"* — and only for the one round a sighting is good for.
+
+A launch logged in round 4 is a record of where a launcher *was* in round 4. By round 6 that launcher could be anywhere within 6 hexes of it. Reading the history is free; acting on it is a guess.
+
+### Recon drone mechanics
 
 **Drone flight order:** destination hex within 6; the drone flies `hexLine(current, destination)`. The player steers by choosing sweep lines, not by drawing paths (free-path waypoint orders are V2 — this keeps the order UI trivial and reuses §10's primitive). Ordering the drone to its own hex is illegal (give no order to hover). Hovering is safe: coverage kills on *entry* only.
 
-**Reveal swath:** for every hex the drone safely traverses this round (including its start hex, including the destination), the hex and its 6 neighbors are revealed. **A drone that is shot down reveals nothing from its death hex** — it is destroyed before transmitting. Its owner learns only the death hex (`DRONE_DOWNED`), leaving 7 candidate hexes for the killing base. Intel transmitted from earlier hexes in the same flight is kept (live transmission, not recovered-wreckage).
+**Reveal swath:** for every hex the drone safely traverses this round (including its start hex, including the destination), the hex and its 6 neighbors are revealed — a 3-wide corridor. **A drone that is shot down reveals nothing from its death hex** — it is destroyed before transmitting. Its owner learns only the death hex (`DRONE_DOWNED`), leaving 7 candidate hexes for the killing base. Intel transmitted from earlier hexes in the same flight is kept (live transmission, not recovered-wreckage).
 
-**Terrain is public.** Both players see the whole map from the start — it is mirrored and symmetric, so hiding it would achieve nothing. Fog of war hides *assets only*, never tiles. The fog filter must never strip or mask `MapData`.
+**A spotted decoy is reported to the enemy as a bunker.** The sim always stores and emits the truth (`kind: 'decoy'`); the visibility filter applies the mask on the way out, and is the only layer permitted to know the difference (§6, §12).
 
-**What a reveal produces:**
+**Drone loss & respawn:** when your drone is shot down you play the **next full round with no drone**. "Blind" means *no drone only*: launch detection still works, and your permanent static reveals are all kept (one-round launcher sightings still expire on the normal schedule — nothing preserves them). The round after that, a fresh drone spawns at your fixed drone spawn hex at the start of the order phase. Respawns are unlimited: recon can be taxed and delayed, never permanently denied.
 
-- **Static assets (bunker, decoy, interceptor bases):** revealed exactly and **permanently** — they cannot move. A revealed asset disappears from intel only via its public destruction. **A revealed decoy enters enemy intel as a bunker** and stays labelled that way until a missile proves otherwise; only the fog filter knows the difference (§6).
-- **Launchers (mobile):** a "last seen (hex, round N)" ghost marker. Since recon flies in phase 1 and ground moves in phase 5, drone photos are always of *pre-move* positions — markers can be one move stale by the time you act on them. A launch also drops a ghost marker at the revealed origin (§6). Newer sightings replace older ones; public destruction clears the marker.
+**Terrain is public.** Both players see the whole map from the start — it is mirrored and symmetric, so hiding it would achieve nothing. Hidden information covers *assets only*, never tiles. The visibility filter must never strip or mask `MapData`.
 
-**Drone loss & respawn:** when your drone is shot down you play the **next full round with no drone** (launch-origin auto-detection still works — "blind" means no drone only, and existing intel markers are kept). The round after that, a fresh drone spawns at your fixed drone spawn hex at the start of the order phase. Respawns are unlimited: recon can be taxed and delayed, never permanently denied.
+### Why launcher sightings expire (design note — do not "fix" this)
+
+An earlier draft kept permanent "last seen (hex, round N)" ghost markers. They were cut because a stale marker *looks* like knowledge: the map fills with contacts that are mostly wrong, and the player either learns to ignore all of them or gets punished for trusting one. Under the current rule the map only ever shows things that are true right now — a launcher marker means "it was there at the start of this round," a static marker means "it is there, full stop." Nothing is lost, because the event log keeps the whole history; it is just presented as history instead of as a target.
 
 **The intel race is the game clock:** the defender cannot point-defend the bunker (placement rule, §12) — only delay its discovery by killing drones, taxing time, and spending the attacker's shots on the decoy. Finding a "bunker" is therefore not the end of the hunt: the attacker must still spend a missile to learn whether it is real (§12). Once the *real* bunker is confirmed, its survival is measured in the rounds it takes to land 2 hits through the remaining interceptor lanes. Endgames are sharp by design.
 
@@ -280,7 +335,7 @@ Each step validates against the rules above, and the UI must offer only legal he
 
 ### The indistinguishability principle (binding on every layer)
 
-**Every rule that applies to the bunker applies identically to the decoy, with exactly one exception: hit points.** Same home zone, same terrain and spawn constraints, same interceptor exclusion, same permanent-reveal behaviour, same appearance in enemy intel and events.
+**Every rule that applies to the bunker applies identically to the decoy, with exactly one exception: hit points.** Same home zone, same terrain and spawn constraints, same interceptor exclusion, same permanent-detection behaviour (§11), same appearance in enemy intel and events.
 
 This is not stylistic. Any asymmetry becomes a *rules-derived tell* — a way for the attacker to identify the real bunker by reasoning about the rulebook instead of by spending a missile. If the exclusion rule covered only the real bunker, then "the site inside interceptor coverage" would be provably the fake, and the decoy would be worthless the instant both were spotted. When adding any future rule that mentions the bunker, ask whether it must also mention the decoy; the default answer is yes.
 
@@ -298,6 +353,8 @@ There is no placement of launchers or the drone; asymmetric openings come from s
 
 ## Resolved-by-pivot ledger
 
-For the record, the pivot resolved every open design question from the pre-pivot spec: damage model (hits-based: 1/1/2, no variance), non-leader HP (1), `MISSILE_DEFS` (moot — one missile type, stats in RULES), event-log fog (§6 visibility table), starting positions (§7/§12), starting defense counts (2 bases), and intra-round move-vs-impact ordering (§3: strikes first). Newly accepted rough edges, on purpose: the §10 unit-id tiebreak is arbitrary-but-deterministic, and all §7 numbers are untested first drafts.
+For the record, the pivot resolved every open design question from the pre-pivot spec: damage model (hits-based: 1/1/2, no variance), non-leader HP (1), `MISSILE_DEFS` (moot — one missile type, stats in RULES), event-log visibility (§6 table), starting positions (§7/§12), starting defense counts (2 bases), and intra-round move-vs-impact ordering (§3: strikes first). Newly accepted rough edges, on purpose: the §10 unit-id tiebreak is arbitrary-but-deterministic, and all §7 numbers are untested first drafts.
 
-**Amendment, same day — decoy bunker added to V1.** One decoy per player, 1 HP, placed secretly alongside the real bunker and rule-identical to it in every observable way (§12). It was in the original pre-pivot vision, deferred to V2, and is now back in V1 scope because the pivot's simplifications left room for it and it restores the bluff layer to the leader hunt. Its cost to build is small: one unit kind, one placement step, one mask in the fog filter. The V1 asset count per player goes 7 → 8.
+**Amendment, same day — decoy bunker added to V1.** One decoy per player, 1 HP, placed secretly alongside the real bunker and rule-identical to it in every observable way (§12). It was in the original pre-pivot vision, deferred to V2, and is now back in V1 scope because the pivot's simplifications left room for it and it restores the bluff layer to the leader hunt. Its cost to build is small: one unit kind, one placement step, one mask in the visibility filter. The V1 asset count per player goes 7 → 8.
+
+**Amendment, 2026-08-11 — detection rules clarified, "fog of war" retired as a term.** §11 is now a flat four-rule detection system (map public; only recon and launch detection reveal enemy assets; mobile sightings last one round, static sightings are permanent; nothing distinguishes bunker from decoy), and the old permanent "last seen (hex, round N)" launcher ghost markers are **cut** — a detected launch site expires after one order phase because the launcher can relocate. The permanent record moves to the event log, which keeps every detected launch for the whole match (§6). Architecture layer 2 is now called the **visibility filter** throughout; "fog"/"fog of war" is no longer used anywhere in the design.

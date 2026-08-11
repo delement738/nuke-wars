@@ -124,9 +124,9 @@ export function reachableHexes(
  * collapsing into a vague OUT_OF_RANGE. Tests and UI messaging both depend on
  * that distinction.
  *
- * Note this validates against true state, not fog-filtered state. In V1.5 the
- * server calls it with full knowledge, so a player can legally *order* a move
- * into a hex they can't see is blocked by a hidden enemy. Per spec §9 such an
+ * Note this validates against true state, not the visibility-filtered state. In
+ * V1.5 the server calls it with full knowledge, so a player can legally *order*
+ * a move into a hex they can't see is blocked by an undetected enemy. Per spec §9 such an
  * order fails entirely at resolution — the unit holds position, no partial
  * advance. Applying that (and the same-hex standoff rule) belongs to resolve().
  */

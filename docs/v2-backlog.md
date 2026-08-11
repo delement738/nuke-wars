@@ -44,9 +44,11 @@ decoy launchers or radars, and any active/emitted deception.
 
 # (ORIGINAL VISION — SUPERSEDED) Nuke Wars design document
 
-*Everything below this line is the pre-pivot vision, kept verbatim for reference.
+*Everything below this line is the pre-pivot vision, kept for reference.
 It is NOT the spec. Where it disagrees with `docs/nuke-wars-v1-spec.md`, the
-spec wins — always.*
+spec wins — always. Kept as written except for one terminology pass: the
+"fog of war" / "fog filter" wording was replaced with "visibility filter" and
+"detection" to match the current spec, so nobody reintroduces the old term.*
 
 *A 1v1 strategic command-and-control duel. Simultaneous hidden orders, hex-grid maneuver, finite defenses, and a decapitation endgame.*
 
@@ -82,7 +84,7 @@ The Leader is a hidden piece (Stratego-flag style). The intel war — finding th
 | Turn structure | Simultaneous order phases with countdown timer (75s default; both players can ready-up early). Server resolves once per round |
 | Chance model | Interception: resource-driven probability (each interceptor committed adds fixed %), single roll per inbound. Damage: 85–115% variance band |
 | Reveal rule | Any launch reveals the origin hex to the opponent |
-| Fog of war | Enemy units visible only inside radar/recon coverage; stale contacts persist as decaying "last seen" ghosts |
+| Persistent contacts | Enemy units visible only inside radar/recon coverage; stale contacts persist as decaying "last seen" ghosts — *NOTE: V1 cut the persistent ghosts entirely. Spec §11: launcher sightings last exactly one round, static sightings are permanent, and the history lives in the event log instead. Decaying ghosts are V2 material only* |
 
 ### Explicitly deferred to V2+
 Long-range/strategic missiles, cruise/stealth missiles, saturation decoy warheads, EMP/jammers, doctrines, escalation clock, naval/water hexes, 3+ player modes, ranked ladder, spectator mode, account system.
@@ -110,7 +112,7 @@ Long-range/strategic missiles, cruise/stealth missiles, saturation decoy warhead
 | 4 | **Draw — Mutual Annihilation** | Both Leaders dead (same round, or via dead-hand retaliation) |
 | 5 | **Attrition Adjudication** | Round cap reached → compare surviving regime % (urban hexes + assets + leader status). Within 5% margin = **Armistice** (draw) |
 
-Post-match: fog-lifted replay for both players (see what was real, what was bluff, how close the reads were).
+Post-match: full-reveal replay for both players (see what was real, what was bluff, how close the reads were).
 
 Match length target: **15–25 minutes.**
 
@@ -137,7 +139,7 @@ Victory conditions are evaluated only after a full resolution completes — neve
 **Four layers, strictly separated:**
 
 1. **Simulation engine** — pure TypeScript module, zero dependencies on React/Pixi/network. One pure function: `resolve(state, ordersP1, ordersP2, rngSeed) → newState + eventLog`. Fully unit-testable. Runs ONLY on the server in multiplayer (authoritative).
-2. **Fog filter** — pure function: `filterForPlayer(state, playerId) → visibleState`. The server applies this before sending state to each client. Clients NEVER receive hidden enemy data (anti-cheat by construction).
+2. **Visibility filter** — pure function: `filterForPlayer(state, playerId) → visibleState`. The server applies this before sending state to each client. Clients NEVER receive hidden enemy data (anti-cheat by construction).
 3. **Presentation** — Pixi + React. Reads visible state, renders it, builds pending orders. Never mutates game state.
 4. **Network** — rooms/matches, order collection window, countdown enforcement, reconnect handling, per-player state broadcast.
 
@@ -174,13 +176,13 @@ Victory conditions are evaluated only after a full resolution completes — neve
 ## 8. Build Order (each step = one focused coding session)
 
 1. Hex map render (Pixi): mirrored terrain gen, pan/zoom, hover/select.
-2. Simulation engine core (pure TS + unit tests): types, movement, range, launch, intercept, damage, fog visibility, win-condition check, state machine.
+2. Simulation engine core (pure TS + unit tests): types, movement, range, launch, intercept, damage, detection/visibility, win-condition check, state machine.
 3. Wire sim → renderer: single-player sandbox vs. static dummy.
-4. Order builder UI + local hotseat (pass-and-play proves fog + reveal tension).
-5. WebSocket server: rooms, order collection, authoritative resolve, per-player fog filter, two browser tabs playing each other.
+4. Order builder UI + local hotseat (pass-and-play proves hidden-information + reveal tension).
+5. WebSocket server: rooms, order collection, authoritative resolve, per-player visibility filter, two browser tabs playing each other.
 6. Countdown timer + ready-up, reconnect handling.
 7. Resolution animation sequence from event log; dead-hand phase UI.
-8. Setup-phase placement UI; post-match fog-lifted replay.
+8. Setup-phase placement UI; post-match full-reveal replay.
 9. Deploy: static client (Vercel/Netlify) + persistent socket server (Fly.io/Railway).
 
 **V1 done = step 9.** Everything in "deferred" list is V2+.

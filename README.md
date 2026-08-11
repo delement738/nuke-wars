@@ -6,6 +6,8 @@ The design pillar is **commit → dread → reveal**. Both players queue orders 
 
 Each side fields the entire roster: **3 mobile launchers** (move *or* fire, never both), **2 interceptor bases** (each stops at most 1 missile per round — saturation beats defense), **1 recon drone** (the only way to find the bunker), **1 hidden bunker** (2 hits, triggers a dead-hand retaliation when destroyed), and **1 decoy bunker** (1 hit, and indistinguishable from the real thing until a missile proves otherwise).
 
+**Seeing the enemy is deliberately simple.** The terrain is public, but enemy assets are hidden until you detect them, and there are only two detectors: fly your drone over them, or watch them fire — every launch is detected automatically, by both sides. A spotted launcher stays on your map for one round only, because it can relocate; a spotted bunker site or interceptor base can't move, so it stays marked permanently (and recon can never tell the real bunker from the decoy). Your event log keeps every launch you've detected for the whole match.
+
 ## Status
 
 **V1 (hotseat) — in development.** The hex map renders with pan/zoom/select; the movement validator is built and tested. The design was pivoted on 2026-08-11 (see the spec); the sim code is being migrated to the new design, then built out one system per session. Not yet playable.
@@ -41,7 +43,7 @@ Four strictly separated layers. The separation is non-negotiable — it's what l
 | `src/sim/` | Pure simulation engine | Never imports React, Pixi, DOM, or network code. All rules and state live here as pure functions. |
 | `src/render/` | PixiJS drawing | Reads state, draws it. Never mutates game state. |
 | `src/ui/` | React HUD/menus *(not yet created)* | Reads state, sends player intents. |
-| *(V1.5)* | Node.js WebSocket server | Rooms, order collection, authoritative resolve, per-player fog filter. |
+| *(V1.5)* | Node.js WebSocket server | Rooms, order collection, authoritative resolve, per-player visibility filter. |
 
 Three rules govern the sim layer:
 
