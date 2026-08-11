@@ -164,6 +164,21 @@ export const RULES = {
     p2: { min: 13, max: 18 },
   },
 
+  /**
+   * How many of each asset a player places during SETUP (spec §7, §12).
+   * Launcher and drone counts are not here because they are not placed — they
+   * start on the fixed public spawn hexes in SPAWNS.
+   *
+   * Placement order is bunker -> decoy -> bases, and every count here is
+   * validated by the same pure function the UI calls, so the two can never
+   * disagree about what a legal setup is.
+   */
+  placementCounts: {
+    bunker: 1,
+    decoy: 1,
+    interceptor: 2,
+  },
+
   /** Draw by Armistice when this many rounds resolve with no victory (spec §4). */
   roundCap: 25,
 } as const;
