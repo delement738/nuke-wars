@@ -1,12 +1,14 @@
 # Nuke Wars
 
-A 1v1 web-based strategy game: simultaneous hidden orders under a countdown timer, hex-grid maneuver, fog of war, finite interceptor defenses, and a hidden-Leader decapitation endgame.
+A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, drone reconnaissance, and a hidden-bunker decapitation endgame. Combat is fully deterministic — the only randomness in the game is map generation.
 
-The design pillar is **commit → dread → reveal**. Both players queue orders without seeing the other's, resolution is simultaneous, and moving into striking range is itself the act of exposure.
+The design pillar is **commit → dread → reveal**. Both players queue orders without seeing the other's, resolution is simultaneous, and every exposure is a choice: firing reveals your launcher, advancing risks contact, and your recon drone finds the enemy bunker only by flying into defended air.
+
+Each side fields the entire roster: **3 mobile launchers** (move *or* fire, never both), **2 interceptor bases** (each stops at most 1 missile per round — saturation beats defense), **1 recon drone** (the only way to find the bunker), **1 hidden bunker** (2 hits, triggers a dead-hand retaliation when destroyed), and **1 decoy bunker** (1 hit, and indistinguishable from the real thing until a missile proves otherwise).
 
 ## Status
 
-**V1 (hotseat) — in development.** The hex map renders with pan/zoom/select; the simulation engine core is being built one system per session. Not yet playable.
+**V1 (hotseat) — in development.** The hex map renders with pan/zoom/select; the movement validator is built and tested. The design was pivoted on 2026-08-11 (see the spec); the sim code is being migrated to the new design, then built out one system per session. Not yet playable.
 
 See the "Current status" section of [CLAUDE.md](CLAUDE.md) for exactly where things stand and what's next.
 
@@ -43,12 +45,12 @@ Four strictly separated layers. The separation is non-negotiable — it's what l
 
 Three rules govern the sim layer:
 
-- **Determinism** — `resolve(state, orders, seed)` is fully deterministic. No `Math.random()`; all randomness flows through the seeded RNG in [src/sim/map.ts](src/sim/map.ts). This makes bugs reproducible and lets you replay an identical match with exactly one balance number changed.
-- **Event log** — `resolve()` emits an ordered event list. Clients animate from those events, never by diffing state. It doubles as the replay format.
-- **Data tables** — unit, terrain, and missile stats live as plain keyed data in [src/sim/defs.ts](src/sim/defs.ts), never hardcoded in logic. A balance pass should be a one-file diff.
+- **Determinism** — `resolve(state, orders)` is fully deterministic by design: V1 combat uses no randomness at all, and every simultaneous tie has a written tiebreak in the spec. The seeded RNG in [src/sim/map.ts](src/sim/map.ts) exists only for map generation. Bugs are reproducible and a replay is just the initial state plus the orders.
+- **Event log** — `resolve()` emits an ordered event list with per-player visibility rules (spec §6). Clients animate from those events, never by diffing state. It doubles as the replay format.
+- **Data tables** — unit, terrain, and rule numbers live as plain keyed data in [src/sim/defs.ts](src/sim/defs.ts), never hardcoded in logic. A balance pass should be a one-file diff.
 
 ## Docs
 
-- **[docs/nuke-wars-v1-spec.md](docs/nuke-wars-v1-spec.md)** — the design specification. Source of truth for every rule, number, and V1 scope decision.
-- [docs/v2-backlog.md](docs/v2-backlog.md) — deferred features. Reference only; never implement from it.
+- **[docs/nuke-wars-v1-spec.md](docs/nuke-wars-v1-spec.md)** — the design specification. Source of truth for every rule, number, and V1 scope decision. Fully post-pivot (2026-08-11).
+- [docs/v2-backlog.md](docs/v2-backlog.md) — deferred features, including everything cut in the V1 pivot. Reference only; never implement from it.
 - [CLAUDE.md](CLAUDE.md) — working instructions and current status.
