@@ -11,7 +11,7 @@ A 1v1 web-based strategy game: simultaneous hidden orders under a countdown time
 - TypeScript + Vite + React 18
 - PixiJS v8 for the game map/rendering
 - Zustand for client state
-- honeycomb-grid for hex math (sim layer)
+- Hex math is hand-rolled in `src/sim/hex.ts` (axial coords) — deliberately dependency-free so the sim engine can move server-side unchanged in V1.5
 - Later (V1 step 5+): Node.js WebSocket server (not yet in the project)
 
 ## Architecture rules (non-negotiable)

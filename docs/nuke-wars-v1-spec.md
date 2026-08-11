@@ -83,7 +83,7 @@ Victory conditions are evaluated only after a full resolution completes — neve
 
 ## 6. Technical Architecture
 
-**Stack:** TypeScript. PixiJS (map/units/effects) + React (HUD/menus) + Zustand (client state). `honeycomb-grid` for hex math. V1.5 adds Node.js + WebSockets.
+**Stack:** TypeScript. PixiJS (map/units/effects) + React (HUD/menus) + Zustand (client state). Hex math is hand-rolled in `src/sim/hex.ts` (axial coordinates), keeping the sim engine dependency-free. V1.5 adds Node.js + WebSockets.
 
 **Four layers, strictly separated:**
 
