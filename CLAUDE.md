@@ -8,10 +8,10 @@ A 1v1 web-based strategy game: simultaneous hidden orders under a countdown time
 `docs/v2-backlog.md` is deferred-feature reference only — never implement from it.
 
 ## Stack
-- TypeScript + Vite + React 18
+- TypeScript + Vite + React 19
 - PixiJS v8 for the game map/rendering
 - Zustand for client state
-- honeycomb-grid for hex math (sim layer)
+- Hex math is hand-rolled in `src/sim/hex.ts` (axial coords) — deliberately dependency-free so the sim engine can move server-side unchanged in V1.5
 - Later (V1 step 5+): Node.js WebSocket server (not yet in the project)
 
 ## Architecture rules (non-negotiable)
@@ -43,7 +43,8 @@ A 1v1 web-based strategy game: simultaneous hidden orders under a countdown time
 - (once tests exist) `npx vitest` — run unit tests
 
 ## Current status (update at end of every session)
-- Completed: project scaffold; `src/sim/hex.ts` (axial hex math — distance/neighbors/hexesInRange, unit-tested); `src/sim/map.ts` (mirrored terrain gen with seeded RNG); `src/render/GameCanvas.tsx` (Pixi hex map, flat-top orientation, pan/zoom/hover/select, StrictMode-safe init/destroy); wired into App; `src/sim/types.ts` (core sim types: `GameState`, `Unit`, `Order`, `GameEvent`, `Outcome` — approved, no logic yet).
-- Next up: movement logic against the approved types — offset (col/row) ↔ axial (q/r) coordinate bridge, launcher movement validation (≤2 hexes/round, mountains impassable), with Vitest tests incl. an illegal-move case (spec §6–§8, build-order step 2, movement sub-stage).
-- Open questions to resolve before/during the movement or damage sessions: (1) HP for launcher/radar/interceptor isn't specified in the spec (only the Leader's "2 penetrating hits" is) — current assumption is 1 (destroyed by any impact), unconfirmed. (2) `UNIT_DEFS`/`MISSILE_DEFS` data tables (movement points, ammo, radii, the spec §7 numbers) don't exist yet — needed once movement/launch logic is implemented.
+- Completed: project scaffold; `src/sim/hex.ts` (axial hex math + odd-q offset↔axial bridge + `hexKey`, unit-tested); `src/sim/map.ts` (mirrored terrain gen with seeded RNG, plus O(1) `tileAt()`); `src/render/GameCanvas.tsx` (Pixi hex map, flat-top orientation, pan/zoom/hover/select, StrictMode-safe init/destroy); wired into App; `src/sim/types.ts` (core sim types); `src/sim/defs.ts` (`UNIT_DEFS`/`TERRAIN_DEFS` balance tables); `src/sim/movement.ts` (`reachableHexes` cost-aware flood fill + `validateMove`). 47 tests passing. TS `strict` is on. `honeycomb-grid` was removed — hex math is hand-rolled and the sim layer is dependency-free.
+- Next up: **applying** movement inside `resolve()` — mutate state, emit `UNIT_MOVED`/`MOVE_FAILED`, and enforce the two order-batch rules in `RULES` (`ordersPerRound`, `moveOrdersPerUnit`) that `validateMove` structurally can't see. Movement design is fully settled in spec §9; this is implementation only.
+- Rules decided this session (all written into **spec §9** — that is the source of truth, not this summary): occupied tiles block passage *and* landing, destroyed units block nothing; moving to your own hex is illegal, not a no-op; two units racing for the same empty hex both bounce; a move blocked by a hidden enemy fails entirely, no partial advance; all moves resolve against round-start state (so no chaining, and swaps are illegal); one MOVE order per unit per round; failed and standoff moves emit one identical `MOVE_FAILED` event carrying only the mover's own id, so the two cases are indistinguishable.
+- Open questions: (1) HP for launcher/radar/interceptor isn't in the spec (only the Leader's "2 penetrating hits") — assuming 1, unconfirmed. (2) `MISSILE_DEFS` doesn't exist yet — needed for the launch/interception sessions. (3) **Event-log fog filtering is unspecified** — spec §6 defines `filterForPlayer` for *state* only, but `UNIT_MOVED` carries from/to, `IMPACT` carries a target hex, and `UNIT_DESTROYED` names a unit. Broadcast raw, the event log defeats fog of war. Needs an answer before the fog-filter and V1.5 server sessions. (4) Starting positions are "fixed and symmetric" (§2) but the actual hexes are undefined — needed before any playable state exists.
 - Known issues: none currently.

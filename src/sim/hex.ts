@@ -44,3 +44,40 @@ export function hexesInRange(center: Hex, range: number): Hex[] {
   }
   return results;
 }
+
+/** Stable string key for putting hexes in Sets and Maps — "q,r". */
+export function hexKey(hex: Hex): string {
+  return `${hex.q},${hex.r}`;
+}
+
+/**
+ * A position in the map's rectangular grid, in "odd-q" offset coordinates for
+ * flat-top hexes: odd-numbered columns sit half a hex lower than even ones.
+ *
+ * This is the coordinate system `MapData`/`TileData` store and the renderer
+ * draws (`hexCenter` in GameCanvas.tsx offsets odd columns by `0.5 * (col % 2)`).
+ * The sim reasons in axial `Hex`; offsets exist only at that boundary.
+ */
+export interface Offset {
+  col: number;
+  row: number;
+}
+
+/**
+ * Offset (odd-q) -> axial. Every 2 columns east, the axial row origin shifts
+ * one step north, which is what keeps the two systems describing the same grid.
+ */
+export function offsetToAxial(offset: Offset): Hex {
+  return {
+    q: offset.col,
+    r: offset.row - (offset.col - (offset.col & 1)) / 2,
+  };
+}
+
+/** Axial -> offset (odd-q). Exact inverse of `offsetToAxial`. */
+export function axialToOffset(hex: Hex): Offset {
+  return {
+    col: hex.q,
+    row: hex.r + (hex.q - (hex.q & 1)) / 2,
+  };
+}
