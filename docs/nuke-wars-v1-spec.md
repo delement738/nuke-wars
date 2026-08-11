@@ -262,7 +262,11 @@ The decoy blocking movement is not a detail — it is required by §12. If it we
 
 ## 10. Flight Paths & Interception
 
-One geometric primitive powers both missiles and drone flight: **`hexLine(a, b)`** — the straight hex line from `a` to `b`, computed by cube-coordinate lerp + rounding (redblobgames method). Lines that graze exactly between two hexes are broken deterministically by nudging the interpolation with the fixed epsilon offsets **(+1e-6, +2e-6)** applied to `a`'s cube coordinates. These constants are part of the spec: every layer (sim, UI preview, server) must produce the identical path.
+One geometric primitive powers both missiles and drone flight: **`hexLine(a, b)`** — the straight hex line from `a` to `b`, computed by cube-coordinate lerp + rounding (redblobgames method). Lines that graze exactly between two hexes are broken deterministically by nudging the interpolation with the fixed epsilon offsets **(+1e-6, +2e-6)**, applied in cube coordinates to **both endpoints** (the third offset is **-3e-6**, forced by q + r + s = 0). These constants are part of the spec: every layer (sim, UI preview, server) must produce the identical path.
+
+**Both endpoints, not just the origin** (amended 2026-08-11, implementation session). This matches the redblobgames reference the method is taken from, so any reimplementation — notably the V1.5 server — can copy the standard code and agree with the client. It also makes the offset constant along the line, which makes lines **reversible**: `hexLine(a, b)` reversed is exactly `hexLine(b, a)`. Nudging only `a` shrinks the offset toward `b` and loses that property on grazing lines, which would let a UI previewing a line cursor-to-launcher draw a path the sim never flies.
+
+`hexLine` returns **both endpoints** — `a` first, `b` last, length `distance(a, b) + 1` — and is pure geometry: no range limit, no terrain, no legality checks (those belong to the order validators). `hexLine(a, a)` returns `[a]`; "the drone may not fly to its own hex" (§11) is a validation rule, not a geometric one.
 
 **Missile flight:** the missile traverses `hexLine(origin, target)`, checked for interception on every hex *after* the origin, including the target hex itself.
 
