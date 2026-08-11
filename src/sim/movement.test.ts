@@ -8,7 +8,14 @@ import {
   offsetToAxial,
   type Hex,
 } from './hex';
-import { generateMap, tileAt, type MapData, type Terrain, type TileData } from './map';
+import {
+  generateMap,
+  groundCostsFrom,
+  tileAt,
+  type MapData,
+  type Terrain,
+  type TileData,
+} from './map';
 import { reachableHexes, validateMove } from './movement';
 import type { GameState, MoveOrder, PlayerId, Unit, UnitKind } from './types';
 
@@ -231,6 +238,35 @@ describe('reachableHexes', () => {
     const unit = makeUnit('u1', 'p1', 'launcher', CENTER);
     const reached = reachableHexes(makeState(map, [unit]), unit);
     expect(reached.size).toBe(1);
+  });
+
+  it('agrees with map.ts groundCostsFrom on a board with no units', () => {
+    // map.ts carries its own terrain-only flood fill (groundCostsFrom) because
+    // it needs to prove a generated map is crossable, and importing this module
+    // from there would be a circular import. Two implementations of one idea is
+    // exactly the kind of duplication that drifts, so this pins them together:
+    // on a unit-free board they must return identical costs everywhere the
+    // budget-capped version reaches.
+    const map = makeMap(21, 21);
+    for (const hex of [
+      { q: CENTER.q + 1, r: CENTER.r },
+      { q: CENTER.q + 1, r: CENTER.r - 1 },
+      { q: CENTER.q - 2, r: CENTER.r + 1 },
+    ]) {
+      setTerrain(map, hex, 'mountain');
+    }
+
+    const unit = makeUnit('u1', 'p1', 'launcher', CENTER);
+    const capped = reachableHexes(makeState(map, [unit]), unit);
+    const uncapped = groundCostsFrom(map, axialToOffset(CENTER));
+
+    for (const [key, entry] of capped) {
+      expect(uncapped.get(key), `cost mismatch at ${key}`).toBe(entry.cost);
+    }
+    // ...and nothing within budget is missing from the capped side either.
+    for (const [key, cost] of uncapped) {
+      if (cost <= BUDGET) expect(capped.has(key), `${key} missing`).toBe(true);
+    }
   });
 
   it('is trapped by a ring of other units', () => {

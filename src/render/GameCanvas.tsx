@@ -1,13 +1,14 @@
 import { useEffect, useRef } from 'react';
 import { Application, Container, Graphics } from 'pixi.js';
-import { generateMap, type TileData } from '../sim/map';
+import { generateMap, type Terrain, type TileData } from '../sim/map';
 
 const HEX = 26; // hex radius in pixels
 
-const FILL: Record<string, number> = {
+// Keyed by Terrain rather than by string, so removing or adding a terrain in
+// the sim is a compile error here instead of an undefined fill at runtime.
+const FILL: Record<Terrain, number> = {
   plains: 0x1f3d2b,   // dark green
   mountain: 0x4a4f57, // slate gray
-  urban: 0x8a6d3b,    // amber
 };
 
 // Flat-top hexes have a flat edge on top/bottom, so columns stack directly

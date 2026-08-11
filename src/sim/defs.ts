@@ -20,6 +20,17 @@ import type { Offset } from './hex';
 import type { Terrain } from './map';
 import type { PlayerId, UnitKind } from './types';
 
+/**
+ * The asset kinds a player places during SETUP (spec §12). Launchers and the
+ * drone are absent because they are not placed — they start on the fixed public
+ * spawn hexes in `SPAWNS`, and their terrain restriction is enforced by
+ * movement (`TerrainDef.groundPassable`), not by a placement rule.
+ */
+export type PlaceableKind = Extract<
+  UnitKind,
+  'bunker' | 'decoy' | 'interceptor'
+>;
+
 export interface UnitDef {
   /**
    * Distance budget per round. For ground units this is spent against
@@ -56,16 +67,82 @@ export const UNIT_DEFS = {
 } as const satisfies Record<UnitKind, UnitDef>;
 
 export interface TerrainDef {
-  passable: boolean;
-  /** Cost to enter this tile. Not read when `passable` is false. */
+  /**
+   * Whether a GROUND unit may enter this tile.
+   *
+   * Named `groundPassable` rather than the obvious `passable` because that
+   * shorter name now answers the wrong question. Static structures are *built*,
+   * not driven: a mountain stops a launcher, but a bunker, decoy or interceptor
+   * base may sit on one (spec §12) — it is still overflown by recon and still
+   * reachable by missiles. Anything asking "may this be *built* here?" must read
+   * `RULES.placementTerrain`; this flag answers only "may this be *entered*?".
+   */
+  groundPassable: boolean;
+  /** Cost to enter this tile. Not read when `groundPassable` is false. */
   moveCost: number;
 }
 
+/**
+ * V1 has exactly two terrains (spec §2). `moveCost` is therefore always 1 in
+ * practice — the flood fill in movement.ts still reads it rather than assuming,
+ * so a future third terrain is a data edit here and not an algorithm change.
+ */
 export const TERRAIN_DEFS = {
-  plains: { passable: true, moveCost: 1 },
-  urban: { passable: true, moveCost: 1 }, // spec §2: visual flavor only in V1
-  mountain: { passable: false, moveCost: Infinity }, // spec §2: impassable to launchers
+  plains: { groundPassable: true, moveCost: 1 },
+  mountain: { groundPassable: false, moveCost: Infinity }, // spec §2: launchers only
 } as const satisfies Record<Terrain, TerrainDef>;
+
+/**
+ * Mountain generation tuning (spec §7). Lives here rather than in `map.ts` for
+ * the same reason as every other table in this file: it is a balance lever, and
+ * a terrain pass should be a one-file diff.
+ *
+ * Mountains are grown as **ranges**, not rolled per hex. That distinction is
+ * load-bearing, not cosmetic: scattered singletons at 15% are speed bumps a
+ * launcher walks around without noticing, while 15% in ridges is walls,
+ * chokepoints, and detours. The validation constants below exist because
+ * ridges — unlike noise — can produce a map nobody can cross.
+ */
+export const TERRAIN_GEN = {
+  /** Share of the board that is mountain. Ranges grow until this is hit. */
+  mountainFraction: 0.15,
+
+  /** Band every seed must land inside, asserted across seeds by map.test.ts. */
+  mountainFractionBand: { min: 0.1, max: 0.2 },
+
+  /** Ridges grown per generated half; the other half is their half-turn image. */
+  rangesPerHalf: 4,
+
+  /** Chance a growing ridge keeps its heading rather than veering (0–1). */
+  rangeStraightness: 0.7,
+
+  /**
+   * Hexes around every spawn kept mountain-free. Forcing the spawn hex itself
+   * to plains is NOT enough once mountains cluster: a plains hex ringed by a
+   * ridge is a launcher immobilised for the whole match.
+   */
+  spawnClearanceRadius: 1,
+
+  /**
+   * Ground-travel cost from a launcher spawn to the nearest hex from which it
+   * could hit an enemy launcher spawn (i.e. within `RULES.missileRange` of one).
+   *
+   * On a mountain-free board this is 8 — the 14 rows between the launcher lines
+   * less the missile's 6 — which at movement 3 is the "~2 rounds of maneuver,
+   * first blood around round 3" premise §7 is tuned on. 12 permits roughly one
+   * extra round of detour; beyond that the premise stops holding and the map is
+   * re-rolled rather than shipped.
+   */
+  maxApproachCost: 12,
+
+  /**
+   * Re-roll attempts before `generateMap` throws. Failing loudly beats shipping
+   * a map with a boxed-in launcher — and since a wall would have to span all 16
+   * columns, retries should be vanishingly rare. If this ever throws in
+   * practice, the generation constants above have drifted, not the validator.
+   */
+  maxAttempts: 20,
+} as const;
 
 /**
  * Fixed spawn hexes, in map col/row offset coordinates (spec §7, §12).
@@ -196,7 +273,30 @@ export const RULES = {
     bunker: 1,
     decoy: 1,
     interceptor: 2,
-  },
+  } as const satisfies Record<PlaceableKind, number>,
+
+  /**
+   * Terrain each placed asset may be built on (spec §12).
+   *
+   * Static structures are built, not driven, so terrain that stops a launcher
+   * does not stop construction: a bunker on a mountain is still overflown by
+   * recon, still marked permanently once spotted, and still destroyed by two
+   * missiles. What it gains is immunity to ground probing — an enemy launcher
+   * cannot be ordered into a mountain hex at all, so it can never bump into a
+   * site there (§9, §11). What it pays is a much narrower search: terrain is
+   * public, so the enemy knows exactly which hexes those are.
+   *
+   * **bunker and decoy MUST stay identical** — §12's indistinguishability
+   * principle. If the decoy were barred from terrain the bunker allowed, every
+   * site found on that terrain would be provably the real one and the bluff
+   * would be worth nothing. `defs.test.ts` asserts the two lists are equal so a
+   * balance pass cannot break it by editing one row and forgetting the other.
+   */
+  placementTerrain: {
+    bunker: ['plains', 'mountain'],
+    decoy: ['plains', 'mountain'],
+    interceptor: ['plains', 'mountain'],
+  } as const satisfies Record<PlaceableKind, readonly Terrain[]>,
 
   /** Draw by Armistice when this many rounds resolve with no victory (spec §4). */
   roundCap: 25,
