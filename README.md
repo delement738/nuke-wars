@@ -1,75 +1,54 @@
-# React + TypeScript + Vite
+# Nuke Wars
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A 1v1 web-based strategy game: simultaneous hidden orders under a countdown timer, hex-grid maneuver, fog of war, finite interceptor defenses, and a hidden-Leader decapitation endgame.
 
-Currently, two official plugins are available:
+The design pillar is **commit → dread → reveal**. Both players queue orders without seeing the other's, resolution is simultaneous, and moving into striking range is itself the act of exposure.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Status
 
-## React Compiler
+**V1 (hotseat) — in development.** The hex map renders with pan/zoom/select; the simulation engine core is being built one system per session. Not yet playable.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+See the "Current status" section of [CLAUDE.md](CLAUDE.md) for exactly where things stand and what's next.
 
-## Expanding the ESLint configuration
+## Stack
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- **TypeScript** + **Vite 8** + **React 19**
+- **PixiJS v8** — game map, units, effects
+- **Zustand** — client state
+- **Vitest** — unit tests
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+Hex math is hand-rolled in [src/sim/hex.ts](src/sim/hex.ts) rather than pulled from a library, keeping the simulation layer dependency-free so it can move server-side unchanged in V1.5.
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## Commands
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+npm install
+npm run dev      # dev server at localhost:5173
+npm run build    # production build + full type-check
+npm run lint     # ESLint
+npm test         # Vitest, single run
+npm run test:watch
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Architecture
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Four strictly separated layers. The separation is non-negotiable — it's what lets the same engine run authoritatively on a server in V1.5 without modification.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+| Directory | Role | Rule |
+|---|---|---|
+| `src/sim/` | Pure simulation engine | Never imports React, Pixi, DOM, or network code. All rules and state live here as pure functions. |
+| `src/render/` | PixiJS drawing | Reads state, draws it. Never mutates game state. |
+| `src/ui/` | React HUD/menus *(not yet created)* | Reads state, sends player intents. |
+| *(V1.5)* | Node.js WebSocket server | Rooms, order collection, authoritative resolve, per-player fog filter. |
 
-```
+Three rules govern the sim layer:
+
+- **Determinism** — `resolve(state, orders, seed)` is fully deterministic. No `Math.random()`; all randomness flows through the seeded RNG in [src/sim/map.ts](src/sim/map.ts). This makes bugs reproducible and lets you replay an identical match with exactly one balance number changed.
+- **Event log** — `resolve()` emits an ordered event list. Clients animate from those events, never by diffing state. It doubles as the replay format.
+- **Data tables** — unit, terrain, and missile stats live as plain keyed data in [src/sim/defs.ts](src/sim/defs.ts), never hardcoded in logic. A balance pass should be a one-file diff.
+
+## Docs
+
+- **[docs/nuke-wars-v1-spec.md](docs/nuke-wars-v1-spec.md)** — the design specification. Source of truth for every rule, number, and V1 scope decision.
+- [docs/v2-backlog.md](docs/v2-backlog.md) — deferred features. Reference only; never implement from it.
+- [CLAUDE.md](CLAUDE.md) — working instructions and current status.

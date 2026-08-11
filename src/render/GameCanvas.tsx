@@ -81,7 +81,6 @@ export default function GameCanvas() {
           selectedGfx = g;
           selectedTile = tile;
           paint(g, tile, true);
-          console.log('Selected hex', tile.col, tile.row, tile.terrain);
         });
 
         world.addChild(g);

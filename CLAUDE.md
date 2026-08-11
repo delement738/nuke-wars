@@ -8,7 +8,7 @@ A 1v1 web-based strategy game: simultaneous hidden orders under a countdown time
 `docs/v2-backlog.md` is deferred-feature reference only — never implement from it.
 
 ## Stack
-- TypeScript + Vite + React 18
+- TypeScript + Vite + React 19
 - PixiJS v8 for the game map/rendering
 - Zustand for client state
 - Hex math is hand-rolled in `src/sim/hex.ts` (axial coords) — deliberately dependency-free so the sim engine can move server-side unchanged in V1.5
