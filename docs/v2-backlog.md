@@ -4,7 +4,49 @@ This is the original full design vision. The authoritative V1 spec is
 `docs/nuke-wars-v1-spec.md`. Nothing in this file is in V1 scope.
 Use this only as a reference for future features after V1 ships.
 
-# NUKE WARS — V1 Design Specification
+---
+
+## Cut in the 2026-08-11 V1 pivot
+
+These systems were in the *pre-pivot* V1 spec and were cut to shrink scope and
+make combat fully deterministic. They are V2 candidates alongside everything
+below. Do not implement any of them in V1.
+
+| Cut system | What replaced it in V1 |
+|---|---|
+| SRM/MRM missile types + missile stock | One missile type, unlimited munitions, stats in `RULES` |
+| Radar stations (detection radius) | Recon drone flyovers + launch-origin auto-detection |
+| Interceptor ammo economy (finite stockpile) | Per-round intercept cap (1 missile/base/round) — saturation replaces depletion |
+| Probabilistic interception (% per interceptor, 90% cap) | Deterministic geometric interception (flight path × coverage) |
+| Damage variance (85–115%) + damage stats | Hits-based damage: launchers/bases 1 hit, bunker 2 |
+| Recon sweep orders (5/match, radius 2) | Persistent recon drone unit with respawns |
+| Order scarcity (4 orders/round budget) | One order per living asset per round |
+| Grace rules (no launches round 1; leader untargetable rounds 1–3) | Redundant — starting geometry enforces the same pacing (spec §7 note) |
+| Player-drawn drone waypoint paths | Straight-line flight via `hexLine` (V1 keeps order UI trivial) |
+| Two-stage commit (recon window, then strike window) | Single simultaneous commit; drone intel pays off next round |
+
+The "damage variance," "chance model," and radar rows in the original vision
+tables below should be read through this lens: V1 shipped without them.
+
+### Promoted back INTO V1 (same day)
+
+**The decoy Leader site is now a V1 feature — do not treat it as deferred.**
+One decoy bunker per player, 1 HP, placed secretly at setup and rule-identical
+to the real bunker in every observable way. See spec §12. The original vision's
+"emits false command signal" idea did *not* come with it: V1 has no signal
+mechanic, so the decoy deceives purely by being an indistinguishable object on
+the map. Signal-emission is still V2 material.
+
+What remains deferred from the original deception concept: multiple decoys,
+decoy launchers or radars, and any active/emitted deception.
+
+---
+
+# (ORIGINAL VISION — SUPERSEDED) Nuke Wars design document
+
+*Everything below this line is the pre-pivot vision, kept verbatim for reference.
+It is NOT the spec. Where it disagrees with `docs/nuke-wars-v1-spec.md`, the
+spec wins — always.*
 
 *A 1v1 strategic command-and-control duel. Simultaneous hidden orders, hex-grid maneuver, finite defenses, and a decapitation endgame.*
 
@@ -34,7 +76,7 @@ The Leader is a hidden piece (Stratego-flag style). The intel war — finding th
 | Missiles | **SRM** (short range, cheap, hard to intercept), **MRM** (longer range, more damage, easier to intercept) |
 | Defensive assets | **Radar station** (fixed, detection radius, LoS-blocked by mountains), **Interceptor battery** (fixed, finite interceptor ammo) |
 | Recon | **Recon sweep** (limited-use ability: reveal a small hex area for 1 round) |
-| Deception | **1 Decoy Leader site** per player (emits false command signal) |
+| Deception | **1 Decoy Leader site** per player (emits false command signal) — *NOTE: the decoy itself is now in V1 (spec §12); only the "emits false command signal" behaviour remains deferred* |
 | Leader | Hidden. Starts in a bunker (2 hits to crack). May relocate — relocation leaks a detectable signature that round |
 | Detection feedback | Defender is notified when enemy recon pings near their Leader (not what enemy inferred) |
 | Turn structure | Simultaneous order phases with countdown timer (75s default; both players can ready-up early). Server resolves once per round |
