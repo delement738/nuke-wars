@@ -114,8 +114,8 @@ function eventsFor(events: GameEvent[], id: UnitId): GameEvent[] {
 }
 
 /** The DRONE_MOVED a drone emits when it stays put — its own hex's swath. */
-function hovered(unitId: string, hex: Hex): GameEvent {
-  return { type: 'DRONE_MOVED', unitId, from: hex, to: hex, path: [hex] };
+function hovered(unitId: string, owner: PlayerId, hex: Hex): GameEvent {
+  return { type: 'DRONE_MOVED', unitId, owner, from: hex, to: hex, path: [hex] };
 }
 
 function spotted(events: GameEvent[]): GameEvent[] {
@@ -135,7 +135,7 @@ describe('resolve() — ground movement', () => {
 
     expect(positionOf(result.state, 'a')).toEqual(to);
     expect(result.events).toEqual([
-      { type: 'UNIT_MOVED', unitId: 'a', from: CENTER, to },
+      { type: 'UNIT_MOVED', unitId: 'a', owner: 'p1', from: CENTER, to },
     ]);
   });
 
@@ -179,8 +179,8 @@ describe('resolve() — §9 simultaneous-movement rulings', () => {
     expect(positionOf(result.state, 'a')).toEqual(from1);
     expect(positionOf(result.state, 'z')).toEqual(from2);
     expect(result.events).toEqual([
-      { type: 'MOVE_FAILED', unitId: 'a' },
-      { type: 'MOVE_FAILED', unitId: 'z' },
+      { type: 'MOVE_FAILED', unitId: 'a', owner: 'p1' },
+      { type: 'MOVE_FAILED', unitId: 'z', owner: 'p2' },
     ]);
   });
 
@@ -218,10 +218,10 @@ describe('resolve() — §9 simultaneous-movement rulings', () => {
     expect(positionOf(result.state, 'a')).toEqual(CENTER);
     expect(positionOf(result.state, 'z')).toEqual(b);
     expect(eventsFor(result.events, 'a')).toEqual([
-      { type: 'MOVE_FAILED', unitId: 'a' },
+      { type: 'MOVE_FAILED', unitId: 'a', owner: 'p1' },
     ]);
     expect(eventsFor(result.events, 'z')).toEqual([
-      { type: 'MOVE_FAILED', unitId: 'z' },
+      { type: 'MOVE_FAILED', unitId: 'z', owner: 'p2' },
     ]);
   });
 
@@ -244,7 +244,7 @@ describe('resolve() — §9 simultaneous-movement rulings', () => {
     expect(positionOf(result.state, 'a')).toEqual(ahead);
     expect(positionOf(result.state, 'b')).toEqual(CENTER);
     expect(eventsFor(result.events, 'b')).toEqual([
-      { type: 'MOVE_FAILED', unitId: 'b' },
+      { type: 'MOVE_FAILED', unitId: 'b', owner: 'p1' },
     ]);
   });
 
@@ -259,7 +259,7 @@ describe('resolve() — §9 simultaneous-movement rulings', () => {
 
     expect(positionOf(result.state, 'a')).toEqual(CENTER);
     expect(eventsFor(result.events, 'a')).toEqual([
-      { type: 'MOVE_FAILED', unitId: 'a' },
+      { type: 'MOVE_FAILED', unitId: 'a', owner: 'p1' },
     ]);
   });
 
@@ -276,7 +276,7 @@ describe('resolve() — §9 simultaneous-movement rulings', () => {
     // would identify the fake for free.
     expect(positionOf(result.state, 'a')).toEqual(CENTER);
     expect(eventsFor(result.events, 'a')).toEqual([
-      { type: 'MOVE_FAILED', unitId: 'a' },
+      { type: 'MOVE_FAILED', unitId: 'a', owner: 'p1' },
     ]);
   });
 
@@ -315,7 +315,7 @@ describe('resolve() — which failures are reported', () => {
 
     expect(positionOf(sealed.state, 'a')).toEqual(CENTER);
     expect(eventsFor(sealed.events, 'a')).toEqual([
-      { type: 'MOVE_FAILED', unitId: 'a' },
+      { type: 'MOVE_FAILED', unitId: 'a', owner: 'p1' },
     ]);
   });
 
@@ -350,7 +350,7 @@ describe('resolve() — which failures are reported', () => {
     expect(positionOf(result.state, 'eye')).toEqual(CENTER);
     // No UNIT_MOVED and no MOVE_FAILED: the rejection was caused by public
     // information, so nothing is reported. The one event is phase 1's hover.
-    expect(result.events).toEqual([hovered('eye', CENTER)]);
+    expect(result.events).toEqual([hovered('eye', 'p1', CENTER)]);
   });
 
   it('drops a MOVE naming an immobile asset', () => {
@@ -474,6 +474,7 @@ describe('resolve() — phase 1: drone flight', () => {
       {
         type: 'DRONE_MOVED',
         unitId: 'eye',
+        owner: 'p1',
         from: CENTER,
         to: destination,
         path: hexLine(CENTER, destination),
@@ -490,7 +491,7 @@ describe('resolve() — phase 1: drone flight', () => {
     const result = resolve(state, NO_ORDERS, NO_ORDERS, 0);
 
     expect(positionOf(result.state, 'eye')).toEqual(CENTER);
-    expect(result.events[0]).toEqual(hovered('eye', CENTER));
+    expect(result.events[0]).toEqual(hovered('eye', 'p1', CENTER));
     // The corridor around its own hex is a real swath — this is what makes
     // "give no order to hover" a choice rather than a wasted round.
     expect(result.state.intel.p1.contacts).toEqual([
@@ -506,7 +507,7 @@ describe('resolve() — phase 1: drone flight', () => {
     expect(positionOf(result.state, 'eye')).toEqual(CENTER);
     // No failure event: nothing hidden caused this, so there is nothing to
     // report (the air-layer counterpart of §9's MOVE_FAILED policy).
-    expect(result.events).toEqual([hovered('eye', CENTER)]);
+    expect(result.events).toEqual([hovered('eye', 'p1', CENTER)]);
   });
 
   it('FLY + MOVE for one drone is over budget — it hovers and does neither', () => {
@@ -521,7 +522,7 @@ describe('resolve() — phase 1: drone flight', () => {
     );
 
     expect(positionOf(result.state, 'eye')).toEqual(CENTER);
-    expect(result.events).toEqual([hovered('eye', CENTER)]);
+    expect(result.events).toEqual([hovered('eye', 'p1', CENTER)]);
   });
 
   it('ignores a FLY order aimed at the enemy’s drone', () => {
@@ -532,7 +533,7 @@ describe('resolve() — phase 1: drone flight', () => {
     const result = resolve(state, [fly('spy', north(CENTER, 4))], NO_ORDERS, 0);
 
     expect(positionOf(result.state, 'spy')).toEqual(CENTER);
-    expect(result.events).toEqual([hovered('spy', CENTER)]);
+    expect(result.events).toEqual([hovered('spy', 'p2', CENTER)]);
   });
 
   it('photographs launchers at their PRE-move positions (§3 phase order)', () => {
@@ -568,7 +569,13 @@ describe('resolve() — phase 1: drone flight', () => {
     expect(positionOf(result.state, 'a')).toEqual(contested);
     expect(positionOf(result.state, 'spy')).toEqual(contested);
     expect(eventsFor(result.events, 'a')).toEqual([
-      { type: 'UNIT_MOVED', unitId: 'a', from: CENTER, to: contested },
+      {
+        type: 'UNIT_MOVED',
+        unitId: 'a',
+        owner: 'p1',
+        from: CENTER,
+        to: contested,
+      },
     ]);
   });
 });
@@ -817,6 +824,7 @@ describe('resolve() — drone loss and respawn', () => {
       {
         type: 'DRONE_MOVED',
         unitId: 'eye',
+        owner: 'p1',
         from: CENTER,
         to: line[1],
         path: [line[0], line[1]],
@@ -875,6 +883,7 @@ describe('resolve() — drone loss and respawn', () => {
     expect(blind.events).toContainEqual({
       type: 'DRONE_RESPAWNED',
       unitId: 'eye',
+      owner: 'p1',
       hex: spawn,
     });
 
@@ -935,6 +944,63 @@ describe('resolve() — round bookkeeping and purity', () => {
     resolve(state, [move('a', to)], NO_ORDERS, 0);
 
     expect(state).toEqual(before);
+  });
+
+  it('names the audience on every owner-only event (spec §6)', () => {
+    // The visibility filter is handed the log and a player id and nothing else
+    // (`filterEventsForPlayer(events, playerId)`, §6), so it cannot look a
+    // unitId up in a GameState to find out whose event this is. Any owner-only
+    // event that does not carry `owner` is unroutable — it would have to be
+    // dropped for both players or shown to both, and both are wrong.
+    //
+    // ASSET_SPOTTED is deliberately absent from this check: its `owner` is the
+    // SPOTTED asset's side, so its audience is that player's opponent.
+    const OWNER_ONLY = [
+      'UNIT_MOVED',
+      'MOVE_FAILED',
+      'BUNKER_HIT',
+      'DRONE_MOVED',
+      'DRONE_RESPAWNED',
+    ];
+
+    // Both sides act, so a hardcoded or swapped `owner` fails rather than
+    // passing by luck: p1 moves and flies, p2 moves and flies, and the two
+    // launchers contest one hex so each side also gets a MOVE_FAILED.
+    const contested = north(CENTER, 3);
+    const state = openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      makeUnit('b', 'p1', 'launcher', north(CENTER, 2)),
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('z', 'p2', 'launcher', north(CENTER, 6)),
+      makeUnit('y', 'p2', 'launcher', north(CENTER, 4)),
+      makeUnit('spy', 'p2', 'drone', north(CENTER, 8)),
+    ]);
+
+    const { events } = resolve(
+      state,
+      [move('a', neighbors(CENTER)[0]), move('b', contested), fly('eye', north(CENTER, 5))],
+      [move('z', north(CENTER, 7)), move('y', contested), fly('spy', north(CENTER, 2))],
+      0,
+    );
+
+    const owned = events.filter((e) => OWNER_ONLY.includes(e.type));
+    // The fixture must actually exercise the rule, and from both sides.
+    expect(owned.filter((e) => 'owner' in e && e.owner === 'p1').length)
+      .toBeGreaterThan(0);
+    expect(owned.filter((e) => 'owner' in e && e.owner === 'p2').length)
+      .toBeGreaterThan(0);
+
+    for (const event of owned) {
+      // Each event must agree with the true owner of the unit it names, or the
+      // filter would route a player's own event to their opponent.
+      const named = state.units.find(
+        (u) => 'unitId' in event && u.id === event.unitId,
+      );
+      expect(
+        'owner' in event && event.owner,
+        `${event.type} for ${'unitId' in event && event.unitId} names the wrong side`,
+      ).toBe(named?.owner);
+    }
   });
 });
 

@@ -164,6 +164,7 @@ function runReconPhase(
     events.push({
       type: 'DRONE_MOVED',
       unitId: drone.id,
+      owner: drone.owner,
       from: drone.position,
       to: flight.path[flight.path.length - 1],
       path: flight.path,
@@ -268,7 +269,12 @@ function runDroneRespawns(state: GameState): {
       hp: UNIT_DEFS.drone.hp,
       destroyed: false,
     });
-    events.push({ type: 'DRONE_RESPAWNED', unitId: unit.id, hex });
+    events.push({
+      type: 'DRONE_RESPAWNED',
+      unitId: unit.id,
+      owner: unit.owner,
+      hex,
+    });
   }
 
   return { units, droneRespawnIn, events };
@@ -462,12 +468,20 @@ function runGroundMovement(
     const to = settled.moved.get(unit.id);
     if (to) {
       units.push({ ...unit, position: to });
-      events.push({ type: 'UNIT_MOVED', unitId: unit.id, from: unit.position, to });
+      events.push({
+        type: 'UNIT_MOVED',
+        unitId: unit.id,
+        owner: unit.owner,
+        from: unit.position,
+        to,
+      });
       continue;
     }
 
     units.push(unit);
-    if (failed.has(unit.id)) events.push({ type: 'MOVE_FAILED', unitId: unit.id });
+    if (failed.has(unit.id)) {
+      events.push({ type: 'MOVE_FAILED', unitId: unit.id, owner: unit.owner });
+    }
   }
 
   return { units, events };
