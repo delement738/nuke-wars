@@ -6,13 +6,17 @@
 // function runs server-side and authoritative, unchanged.
 //
 // Build-order step 4 implemented the skeleton and phase 5 (ground movement, §9);
-// step 5 added phase 1 (recon flight, §10/§11) and the drone respawn tick.
-// Phases 2–4 are stubs that name the step which fills each one. The five-phase
-// order from spec §3 is already laid out below, because that order produces
-// several deliberate consequences (strikes land before movement, so a launcher
-// that fired cannot dodge the counter-battery; recon flies first, so the drone
-// photographs launchers at their pre-move positions) — getting it in place early
-// means later steps drop into a slot rather than re-sequencing the round.
+// step 5 added phase 1 (recon flight, §10/§11) and the drone respawn tick; step 6
+// added phases 2 and 3 (launch & interception, then impact). Phase 4 — the
+// outcome check — is the last stub, and belongs to step 7 with dead hand.
+//
+// The five-phase order from spec §3 produces several deliberate consequences,
+// and now that phases 2, 3 and 5 all exist they are real rather than planned:
+// strikes land before movement, so a launcher that fired last round cannot dodge
+// the counter-battery; two launchers that fire at each other both die, with no
+// rule needed to say so; and recon flies first, so the drone photographs
+// launchers at their pre-move positions and its intel can only pay off next
+// round.
 //
 // DETERMINISM (spec §6): V1 resolution reads no randomness at all. The `_seed`
 // parameter exists only so the signature doesn't have to change if V2
@@ -23,11 +27,20 @@
 
 import { RULES, SPAWNS, UNIT_DEFS } from './defs';
 import { hexKey, offsetToAxial, type Hex } from './hex';
+import {
+  canonicalOrder,
+  createMissile,
+  damageByHex,
+  flyMissiles,
+  validateLaunch,
+  type Missile,
+} from './missiles';
 import { validateMove, type MoveIllegalReason } from './movement';
 import { flyDrone, reconSwath, validateFly, type DroneFlight } from './recon';
 import type {
   GameEvent,
   GameState,
+  LauncherContact,
   Order,
   PlayerId,
   PlayerIntel,
@@ -43,6 +56,43 @@ import type {
  * which is what the §6 determinism test actually asserts.
  */
 const PLAYERS: readonly PlayerId[] = ['p1', 'p2'];
+
+/** The other player. `intel.p1` is what p1 knows about `opponentOf('p1')`. */
+function opponentOf(player: PlayerId): PlayerId {
+  return player === 'p1' ? 'p2' : 'p1';
+}
+
+/**
+ * A fresh, structurally-shared-free copy of both players' intel.
+ *
+ * Every phase that files or removes a sighting takes one of these first, so no
+ * phase ever writes into the state it was handed. resolve() is pure — callers
+ * keep the previous state as history (spec §6).
+ */
+function copyIntel(intel: Record<PlayerId, PlayerIntel>): Record<PlayerId, PlayerIntel> {
+  return {
+    p1: { staticReveals: [...intel.p1.staticReveals], contacts: [...intel.p1.contacts] },
+    p2: { staticReveals: [...intel.p2.staticReveals], contacts: [...intel.p2.contacts] },
+  };
+}
+
+/**
+ * File a launcher sighting, from either detector (spec §11).
+ *
+ * Keyed by hex, so the same launcher seen twice in one round is recorded once —
+ * and the FIRST source to see it is the one kept. That matters only for UI
+ * flavour: a launcher that fired cannot also have moved (`RULES.ordersPerUnit`),
+ * so when recon and launch detection both report the same hex they agree, and a
+ * RECON contact that would normally be "possibly stale" happens to be live.
+ */
+function recordContact(
+  intel: PlayerIntel,
+  hex: Hex,
+  source: LauncherContact['source'],
+): void {
+  if (intel.contacts.some((c) => hexKey(c.hex) === hexKey(hex))) return;
+  intel.contacts.push({ hex, source });
+}
 
 /** One player's surviving orders for the round, keyed by the unit they name. */
 type OrderBook = Record<PlayerId, ReadonlyMap<UnitId, Order>>;
@@ -75,12 +125,7 @@ function recordSighting(intel: PlayerIntel, spotted: Unit, round: number): void 
 
   switch (spotted.kind) {
     case 'launcher':
-      if (!intel.contacts.some((c) => hexKey(c.hex) === key)) {
-        // Step 6 adds LAUNCH-sourced contacts in phase 2. A launcher that fired
-        // cannot also have moved, so if recon saw it too both agree on the hex;
-        // whichever lands first is the one kept.
-        intel.contacts.push({ hex: spotted.position, source: 'RECON' });
-      }
+      recordContact(intel, spotted.position, 'RECON');
       return;
 
     case 'drone':
@@ -278,6 +323,199 @@ function runDroneRespawns(state: GameState): {
   }
 
   return { units, droneRespawnIn, events };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — launch & interception (spec §3, §10, §11)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolution phase 2 — every missile fires and flies at once, and interceptor
+ * bases engage what they can reach (spec §10).
+ *
+ * Two things happen here that are easy to read past. First, **every launch is
+ * detected, by both players, always** — launches are loud, detection needs no
+ * equipment and nothing suppresses it (§11), so the origin hex goes onto the
+ * defender's map as a launcher contact whether or not the missile survives.
+ * Second, a rejected LAUNCH is dropped in **silence**: like a FLY and unlike a
+ * MOVE, every way it can fail is derivable from what the ordering player already
+ * knows, so there is nothing hidden information could have caused and nothing to
+ * report (§9's policy, applied to the missile layer).
+ *
+ * The contact is filed against `opponentOf(owner)` because intel is keyed by the
+ * *viewer*: `intel.p1` is what p1 knows about p2, so p1's launch marks p2's map.
+ */
+function runLaunchPhase(
+  state: GameState,
+  orders: OrderBook,
+): {
+  intel: Record<PlayerId, PlayerIntel>;
+  survivors: Missile[];
+  events: GameEvent[];
+} {
+  const unitsById = new Map(state.units.map((unit) => [unit.id, unit]));
+  const fired: Missile[] = [];
+
+  for (const player of PLAYERS) {
+    for (const order of orders[player].values()) {
+      // MOVE belongs to phase 5 and FLY was consumed by phase 1. Both are
+      // counted by ordersByUnit, so move-XOR-launch is already enforced by the
+      // budget — a launcher handed a MOVE *and* a LAUNCH reached neither phase.
+      if (order.type !== 'LAUNCH') continue;
+      if (!validateLaunch(state, player, order).legal) continue;
+
+      const launcher = unitsById.get(order.unitId);
+      // Unreachable: a legal verdict already proves the unit exists, is this
+      // player's, and is a living launcher.
+      if (!launcher) continue;
+
+      fired.push(createMissile(state.round, launcher, order.target));
+    }
+  }
+
+  // Canonical order is by origin hex, never by the order either client listed
+  // its launches and never by launcher id (see `canonicalOrder` in missiles.ts).
+  // Adjudication and emission share it, so the log is byte-identical for the
+  // same physical round no matter how a client sorted its submission (§6).
+  const missiles = canonicalOrder(fired);
+  const intel = copyIntel(state.intel);
+  const events: GameEvent[] = [];
+
+  for (const missile of missiles) {
+    events.push({
+      type: 'LAUNCH_DETECTED',
+      missileId: missile.id,
+      origin: missile.origin,
+      target: missile.target,
+    });
+    recordContact(intel[opponentOf(missile.owner)], missile.origin, 'LAUNCH');
+  }
+
+  // Emitted after every LAUNCH_DETECTED because that is the order it happened
+  // in: the whole volley leaves the ground, then the defenses engage it.
+  // Interceptions are already chronological within themselves (by flight step).
+  const flights = flyMissiles(state.units, missiles);
+  for (const { missile, hex } of flights.interceptions) {
+    events.push({ type: 'MISSILE_INTERCEPTED', missileId: missile.id, hex });
+  }
+
+  return { intel, survivors: flights.survivors, events };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 — impact (spec §3, §6, §12)
+// ---------------------------------------------------------------------------
+
+/**
+ * Drop a publicly destroyed asset from the enemy's map (spec §11).
+ *
+ * A static sighting is permanent "until the asset is publicly destroyed", and
+ * `UNIT_DESTROYED` is exactly that public moment — so the marker goes with it.
+ * A launcher contact is cleared for the same reason even though it would expire
+ * next round anyway: the map is supposed to show only things that are true right
+ * now, and both players just watched this one die.
+ *
+ * Keyed by hex, like everything else in intel — a ground hex holds at most one
+ * unit (§9), so the hex identifies the entry without a unit id ever entering the
+ * intel state.
+ */
+function forgetDestroyed(intel: PlayerIntel, unit: Unit): void {
+  const key = hexKey(unit.position);
+  intel.staticReveals = intel.staticReveals.filter((r) => hexKey(r.hex) !== key);
+  intel.contacts = intel.contacts.filter((c) => hexKey(c.hex) !== key);
+}
+
+/**
+ * Resolution phase 3 — surviving missiles land simultaneously (spec §3).
+ *
+ * Damage is totalled **per hex** before anything is applied, because hits stack
+ * within a round: two missiles on one full-health bunker deal 2 and destroy it
+ * outright. Applying one hit per hex instead would make the 2-missile alpha
+ * strike — a deliberate, expensive way to skip the decoy test (§12) —
+ * impossible.
+ *
+ * Whatever stands on the hex takes it, friendly or enemy: a missile is aimed at
+ * ground, not at a target. Drones are the one exception, and it is not a special
+ * case so much as the air layer: missiles cannot touch them at all (§2).
+ *
+ * Event order: every `IMPACT` first, in canonical missile order, then the damage
+ * events in `GameState.units` order (§9's canonical emission rule). Keeping them
+ * in separate passes is also what keeps `IMPACT` honest — it fires for **every**
+ * arriving missile including hits on bare ground, and never names a victim,
+ * because if its presence implied occupancy then blind-fire probing would locate
+ * bunkers and bases for free (§6).
+ */
+function runImpactPhase(
+  state: GameState,
+  survivors: readonly Missile[],
+): {
+  units: Unit[];
+  intel: Record<PlayerId, PlayerIntel>;
+  events: GameEvent[];
+} {
+  if (survivors.length === 0) {
+    return { units: state.units, intel: state.intel, events: [] };
+  }
+
+  const events: GameEvent[] = survivors.map((missile) => ({
+    type: 'IMPACT',
+    missileId: missile.id,
+    hex: missile.target,
+  }));
+
+  const damage = damageByHex(survivors);
+  const intel = copyIntel(state.intel);
+  const units: Unit[] = [];
+
+  for (const unit of state.units) {
+    const hits = damage.get(hexKey(unit.position)) ?? 0;
+    if (hits === 0 || unit.destroyed || unit.kind === 'drone') {
+      units.push(unit);
+      continue;
+    }
+
+    const hp = unit.hp - hits;
+
+    if (hp > 0) {
+      units.push({ ...unit, hp });
+      // A survivable hit is reported only for the two site kinds, and only to
+      // their owner. To the attacker it is indistinguishable from hitting empty
+      // ground, which is what protects "only drones find bunkers" from
+      // blind-fire probing (§6).
+      //
+      // The decoy is named here deliberately, though at 1 HP it can never reach
+      // this branch — it always dies to the hit, and that silence-versus-
+      // destruction difference IS the tell that identifies the real bunker
+      // (§12). Writing the rule as "bunker or decoy" means §12's tuning lever
+      // (raise the decoy to 2 HP) stays indistinguishable by construction
+      // instead of needing a new rule. The event is owner-only, so it leaks
+      // nothing either way.
+      if (unit.kind === 'bunker' || unit.kind === 'decoy') {
+        events.push({
+          type: 'BUNKER_HIT',
+          unitId: unit.id,
+          owner: unit.owner,
+          hex: unit.position,
+          hpRemaining: hp,
+        });
+      }
+      continue;
+    }
+
+    units.push({ ...unit, hp: 0, destroyed: true });
+    // Public, and TRUTHFUL about a decoy (§6): masking it would fool nobody,
+    // since the absence of dead hand gives it away in the same instant, and a
+    // lie the engine has to maintain is a bug waiting to happen.
+    events.push({
+      type: 'UNIT_DESTROYED',
+      unitId: unit.id,
+      kind: unit.kind,
+      hex: unit.position,
+    });
+    forgetDestroyed(intel[opponentOf(unit.owner)], unit);
+  }
+
+  return { units, intel, events };
 }
 
 // ---------------------------------------------------------------------------
@@ -533,13 +771,28 @@ export function resolve(
   };
   events.push(...recon.events);
 
-  // --- Phase 2: launch & interception ---------------------- build-order step 6
-  // Phase 2 also files LAUNCH-sourced launcher contacts into `working.intel`,
-  // on top of the recon contacts phase 1 just rebuilt (spec §11).
-  // --- Phase 3: impact ------------------------------------- build-order step 6
+  // --- Phase 2: launch & interception (spec §10, §11) --------------------------
+  // Files LAUNCH-sourced launcher contacts on top of the recon contacts phase 1
+  // just rebuilt, so a launcher that both fired and was photographed is one
+  // hex-keyed entry, not two (spec §11).
+  const launches = runLaunchPhase(working, orders);
+  working = { ...working, intel: launches.intel };
+  events.push(...launches.events);
+
+  // --- Phase 3: impact (spec §3, §12) ------------------------------------------
+  // Runs against the board phase 2 left, and hands phase 5 a post-impact one —
+  // §9's "movement is applied against the post-impact state" is true by
+  // construction here, not a rule anyone has to remember.
+  const impacts = runImpactPhase(working, launches.survivors);
+  working = { ...working, units: impacts.units, intel: impacts.intel };
+  events.push(...impacts.events);
+
   // --- Phase 4: outcome check ------------------------------ build-order step 7
   // Outcomes are evaluated only after a full resolution, never mid-round
-  // (spec §5), and a destroyed real bunker skips phase 5 entirely (§3).
+  // (spec §5), and a destroyed real bunker skips phase 5 entirely (§3). Until
+  // step 7 lands, phase 5 runs unconditionally — a decapitated player's
+  // launchers still drive this round. Nothing else in the engine depends on
+  // that, because outcomes are read from the board, never from movement.
 
   // --- Phase 5: ground movement (spec §9) --------------------------------------
   const movement = runGroundMovement(working, orders);

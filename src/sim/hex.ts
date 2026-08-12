@@ -166,6 +166,30 @@ export function hexKey(hex: Hex): string {
 }
 
 /**
+ * A total order on hexes: by `q`, then by `r`. Negative for a-before-b, so it
+ * drops straight into `Array.prototype.sort`.
+ *
+ * Exists because two simultaneous things sometimes have to be adjudicated in
+ * *some* fixed sequence, and the sequence has to come from data both players
+ * already hold. Missile interception is the case that forced it (spec §10): when
+ * two missiles enter one base's coverage on the same step, only one can be
+ * engaged, and "whichever the client listed first" would not be deterministic.
+ *
+ * Sorting by the *origin hex* rather than by the firing launcher's id is
+ * deliberate and is the whole point of this function — see the note on
+ * `canonicalOrder` in `missiles.ts`. A hex is public information the moment
+ * `LAUNCH_DETECTED` publishes it; a unit id is a trackable identity the design
+ * withholds (§6, §11).
+ *
+ * Note this is a *sorting* order, not a geometric one: it is not distance, not
+ * "nearer the top of the board", and carries no meaning a rule should read into.
+ * It exists to break ties reproducibly and nothing else.
+ */
+export function compareHex(a: Hex, b: Hex): number {
+  return a.q === b.q ? a.r - b.r : a.q - b.q;
+}
+
+/**
  * A position in the map's rectangular grid, in "odd-q" offset coordinates for
  * flat-top hexes: odd-numbered columns sit half a hex lower than even ones.
  *
