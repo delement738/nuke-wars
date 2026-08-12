@@ -10,7 +10,9 @@ Each side fields the entire roster: **3 mobile launchers** (move *or* fire, neve
 
 ## Status
 
-**V1 (hotseat) — in development.** The design was pivoted on 2026-08-11 (see the spec) and the sim code is fully migrated to it. **The simulation engine is now feature-complete.** Built and tested: hex math including the `hexLine` flight primitive, self-validating symmetric map generation (mountain ranges, re-rolled until playable), launcher movement, secret setup placement, `resolve()` with **all five phases** — recon drone, launch and interception, impact, the outcome check, and ground movement — the dead-hand retaliation round and win/draw state machine, and the **visibility filter** that turns the engine's omniscient truth into each player's redacted view. 384 tests. The hex map renders with pan/zoom/select. Next up is step 9: a Zustand store owns the state and the renderer draws from filtered views, which is when it first becomes a thing you can look at rather than a thing that passes tests. Not yet playable.
+**V1 (hotseat) — in development.** The design was pivoted on 2026-08-11 (see the spec) and the sim code is fully migrated to it. **The simulation engine is feature-complete, and it is now wired to the screen.** Built and tested: hex math including the `hexLine` flight primitive, self-validating symmetric map generation (mountain ranges, re-rolled until playable), launcher movement, secret setup placement, `resolve()` with **all five phases** — recon drone, launch and interception, impact, the outcome check, and ground movement — the dead-hand retaliation round and win/draw state machine, and the **visibility filter** that turns the engine's omniscient truth into each player's redacted view. On top of that sits a Zustand store that owns the match, a Pixi board that draws one player's redacted view, and a HUD that keeps that player's permanent event log. 414 tests.
+
+You can run it today as a **sandbox**: the board draws your units, your intel and your interceptor coverage, rounds resolve, the log fills, and flipping the viewer between P1 and P2 shows the same truth as two completely different pictures. What it is not yet is *playable* — there is no way to issue an order, so every round is one in which launchers hold and drones hover. That is step 10: setup placement, the order builder, and the hotseat handoff.
 
 See the "Current status" section of [CLAUDE.md](CLAUDE.md) for exactly where things stand and what's next.
 
@@ -41,8 +43,9 @@ Four strictly separated layers. The separation is non-negotiable — it's what l
 | Directory | Role | Rule |
 |---|---|---|
 | `src/sim/` | Pure simulation engine | Never imports React, Pixi, DOM, or network code. All rules and state live here as pure functions. |
-| `src/render/` | PixiJS drawing | Reads state, draws it. Never mutates game state. |
-| `src/ui/` | React HUD/menus *(not yet created)* | Reads state, sends player intents. |
+| `src/state/` | Zustand match store | The only module that ever holds the unfiltered state, in a module-private variable with no accessor. Everything it hands out has been through the visibility filter. |
+| `src/render/` | PixiJS drawing | Reads state, draws it. Never mutates game state. The type flowing in is `VisibleGameState`. |
+| `src/ui/` | React HUD/menus | Reads state, sends player intents. |
 | *(V1.5)* | Node.js WebSocket server | Rooms, order collection, authoritative resolve, per-player visibility filter. |
 
 Three rules govern the sim layer:
@@ -52,6 +55,8 @@ Three rules govern the sim layer:
 - **Data tables** — unit, terrain, and rule numbers live as plain keyed data in [src/sim/defs.ts](src/sim/defs.ts), never hardcoded in logic. A balance pass should be a one-file diff.
 
 **`resolve()` never lies; [src/sim/visibility.ts](src/sim/visibility.ts) does.** The engine always computes and emits the whole truth — a decoy is stored and logged as a decoy. `filterForPlayer` / `filterEventsForPlayer` hand each player a redacted copy, and that module is the only layer permitted to know the difference. In hotseat it hides the inactive player's information across the handoff; in V1.5 the server applies it before broadcasting, so a client never receives the enemy's positions and cheating is impossible by construction rather than by policy.
+
+**And the filter cannot be skipped.** A redaction layer only protects callers that actually call it, so the unfiltered state lives in a module-private variable inside [src/state/match.ts](src/state/match.ts) — not in the store, not exported, no accessor. There is no code path by which a component could obtain one, which makes "the renderer never sees the truth" a property of the module rather than a rule someone has to remember.
 
 ## Docs
 
