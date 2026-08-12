@@ -358,6 +358,109 @@ export type GameEvent =
   | { type: 'DEAD_HAND_TRIGGERED'; playerId: PlayerId }
   | { type: 'GAME_OVER'; outcome: Outcome };
 
+// ---------------------------------------------------------------------------
+// Visibility filter output (spec §6, §11, §12; build-order step 8)
+// ---------------------------------------------------------------------------
+//
+// Everything above this line is the TRUTH — what resolve() computes and what a
+// server would hold. Everything below is one player's redacted copy of it, as
+// produced by `filterForPlayer` / `filterEventsForPlayer` in ./visibility.
+//
+// The design rule these types encode: wherever the filter hides something, the
+// output type should make the hidden thing *unrepresentable* rather than merely
+// absent. A redaction the compiler enforces cannot be undone by a later edit
+// that looks reasonable in a diff — and every leak in this game is exactly that
+// shape (see the ASSET_SPOTTED note on GameEvent above).
+
+/**
+ * One enemy static asset as its finder is told about it.
+ *
+ * Identical to StaticReveal except that `kind` is MaskedStaticKind, so 'decoy'
+ * cannot be expressed here at all (spec §12). The truth lives in StaticReveal
+ * on the unfiltered state; this is what leaves the sim.
+ */
+export interface VisibleStaticReveal {
+  hex: Hex;
+  kind: MaskedStaticKind;
+  /** Round first seen — UI flavour ("spotted round 4"), not a rule. */
+  round: number;
+}
+
+/**
+ * One player's picture of the enemy, redacted.
+ *
+ * `contacts` passes through unchanged: a LauncherContact is a hex plus how it
+ * was spotted, and carries no unit id, no owner and no identity to mask (spec
+ * §11 — intel is keyed by place, never by unit).
+ */
+export interface VisiblePlayerIntel {
+  staticReveals: VisibleStaticReveal[];
+  contacts: LauncherContact[];
+}
+
+/**
+ * What one player is allowed to see (spec §6 layer 2). In hotseat this hides
+ * the inactive player's information; in V1.5 the server applies it before
+ * sending, so a client physically never receives the enemy's positions and
+ * cheating is impossible by construction rather than by policy.
+ *
+ * Three differences from GameState are load-bearing:
+ *
+ * 1. **`units` holds the viewer's OWN units only.** Enemy assets are not
+ *    downgraded into this array — they are absent from it entirely, and the
+ *    whole enemy picture lives in `intel`, keyed by hex. That is what makes the
+ *    §11 "no trackable identity" rule structural: this type has no field capable
+ *    of carrying an enemy UnitId, so no future change can leak one by accident.
+ * 2. **`intel` is one player's, not a Record keyed by player.** Handing the
+ *    viewer a map slot labelled with the opponent's id is the whole leak.
+ * 3. **`droneRespawnIn` is a bare number — the viewer's own.** DRONE_RESPAWNED
+ *    is owner-only (spec §6) precisely so the enemy cannot time your recon
+ *    coming back online; leaving the opponent's counter in the state would hand
+ *    them the same fact directly and make filtering the event pointless.
+ *
+ * `map` is deliberately the same MapData, unredacted: terrain is public (spec
+ * §11) and the board is rotationally symmetric, so there is nothing to hide.
+ * `round`, `phase`, `deadHandFor` and `outcome` are public for the same reason
+ * their events are — DEAD_HAND_TRIGGERED and GAME_OVER go to both players.
+ */
+export interface VisibleGameState {
+  round: number;
+  phase: GamePhase;
+  map: MapData;
+  units: Unit[];
+  intel: VisiblePlayerIntel;
+  droneRespawnIn: number;
+  deadHandFor: PlayerId | null;
+  outcome: Outcome | null;
+}
+
+/**
+ * What an ASSET_SPOTTED may say a spotted asset is, after masking.
+ *
+ * Two kinds are missing and both are rules, not oversights: 'decoy' because a
+ * spotted decoy is reported as a bunker (spec §12), and 'drone' because no
+ * detector in the game ever reveals an enemy drone at all (spec §11 — drones do
+ * not reveal each other, and the only thing that touches one is interceptor
+ * coverage, which kills it).
+ */
+export type SpottedKind = 'launcher' | 'bunker' | 'interceptor';
+
+/**
+ * One event as a given player receives it (spec §6).
+ *
+ * Written as an Exclude over GameEvent rather than a parallel union, so a new
+ * event kind added above flows through with no second definition to keep in
+ * sync — only ASSET_SPOTTED needs restating, because it is the only event whose
+ * *content* is masked rather than merely routed.
+ *
+ * Note this type says nothing about audience: routing is `filterEventsForPlayer`'s
+ * job and cannot be expressed in a type, since the same event kind goes to
+ * different players depending on its `owner` field.
+ */
+export type VisibleEvent =
+  | Exclude<GameEvent, { type: 'ASSET_SPOTTED' }>
+  | { type: 'ASSET_SPOTTED'; kind: SpottedKind; hex: Hex; owner: PlayerId };
+
 /**
  * What `resolve()` hands back (spec §6): the next state, plus the ordered event
  * log for *this* resolution only.
