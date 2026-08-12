@@ -97,6 +97,20 @@ function openField(units: Unit[] = []): GameState {
   return makeState(makeMap(21, 21), units);
 }
 
+/**
+ * A living launcher parked in a far corner, out of every fixture's way.
+ *
+ * A board where one side's *only* launcher is a corpse is a board §4 would have
+ * ended by disarmament before this round could be played, so phase 4 stops it at
+ * the outcome check. Handing that side a spare keeps these tests about what they
+ * were always about — blocking, order dropping, post-impact movement — instead
+ * of about the win conditions, which have their own describe block below.
+ */
+function spare(owner: PlayerId): Unit {
+  const corner = owner === 'p1' ? { col: 0, row: 20 } : { col: 20, row: 0 };
+  return makeUnit(`${owner}-spare`, owner, 'launcher', offsetToAxial(corner));
+}
+
 /** Position of a unit in a resolved state, by id. */
 function positionOf(state: GameState, id: UnitId): Hex {
   const unit = state.units.find((u) => u.id === id);
@@ -285,7 +299,11 @@ describe('resolve() — §9 simultaneous-movement rulings', () => {
     const target = neighbors(CENTER)[0];
     const corpse = makeUnit('z', 'p2', 'launcher', target);
     corpse.destroyed = true;
-    const state = openField([makeUnit('a', 'p1', 'launcher', CENTER), corpse]);
+    const state = openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      corpse,
+      spare('p2'),
+    ]);
 
     const result = resolve(state, [move('a', target)], NO_ORDERS, 0);
 
@@ -385,7 +403,7 @@ describe('resolve() — which failures are reported', () => {
   it('drops an order naming an already-destroyed unit', () => {
     const dead = makeUnit('a', 'p1', 'launcher', CENTER);
     dead.destroyed = true;
-    const state = openField([dead]);
+    const state = openField([dead, spare('p1')]);
 
     const result = resolve(state, [move('a', neighbors(CENTER)[0])], NO_ORDERS, 0);
 
@@ -826,6 +844,7 @@ describe('resolve() — phase 3: impact', () => {
       makeUnit('a', 'p1', 'launcher', CENTER),
       makeUnit('b', 'p1', 'launcher', gunner),
       makeUnit('z', 'p2', 'launcher', contested),
+      spare('p2'),
     ]);
 
     // 'b' shells the hex 'a' is driving into. Phase 3 runs before phase 5, so
@@ -1556,5 +1575,267 @@ describe('resolve() — determinism', () => {
 
     expect(a.state).toEqual(b.state);
     expect(a.events).toEqual(b.events);
+  });
+});
+
+// --- phase 4: outcomes, dead hand, and the state machine (spec §3, §4, §5) --
+
+describe('resolve() — phase 4 and the dead-hand round', () => {
+  /** p2's bunker, already down to its last hit, and the launcher that answers. */
+  const SITE = north(CENTER, 3);
+  const P2_GUN = north(CENTER, 5);
+
+  function hurtBunker(owner: PlayerId, hex: Hex): Unit {
+    const bunker = makeUnit(`${owner}-bunker`, owner, 'bunker', hex);
+    bunker.hp = 1; // took 1 of its 2 in an earlier round
+    return bunker;
+  }
+
+  /** p1 is one missile from decapitating p2, who still has a launcher to answer with. */
+  function onTheBrink(extra: Unit[] = []): GameState {
+    return openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      hurtBunker('p2', SITE),
+      makeUnit('z', 'p2', 'launcher', P2_GUN),
+      ...extra,
+    ]);
+  }
+
+  function typesOf(events: GameEvent[]): string[] {
+    return events.map((e) => e.type);
+  }
+
+  it('a destroyed real bunker hands its owner the final round, not a loss', () => {
+    const result = resolve(onTheBrink(), [launch('a', SITE)], NO_ORDERS, 0);
+
+    expect(result.state.phase).toBe('DEAD_HAND_PHASE');
+    expect(result.state.deadHandFor).toBe('p2');
+    expect(result.state.outcome).toBeNull();
+    expect(result.events.at(-1)).toEqual({
+      type: 'DEAD_HAND_TRIGGERED',
+      playerId: 'p2',
+    });
+  });
+
+  it('the dead-hand round gets its own round number, so missile ids stay unique', () => {
+    const result = resolve(onTheBrink(), [launch('a', SITE)], NO_ORDERS, 0);
+
+    expect(result.state.round).toBe(2);
+  });
+
+  it('nobody moves in the round that triggers a dead hand (§3: phase 5 is skipped)', () => {
+    const runner = north(CENTER, -4);
+    const state = onTheBrink([makeUnit('b', 'p1', 'launcher', runner)]);
+
+    const result = resolve(
+      state,
+      [launch('a', SITE), move('b', north(runner, 1))],
+      NO_ORDERS,
+      0,
+    );
+
+    expect(positionOf(result.state, 'b')).toEqual(runner);
+    expect(typesOf(result.events)).not.toContain('UNIT_MOVED');
+    expect(typesOf(result.events)).not.toContain('MOVE_FAILED');
+  });
+
+  it('destroying the DECOY triggers nothing at all (§12)', () => {
+    const runner = north(CENTER, -4);
+    const state = openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      makeUnit('b', 'p1', 'launcher', runner),
+      makeUnit('p2-decoy', 'p2', 'decoy', SITE),
+      makeUnit('z', 'p2', 'launcher', P2_GUN),
+    ]);
+
+    const result = resolve(
+      state,
+      [launch('a', SITE), move('b', north(runner, 1))],
+      NO_ORDERS,
+      0,
+    );
+
+    expect(result.events).toContainEqual({
+      type: 'UNIT_DESTROYED',
+      unitId: 'p2-decoy',
+      kind: 'decoy',
+      hex: SITE,
+    });
+    expect(typesOf(result.events)).not.toContain('DEAD_HAND_TRIGGERED');
+    expect(typesOf(result.events)).not.toContain('GAME_OVER');
+    expect(result.state.phase).toBe('ORDER_PHASE');
+    // The match continues, so phase 5 ran: the decoy cost the attacker a missile
+    // and told them nothing except that they had found the fake.
+    expect(positionOf(result.state, 'b')).toEqual(north(runner, 1));
+  });
+
+  it('skips the final round when the decapitated player has nothing left to fire', () => {
+    const spent = makeUnit('z', 'p2', 'launcher', P2_GUN);
+    spent.destroyed = true;
+    const state = openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      hurtBunker('p2', SITE),
+      spent,
+    ]);
+
+    const result = resolve(state, [launch('a', SITE)], NO_ORDERS, 0);
+
+    expect(typesOf(result.events)).not.toContain('DEAD_HAND_TRIGGERED');
+    expect(result.state.phase).toBe('GAME_OVER');
+    expect(result.state.outcome).toEqual({ type: 'DECAPITATION', winner: 'p1' });
+  });
+
+  it('both bunkers destroyed in one impact phase is a draw, with no final round', () => {
+    const p1Site = north(CENTER, -1);
+    const state = openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      hurtBunker('p1', p1Site),
+      hurtBunker('p2', SITE),
+      makeUnit('z', 'p2', 'launcher', P2_GUN),
+    ]);
+
+    const result = resolve(state, [launch('a', SITE)], [launch('z', p1Site)], 0);
+
+    expect(typesOf(result.events)).not.toContain('DEAD_HAND_TRIGGERED');
+    expect(result.state.outcome).toEqual({ type: 'MUTUAL_ANNIHILATION' });
+    expect(result.events.at(-1)).toEqual({
+      type: 'GAME_OVER',
+      outcome: { type: 'MUTUAL_ANNIHILATION' },
+    });
+  });
+
+  // --- the final round itself ------------------------------------------------
+
+  /** Play the decapitating round, and hand back the dead-hand state it produced. */
+  function afterDecapitation(extra: Unit[] = []): GameState {
+    return resolve(onTheBrink(extra), [launch('a', SITE)], NO_ORDERS, 0).state;
+  }
+
+  it('the retaliation lands, and the survivor wins by decapitation', () => {
+    const deadHand = afterDecapitation();
+
+    const result = resolve(deadHand, NO_ORDERS, [launch('z', CENTER)], 0);
+
+    expect(unitOf(result.state, 'a').destroyed).toBe(true);
+    expect(result.state.phase).toBe('GAME_OVER');
+    // p1 lost their last launcher to the volley and still wins: bunker outcomes
+    // outrank launcher outcomes (§4).
+    expect(result.state.outcome).toEqual({ type: 'DECAPITATION', winner: 'p1' });
+    expect(result.events.at(-1)).toEqual({
+      type: 'GAME_OVER',
+      outcome: { type: 'DECAPITATION', winner: 'p1' },
+    });
+  });
+
+  it('runs phases 2 and 3 only — no recon, no movement (§3)', () => {
+    const deadHand = afterDecapitation([
+      makeUnit('p2-drone', 'p2', 'drone', north(CENTER, 6)),
+    ]);
+
+    const result = resolve(deadHand, NO_ORDERS, [launch('z', CENTER)], 0);
+
+    expect(typesOf(result.events)).toEqual([
+      'LAUNCH_DETECTED',
+      'IMPACT',
+      'UNIT_DESTROYED',
+      'GAME_OVER',
+    ]);
+  });
+
+  it('ignores the opponent’s orders entirely — they were never asked for any', () => {
+    const deadHand = afterDecapitation();
+
+    const result = resolve(deadHand, [launch('a', P2_GUN)], [launch('z', CENTER)], 0);
+
+    // Exactly one missile flew, and it was not p1's.
+    expect(result.events.filter((e) => e.type === 'LAUNCH_DETECTED')).toHaveLength(1);
+    expect(unitOf(result.state, 'z').destroyed).toBe(false);
+  });
+
+  it('a dead-hand missile that answers in kind is mutual annihilation', () => {
+    const p1Site = north(CENTER, -1);
+    const deadHand = afterDecapitation([hurtBunker('p1', p1Site)]);
+
+    const result = resolve(deadHand, NO_ORDERS, [launch('z', p1Site)], 0);
+
+    expect(result.state.outcome).toEqual({ type: 'MUTUAL_ANNIHILATION' });
+  });
+
+  it('resolves the same dead-hand round identically twice (§6)', () => {
+    const a = resolve(afterDecapitation(), NO_ORDERS, [launch('z', CENTER)], 7);
+    const b = resolve(afterDecapitation(), NO_ORDERS, [launch('z', CENTER)], 999);
+
+    expect(a.state).toEqual(b.state);
+    expect(a.events).toEqual(b.events);
+  });
+
+  // --- the other ways a match ends -------------------------------------------
+
+  it('losing your last launcher ends the match by disarmament, before movement', () => {
+    const runner = north(CENTER, -4);
+    const state = openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      makeUnit('b', 'p1', 'launcher', runner),
+      makeUnit('z', 'p2', 'launcher', SITE),
+    ]);
+
+    const result = resolve(
+      state,
+      [launch('a', SITE), move('b', north(runner, 1))],
+      NO_ORDERS,
+      0,
+    );
+
+    expect(result.state.outcome).toEqual({ type: 'DISARMAMENT', winner: 'p1' });
+    expect(positionOf(result.state, 'b')).toEqual(runner);
+  });
+
+  it('draws by armistice on the capped round', () => {
+    const state = { ...openField([makeUnit('a', 'p1', 'launcher', CENTER)]), round: RULES.roundCap };
+
+    const result = resolve(state, NO_ORDERS, NO_ORDERS, 0);
+
+    expect(result.state.outcome).toEqual({ type: 'ARMISTICE' });
+    expect(result.state.phase).toBe('GAME_OVER');
+    // The round number stops where the match stopped, rather than counting on.
+    expect(result.state.round).toBe(RULES.roundCap);
+  });
+
+  it('does not respawn a drone into a match that has just ended (§11)', () => {
+    const downed = makeUnit('p2-drone', 'p2', 'drone', north(CENTER, 8));
+    downed.destroyed = true;
+    const state = {
+      ...openField([
+        makeUnit('a', 'p1', 'launcher', CENTER),
+        makeUnit('z', 'p2', 'launcher', SITE),
+        downed,
+      ]),
+      droneRespawnIn: { p1: 0, p2: 1 },
+    };
+
+    const result = resolve(state, [launch('a', SITE)], NO_ORDERS, 0);
+
+    expect(result.state.outcome).toEqual({ type: 'DISARMAMENT', winner: 'p1' });
+    expect(typesOf(result.events)).not.toContain('DRONE_RESPAWNED');
+    expect(unitOf(result.state, 'p2-drone').destroyed).toBe(true);
+    expect(result.state.droneRespawnIn.p2).toBe(1);
+  });
+
+  // --- illegal calls ---------------------------------------------------------
+
+  it('throws when asked to resolve a finished match', () => {
+    const over: GameState = {
+      ...openField([makeUnit('a', 'p1', 'launcher', CENTER)]),
+      phase: 'GAME_OVER',
+      outcome: { type: 'ARMISTICE' },
+    };
+
+    expect(() => resolve(over, NO_ORDERS, NO_ORDERS, 0)).toThrow(/already over/);
+  });
+
+  it('throws when placement has not finished', () => {
+    const setup: GameState = { ...openField([]), phase: 'SETUP' };
+
+    expect(() => resolve(setup, NO_ORDERS, NO_ORDERS, 0)).toThrow(/startMatch/);
   });
 });

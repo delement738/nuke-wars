@@ -7,16 +7,25 @@
 //
 // Build-order step 4 implemented the skeleton and phase 5 (ground movement, §9);
 // step 5 added phase 1 (recon flight, §10/§11) and the drone respawn tick; step 6
-// added phases 2 and 3 (launch & interception, then impact). Phase 4 — the
-// outcome check — is the last stub, and belongs to step 7 with dead hand.
+// added phases 2 and 3 (launch & interception, then impact); step 7 filled in
+// phase 4 (the outcome check, §4) and with it the dead-hand round and the rest of
+// §5's state machine. All five phases now exist.
 //
 // The five-phase order from spec §3 produces several deliberate consequences,
-// and now that phases 2, 3 and 5 all exist they are real rather than planned:
-// strikes land before movement, so a launcher that fired last round cannot dodge
-// the counter-battery; two launchers that fire at each other both die, with no
-// rule needed to say so; and recon flies first, so the drone photographs
-// launchers at their pre-move positions and its intel can only pay off next
-// round.
+// and now that every phase exists they are real rather than planned: strikes land
+// before movement, so a launcher that fired last round cannot dodge the
+// counter-battery; two launchers that fire at each other both die, with no rule
+// needed to say so; recon flies first, so the drone photographs launchers at
+// their pre-move positions and its intel can only pay off next round; and phase 4
+// sits *above* movement, so the round that decapitates a player is also a round
+// in which nobody moves — you cannot reposition out of the dead-hand volley you
+// just provoked.
+//
+// THE STATE MACHINE (spec §5) lives in this file's last two functions. resolve()
+// is the single entry point for both kinds of round: a normal one runs phases
+// 1–5, and a dead-hand one runs phases 2–3 only (§3) and then ends the match. The
+// caller never picks — `state.phase` does, which is what keeps a store or a V1.5
+// server from having to know the difference.
 //
 // DETERMINISM (spec §6): V1 resolution reads no randomness at all. The `_seed`
 // parameter exists only so the signature doesn't have to change if V2
@@ -36,31 +45,21 @@ import {
   type Missile,
 } from './missiles';
 import { validateMove, type MoveIllegalReason } from './movement';
+import { adjudicate, type Adjudication } from './outcomes';
 import { flyDrone, reconSwath, validateFly, type DroneFlight } from './recon';
-import type {
-  GameEvent,
-  GameState,
-  LauncherContact,
-  Order,
-  PlayerId,
-  PlayerIntel,
-  ResolveResult,
-  Unit,
-  UnitId,
+import {
+  PLAYERS,
+  opponentOf,
+  type GameEvent,
+  type GameState,
+  type LauncherContact,
+  type Order,
+  type PlayerId,
+  type PlayerIntel,
+  type ResolveResult,
+  type Unit,
+  type UnitId,
 } from './types';
-
-/**
- * Canonical player iteration order. Nothing in V1 resolution is order-dependent
- * between the two players — drones never interact and movement is adjudicated
- * globally — but pinning the order keeps the event log byte-identical anyway,
- * which is what the §6 determinism test actually asserts.
- */
-const PLAYERS: readonly PlayerId[] = ['p1', 'p2'];
-
-/** The other player. `intel.p1` is what p1 knows about `opponentOf('p1')`. */
-function opponentOf(player: PlayerId): PlayerId {
-  return player === 'p1' ? 'p2' : 'p1';
-}
 
 /**
  * A fresh, structurally-shared-free copy of both players' intel.
@@ -725,12 +724,141 @@ function runGroundMovement(
   return { units, events };
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4 — outcome check, and spec §5's state machine
+// ---------------------------------------------------------------------------
+
 /**
- * Advance the game by one full round (spec §3, §6).
+ * End the round on phase 4's verdict (spec §3, §4, §5).
+ *
+ * Reaching here means the round stops at phase 4: **ground movement and the
+ * drone respawn tick are both skipped.** §3 says that of dead hand; step 7
+ * generalised it to any verdict, because movement cannot change a single §4
+ * condition (nothing about moving destroys anything) so the outcome is identical
+ * either way — and a log that shows launchers driving around *after* GAME_OVER
+ * would have a client animating a match that had already finished. The respawn
+ * tick goes with it for the reason it exists at all: it belongs to the start of
+ * the next *order* phase (§11), and there isn't one. A dead-hand round has no
+ * flight phase to use a drone in, and a finished match has no next round.
+ *
+ * The round number moves differently in the two cases, and both are deliberate:
+ *
+ * - **Dead hand increments it.** The final round is a real round, and missile
+ *   ids are `r{round}@{origin}` (§6) — reusing the number would let a launcher
+ *   that fires twice from the same hex produce two events with one id in a log
+ *   that keeps both forever.
+ * - **Game over freezes it.** `round` means "the round being played", and once
+ *   the match is over none is; the number is left reading as the last round that
+ *   actually happened.
+ */
+function endRound(
+  working: GameState,
+  events: GameEvent[],
+  verdict: Exclude<Adjudication, { type: 'CONTINUE' }>,
+): ResolveResult {
+  if (verdict.type === 'DEAD_HAND') {
+    // Public (§6): both players watch the bunker die, and the retaliation round
+    // is not a surprise — the attacker's whole plan was to survive it.
+    events.push({ type: 'DEAD_HAND_TRIGGERED', playerId: verdict.player });
+    return {
+      state: {
+        ...working,
+        round: working.round + 1,
+        phase: 'DEAD_HAND_PHASE',
+        deadHandFor: verdict.player,
+      },
+      events,
+    };
+  }
+
+  events.push({ type: 'GAME_OVER', outcome: verdict.outcome });
+  return {
+    state: { ...working, phase: 'GAME_OVER', outcome: verdict.outcome },
+    events,
+  };
+}
+
+/**
+ * The dead-hand round (spec §3): the decapitated player's final volley.
+ *
+ * **Launches only** — phases 2 and 3, then adjudication. There is no recon
+ * phase, no ground movement, and no respawn tick, which is exactly why step 6
+ * built `runLaunchPhase` and `runImpactPhase` to take a state and hand back a
+ * result: this function calls the pair directly instead of re-entering a round.
+ *
+ * The opponent issues no orders at all. That is expressed by handing the launch
+ * phase an **empty order book** for them rather than by teaching the phase about
+ * dead hand — an order they never submitted and an order that was discarded look
+ * identical from inside phase 2, and only one of those needs a branch. Their
+ * interceptor bases still defend normally: `flyMissiles` reads bases off the
+ * board, not off an order.
+ *
+ * Launcher contacts are deliberately NOT rebuilt here. A contact filed during
+ * round N's resolution is live for round N+1's order phase (§11), and for a
+ * decapitated player that order phase *is* the dead-hand phase — those sightings
+ * are precisely the intel they are entitled to aim their last shots with.
+ */
+function resolveDeadHand(
+  state: GameState,
+  ordersP1: readonly Order[],
+  ordersP2: readonly Order[],
+): ResolveResult {
+  const player = state.deadHandFor;
+  if (!player) {
+    throw new Error('resolve(): DEAD_HAND_PHASE with no deadHandFor set');
+  }
+
+  const empty: ReadonlyMap<UnitId, Order> = new Map();
+  const submitted = player === 'p1' ? ordersP1 : ordersP2;
+  const orders: OrderBook = {
+    p1: player === 'p1' ? ordersByUnit(submitted) : empty,
+    p2: player === 'p2' ? ordersByUnit(submitted) : empty,
+  };
+
+  const events: GameEvent[] = [];
+  let working: GameState = state;
+
+  // --- Phase 2: launch & interception (spec §10) -------------------------------
+  const launches = runLaunchPhase(working, orders);
+  working = { ...working, intel: launches.intel };
+  events.push(...launches.events);
+
+  // --- Phase 3: impact (spec §3) -----------------------------------------------
+  const impacts = runImpactPhase(working, launches.survivors);
+  working = { ...working, units: impacts.units, intel: impacts.intel };
+  events.push(...impacts.events);
+
+  // --- Adjudication (spec §4) --------------------------------------------------
+  // Always terminal: this round only exists because a real bunker was destroyed,
+  // so `adjudicate` sees at least one and returns MUTUAL_ANNIHILATION (the
+  // retaliation answered in kind) or DECAPITATION (it did not). Anything else
+  // means the state machine was driven into this phase by hand.
+  const verdict = adjudicate(working);
+  if (verdict.type !== 'OUTCOME') {
+    throw new Error('resolve(): dead-hand round with no decapitation to settle');
+  }
+
+  return endRound(working, events, verdict);
+}
+
+/**
+ * Advance the game by one round — the engine's single entry point (spec §6).
  *
  * Pure: the input state is never mutated. Units that move are rebuilt as new
  * objects and everything else is shared by reference, so callers may keep the
  * previous state as history.
+ *
+ * `state.phase` selects the round type, so no caller has to know the difference
+ * between a normal round and a dead-hand one (spec §5). Two of the five values in
+ * `GamePhase` are never resting states: resolution is atomic here, so a state
+ * handed back by this function is never mid-`RESOLUTION` — that value and the
+ * diagram's `FINAL_RESOLUTION` exist for the presentation layer to sit in while
+ * it animates the log.
+ *
+ * Throws when called on a match that has finished or has not begun. Both are
+ * caller bugs rather than bad input — the phase is the engine's own to set, not
+ * a client's — and the alternative is a silent no-op that hides the bug (same
+ * reasoning as `generateMap` throwing rather than shipping a bad map, §7).
  *
  * @param _seed Never read in V1 — see the determinism note at the top of this
  * file. Do not plumb an RNG in here.
@@ -741,6 +869,16 @@ export function resolve(
   ordersP2: readonly Order[],
   _seed: number,
 ): ResolveResult {
+  if (state.phase === 'GAME_OVER') {
+    throw new Error('resolve(): the match is already over');
+  }
+  if (state.phase === 'SETUP') {
+    throw new Error('resolve(): placement is not finished — call startMatch()');
+  }
+  if (state.phase === 'DEAD_HAND_PHASE') {
+    return resolveDeadHand(state, ordersP1, ordersP2);
+  }
+
   const events: GameEvent[] = [];
 
   // Budgets are applied once, up front, so every phase agrees about which
@@ -787,12 +925,14 @@ export function resolve(
   working = { ...working, units: impacts.units, intel: impacts.intel };
   events.push(...impacts.events);
 
-  // --- Phase 4: outcome check ------------------------------ build-order step 7
-  // Outcomes are evaluated only after a full resolution, never mid-round
-  // (spec §5), and a destroyed real bunker skips phase 5 entirely (§3). Until
-  // step 7 lands, phase 5 runs unconditionally — a decapitated player's
-  // launchers still drive this round. Nothing else in the engine depends on
-  // that, because outcomes are read from the board, never from movement.
+  // --- Phase 4: outcome check (spec §3, §4, §5) --------------------------------
+  // Read off the post-impact board, which is the only place in a round where
+  // anything is destroyed — so this is "after a full resolution" in the sense §5
+  // means it, even though phase 5 has yet to run. A verdict here ends the round
+  // where it stands: see `endRound` for why movement and the respawn tick are
+  // both skipped rather than run for a match that has just finished.
+  const verdict = adjudicate(working);
+  if (verdict.type !== 'CONTINUE') return endRound(working, events, verdict);
 
   // --- Phase 5: ground movement (spec §9) --------------------------------------
   const movement = runGroundMovement(working, orders);
@@ -800,9 +940,9 @@ export function resolve(
   events.push(...movement.events);
 
   // --- Entering the next order phase: drone respawn tick (spec §11) ------------
-  // Not a resolution phase — see runDroneRespawns. Step 7 should decide whether
-  // this runs at all once the game is over or during a dead-hand round, which
-  // has no recon phase to lose a drone in anyway (spec §3).
+  // Not a resolution phase — see runDroneRespawns. It is reached only when the
+  // match continues, because it belongs to the start of the next order phase and
+  // a round that ended at phase 4 has none (see `endRound`).
   const respawns = runDroneRespawns(working);
   working = {
     ...working,
