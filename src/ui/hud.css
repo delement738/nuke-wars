@@ -1,0 +1,148 @@
+/* UI LAYER — HUD styling (build-order step 9).
+ *
+ * The HUD floats over the Pixi canvas, so the layout container must not eat
+ * pointer events (dragging the map through a gap between panels has to work) —
+ * `.hud` is pointer-events: none and each panel turns them back on.
+ */
+
+.hud {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  pointer-events: none;
+
+  color: #d7e2ee;
+  font: 13px/1.45 ui-sans-serif, system-ui, sans-serif;
+}
+
+.hud .column {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 100%;
+  width: 300px;
+}
+
+.hud .column.right {
+  align-items: stretch;
+  min-height: 0; /* lets the log scroll instead of stretching the column */
+}
+
+.panel {
+  pointer-events: auto;
+  background: rgba(12, 18, 26, 0.88);
+  border: 1px solid #223047;
+  border-radius: 8px;
+  padding: 10px 12px;
+  backdrop-filter: blur(2px);
+}
+
+.panel h2 {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 0 0 6px;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #9fb4cc;
+}
+
+.panel h3 {
+  margin: 8px 0 2px;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  color: #7f93aa;
+}
+
+.panel p {
+  margin: 4px 0;
+}
+
+.viewing {
+  font-size: 11px;
+  color: #5aa9ff;
+  letter-spacing: 0.06em;
+}
+
+.muted { color: #8496aa; }
+.own { color: #5aa9ff; }
+.enemy { color: #ff8371; }
+.alert { color: #ffd54a; font-weight: 600; }
+
+.outcome {
+  font-weight: 600;
+  color: #ffd54a;
+}
+
+.footnote {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #6b7c90;
+}
+
+.buttons {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.buttons button {
+  flex: 1;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: #d7e2ee;
+  background: #17222f;
+  border: 1px solid #2c3d55;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.buttons button:hover:not(:disabled) {
+  background: #1f2e40;
+  border-color: #3d5470;
+}
+
+.buttons button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* --- event log --- */
+
+.log {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.log .rounds {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.log .rounds ul {
+  margin: 0;
+  padding-left: 14px;
+  list-style: none;
+}
+
+.log .rounds ul li {
+  position: relative;
+  margin: 2px 0;
+  color: #c2d0e0;
+}
+
+.log .rounds ul li::before {
+  content: '·';
+  position: absolute;
+  left: -10px;
+  color: #4a5d75;
+}

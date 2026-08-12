@@ -6,3 +6,16 @@ html, body, #root {
   overflow: hidden;
   background: #0b0f14;
 }
+
+/* The Pixi canvas and the React HUD are stacked in the same box, so the HUD can
+   sit over the board without a second scroll context. */
+.stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.canvas-host {
+  position: absolute;
+  inset: 0;
+}
