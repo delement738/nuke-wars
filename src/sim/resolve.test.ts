@@ -10,6 +10,7 @@ import {
   type Hex,
 } from './hex';
 import { tileAt, type MapData, type Terrain, type TileData } from './map';
+import { missileIdFor } from './missiles';
 import { resolve } from './resolve';
 import type {
   GameEvent,
@@ -443,20 +444,442 @@ describe('resolve() — one order per unit', () => {
   });
 });
 
-// --- orders belonging to later build-order steps ----------------------------
+// --- phase 2: launch & interception (spec §3, §10, §11) ---------------------
 
-describe('resolve() — orders not yet implemented', () => {
-  it('accepts a LAUNCH order without acting on it or throwing (step 6)', () => {
+describe('resolve() — phase 2: launch & interception', () => {
+  it('fires a missile: the launch is public, the origin marks the DEFENDER’s map', () => {
+    const target = north(CENTER, 3);
     const state = openField([makeUnit('a', 'p1', 'launcher', CENTER)]);
+
+    const result = resolve(state, [launch('a', target)], NO_ORDERS, 0);
+
+    const missileId = missileIdFor(state.round, CENTER);
+    expect(result.events).toEqual([
+      { type: 'LAUNCH_DETECTED', missileId, origin: CENTER, target },
+      // Fires even though the hex is empty — see the IMPACT tests below.
+      { type: 'IMPACT', missileId, hex: target },
+    ]);
+    // Intel is keyed by the VIEWER: p1's launch marks p2's map, not p1's.
+    expect(result.state.intel.p2.contacts).toEqual([
+      { hex: CENTER, source: 'LAUNCH' },
+    ]);
+    expect(result.state.intel.p1.contacts).toEqual([]);
+  });
+
+  it('a launch contact cannot be stale — the firer could not also have moved', () => {
+    const state = openField([makeUnit('a', 'p1', 'launcher', CENTER)]);
+
+    const result = resolve(state, [launch('a', north(CENTER, 3))], NO_ORDERS, 0);
+
+    // One order per unit (§9), so the launcher is still standing on the origin
+    // when the round ends. That is what makes a detected launch a live target
+    // for exactly one round, and firing a hard commitment (§3, §11).
+    expect(positionOf(result.state, 'a')).toEqual(CENTER);
+    expect(result.state.intel.p2.contacts).toEqual([
+      { hex: CENTER, source: 'LAUNCH' },
+    ]);
+  });
+
+  it('the contact expires after one order phase, like any launcher sighting', () => {
+    const state = openField([makeUnit('a', 'p1', 'launcher', CENTER)]);
+
+    const fired = resolve(state, [launch('a', north(CENTER, 3))], NO_ORDERS, 0);
+    const later = resolve(fired.state, NO_ORDERS, NO_ORDERS, 0);
+
+    expect(later.state.intel.p2.contacts).toEqual([]);
+    // The permanent record is the log, not the map (§6, §11).
+    expect(fired.events.some((e) => e.type === 'LAUNCH_DETECTED')).toBe(true);
+  });
+
+  it('records one contact when recon and launch detection see the same launcher', () => {
+    const enemy = north(CENTER, 2);
+    const state = openField([
+      makeUnit('spy', 'p2', 'drone', north(CENTER, 4)),
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      makeUnit('z', 'p2', 'launcher', enemy),
+    ]);
+
+    // p2's drone hovers over p1's launcher hex while p1 fires from it.
+    const result = resolve(state, [launch('a', enemy)], [fly('spy', CENTER)], 0);
+
+    // Keyed by hex, so one entry — and the two detectors agree, because a
+    // launcher that fired cannot have moved.
+    expect(result.state.intel.p2.contacts).toEqual([
+      { hex: CENTER, source: 'RECON' },
+    ]);
+  });
+
+  it.each([
+    ['out of range', () => north(CENTER, RULES.missileRange + 1)],
+    ['its own hex', () => CENTER],
+    ['off the map', () => offsetToAxial({ col: -4, row: -4 })],
+  ])('drops a LAUNCH aimed %s in silence', (_label, targetOf) => {
+    const state = openField([makeUnit('a', 'p1', 'launcher', CENTER)]);
+
+    const result = resolve(state, [launch('a', targetOf())], NO_ORDERS, 0);
+
+    // No air-layer MOVE_FAILED: every way a LAUNCH can be rejected is derivable
+    // from the player's own units plus the public map, so hidden information
+    // cannot have caused it and there is nothing to report (§9's policy).
+    expect(result.events).toEqual([]);
+    expect(result.state.intel.p2.contacts).toEqual([]);
+  });
+
+  it('drops a LAUNCH naming the ENEMY’s launcher without a whisper', () => {
+    const state = openField([makeUnit('z', 'p2', 'launcher', CENTER)]);
+
+    const result = resolve(state, [launch('z', north(CENTER, 3))], NO_ORDERS, 0);
+
+    // Acting on it would fire p2's missile on p1's say-so; reporting it would
+    // put a real enemy unit id into p1's log (§9, §11).
+    expect(result.events).toEqual([]);
+  });
+
+  it('drops a LAUNCH naming the drone — it carries no missile', () => {
+    const state = openField([makeUnit('eye', 'p1', 'drone', CENTER)]);
+
+    const result = resolve(state, [launch('eye', north(CENTER, 3))], NO_ORDERS, 0);
+
+    // The one event is phase 1's hover: the drone still watches.
+    expect(result.events).toEqual([hovered('eye', 'p1', CENTER)]);
+  });
+
+  it('an intercepted missile is announced and never lands', () => {
+    const victim = north(CENTER, 5);
+    const state = openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      makeUnit('base', 'p2', 'interceptor', north(CENTER, 3)),
+      makeUnit('z', 'p2', 'launcher', victim),
+    ]);
+
+    const result = resolve(state, [launch('a', victim)], NO_ORDERS, 0);
+
+    const missileId = missileIdFor(state.round, CENTER);
+    expect(result.events).toEqual([
+      { type: 'LAUNCH_DETECTED', missileId, origin: CENTER, target: victim },
+      // Killed on the first covered hex it entered — the bubble starts one hex
+      // before the base itself (coverage radius 1).
+      { type: 'MISSILE_INTERCEPTED', missileId, hex: north(CENTER, 2) },
+    ]);
+    expect(unitOf(result.state, 'z').destroyed).toBe(false);
+  });
+
+  it('MISSILE_INTERCEPTED names no base — the attacker gets 7 candidates', () => {
+    const state = openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      makeUnit('base', 'p2', 'interceptor', north(CENTER, 3)),
+    ]);
+
+    const result = resolve(state, [launch('a', north(CENTER, 5))], NO_ORDERS, 0);
+    const intercept = result.events.find((e) => e.type === 'MISSILE_INTERCEPTED')!;
+
+    // Probing lanes with cheap missiles is legitimate strategy (§10) — but all
+    // it buys is "some base covers that hex". Bases reach a map only via recon.
+    expect(Object.keys(intercept).sort()).toEqual(['hex', 'missileId', 'type']);
+  });
+
+  it('saturation beats the cap: two missiles down one lane, the second lands', () => {
+    // The per-round cap is the stalemate-breaker for the whole design (§10):
+    // without it a base is unkillable, because any missile aimed at one must
+    // cross its own coverage to get there.
+    expect(RULES.interceptsPerRound).toBe(1);
+    const south = north(CENTER, -1);
+    const victim = north(CENTER, 4);
+    const state = openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      makeUnit('b', 'p1', 'launcher', south),
+      makeUnit('base', 'p2', 'interceptor', north(CENTER, 2)),
+      makeUnit('z', 'p2', 'launcher', victim),
+    ]);
 
     const result = resolve(
       state,
-      [launch('a', offsetToAxial({ col: 10, row: 6 }))],
+      [launch('a', victim), launch('b', victim)],
       NO_ORDERS,
       0,
     );
 
-    expect(result.events).toEqual([]);
+    const types = result.events.map((e) => e.type);
+    expect(types.filter((t) => t === 'MISSILE_INTERCEPTED')).toHaveLength(1);
+    expect(types.filter((t) => t === 'IMPACT')).toHaveLength(1);
+    expect(unitOf(result.state, 'z').destroyed).toBe(true);
+  });
+
+  it('a base kills a drone AND still intercepts a missile in the same round', () => {
+    // Drone kills are free and never consume the missile intercept (§2, §10).
+    const westHex = offsetToAxial({ col: 9, row: 10 });
+    const state = openField([
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('a', 'p1', 'launcher', westHex),
+      makeUnit('base', 'p2', 'interceptor', north(CENTER, 3)),
+    ]);
+
+    const result = resolve(
+      state,
+      [fly('eye', north(CENTER, FLIGHT)), launch('a', north(westHex, 5))],
+      NO_ORDERS,
+      0,
+    );
+
+    const types = result.events.map((e) => e.type);
+    expect(types).toContain('DRONE_DOWNED');
+    expect(types).toContain('MISSILE_INTERCEPTED');
+    expect(types).not.toContain('IMPACT');
+  });
+});
+
+// --- phase 3: impact (spec §3, §6, §12) -------------------------------------
+
+describe('resolve() — phase 3: impact', () => {
+  /** p1 fires from CENTER at `target`; nothing else is on the board but `units`. */
+  function strike(target: Hex, units: Unit[] = [], extra: Order[] = []) {
+    const state = openField([makeUnit('a', 'p1', 'launcher', CENTER), ...units]);
+    return {
+      state,
+      result: resolve(state, [launch('a', target), ...extra], NO_ORDERS, 0),
+    };
+  }
+
+  it('fires IMPACT on empty ground, and never names a victim', () => {
+    const target = north(CENTER, 3);
+    const { result } = strike(target);
+
+    // Load-bearing: if IMPACT only fired when something was struck, its mere
+    // presence would reveal the hex was occupied, and blind-fire probing would
+    // find bunkers and bases for free (§6).
+    const impact = result.events.find((e) => e.type === 'IMPACT')!;
+    expect(impact).toEqual({
+      type: 'IMPACT',
+      missileId: missileIdFor(1, CENTER),
+      hex: target,
+    });
+  });
+
+  it('destroys a launcher outright, publicly, and stops it moving', () => {
+    const target = north(CENTER, 3);
+    const state = openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      makeUnit('z', 'p2', 'launcher', target),
+    ]);
+
+    // p2 tries to drive away — but strikes land in phase 3 and movement is
+    // phase 5, so firing is a hard commitment and fleeing is too late (§3).
+    const result = resolve(
+      state,
+      [launch('a', target)],
+      [move('z', north(target, 3))],
+      0,
+    );
+
+    const victim = unitOf(result.state, 'z');
+    expect(victim.destroyed).toBe(true);
+    expect(victim.position).toEqual(target);
+    expect(result.events).toContainEqual({
+      type: 'UNIT_DESTROYED',
+      unitId: 'z',
+      kind: 'launcher',
+      hex: target,
+    });
+    expect(result.events.some((e) => e.type === 'UNIT_MOVED')).toBe(false);
+  });
+
+  it('the real bunker takes 1 of its 2 hits, and only its owner is told', () => {
+    const site = north(CENTER, 3);
+    const { result } = strike(site, [makeUnit('real', 'p2', 'bunker', site)]);
+
+    const bunker = unitOf(result.state, 'real');
+    expect(bunker.destroyed).toBe(false);
+    expect(bunker.hp).toBe(UNIT_DEFS.bunker.hp - 1);
+    expect(result.events).toContainEqual({
+      type: 'BUNKER_HIT',
+      unitId: 'real',
+      owner: 'p2',
+      hex: site,
+      hpRemaining: 1,
+    });
+    // To the attacker this round looks exactly like hitting bare ground.
+    expect(result.events.some((e) => e.type === 'UNIT_DESTROYED')).toBe(false);
+  });
+
+  it('hits STACK: two missiles kill a full-health bunker in one round', () => {
+    const site = north(CENTER, 3);
+    const south = north(CENTER, -1);
+    const state = openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      makeUnit('b', 'p1', 'launcher', south),
+      makeUnit('real', 'p2', 'bunker', site),
+    ]);
+
+    const result = resolve(state, [launch('a', site), launch('b', site)], NO_ORDERS, 0);
+
+    // The alpha strike (§3, §12): skip the decoy test at the price of a wasted
+    // missile if the site turns out to be the fake.
+    expect(unitOf(result.state, 'real').destroyed).toBe(true);
+    expect(result.events.filter((e) => e.type === 'IMPACT')).toHaveLength(2);
+    expect(result.events.some((e) => e.type === 'BUNKER_HIT')).toBe(false);
+  });
+
+  it('a decoy dies to one hit, reported truthfully as a decoy', () => {
+    const site = north(CENTER, 3);
+    const { result } = strike(site, [makeUnit('fake', 'p2', 'decoy', site)]);
+
+    expect(result.events).toContainEqual({
+      type: 'UNIT_DESTROYED',
+      unitId: 'fake',
+      kind: 'decoy',
+      hex: site,
+    });
+    // THE tell (§12): a destroyed site was the fake; silence after a hit means
+    // the real bunker absorbed 1 of its 2. A decoy never emits BUNKER_HIT
+    // because it never survives one.
+    expect(result.events.some((e) => e.type === 'BUNKER_HIT')).toBe(false);
+  });
+
+  it('kills a bunker built on a MOUNTAIN exactly like one on plains', () => {
+    const site = north(CENTER, 3);
+    const state = openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      makeUnit('b', 'p1', 'launcher', north(CENTER, -1)),
+      makeUnit('real', 'p2', 'bunker', site),
+    ]);
+    setTerrain(state.map, site, 'mountain');
+
+    const result = resolve(state, [launch('a', site), launch('b', site)], NO_ORDERS, 0);
+
+    // Static structures may be built on mountains (§12), so if targeting or
+    // flight filtered impassable hexes a mountain bunker would be invulnerable
+    // — a guaranteed win for the defender (§10).
+    expect(unitOf(result.state, 'real').destroyed).toBe(true);
+  });
+
+  it('is aimed at ground, not at a target: friendly fire kills your own', () => {
+    const own = north(CENTER, 3);
+    const { result } = strike(own, [makeUnit('mine', 'p1', 'launcher', own)]);
+
+    expect(unitOf(result.state, 'mine').destroyed).toBe(true);
+  });
+
+  it('cannot touch a drone hovering over the target hex (§2 air layer)', () => {
+    const target = north(CENTER, 3);
+    const { result } = strike(target, [makeUnit('spy', 'p2', 'drone', target)]);
+
+    const drone = unitOf(result.state, 'spy');
+    expect(drone.destroyed).toBe(false);
+    expect(result.events.some((e) => e.type === 'UNIT_DESTROYED')).toBe(false);
+    // IMPACT still fires — it always does, whatever is or isn't standing there.
+    expect(result.events.some((e) => e.type === 'IMPACT')).toBe(true);
+  });
+
+  it('leaves an already-destroyed unit alone — no second death', () => {
+    const target = north(CENTER, 3);
+    const corpse = makeUnit('z', 'p2', 'launcher', target);
+    corpse.destroyed = true;
+    const { result } = strike(target, [corpse]);
+
+    expect(result.events.some((e) => e.type === 'UNIT_DESTROYED')).toBe(false);
+  });
+
+  it('public destruction clears the enemy’s map of that asset (§11)', () => {
+    const site = north(CENTER, 3);
+    const state = openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      makeUnit('b', 'p1', 'launcher', north(CENTER, -1)),
+      makeUnit('base', 'p2', 'interceptor', site),
+    ]);
+    // p1 photographed the base in an earlier round; the sighting is permanent
+    // — until the asset is publicly destroyed, which is exactly now.
+    state.intel.p1.staticReveals.push({ hex: site, kind: 'interceptor', round: 1 });
+
+    // It takes TWO missiles, and that is the design working: a base is
+    // self-protecting, because any missile aimed at one must cross its own
+    // coverage to reach it. The first is eaten, the second gets through — which
+    // is precisely why the per-round cap exists (§10).
+    const result = resolve(state, [launch('a', site), launch('b', site)], NO_ORDERS, 0);
+
+    expect(unitOf(result.state, 'base').destroyed).toBe(true);
+    expect(result.state.intel.p1.staticReveals).toEqual([]);
+  });
+
+  it('counter-battery clears the launch contact it was fired at', () => {
+    const enemy = north(CENTER, 4);
+    const state = openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      makeUnit('z', 'p2', 'launcher', enemy),
+    ]);
+
+    // Both fire at each other's hexes in the same round: both missiles are in
+    // flight simultaneously, so both launchers die. §3 needs no rule for this.
+    const result = resolve(state, [launch('a', enemy)], [launch('z', CENTER)], 0);
+
+    expect(unitOf(result.state, 'a').destroyed).toBe(true);
+    expect(unitOf(result.state, 'z').destroyed).toBe(true);
+    // The contact each side filed this round is for a launcher both players
+    // just watched die — the map shows only what is true right now (§11).
+    expect(result.state.intel.p1.contacts).toEqual([]);
+    expect(result.state.intel.p2.contacts).toEqual([]);
+  });
+
+  it('hands phase 5 a post-impact board: a destroyed blocker no longer blocks', () => {
+    const contested = north(CENTER, 1);
+    const gunner = offsetToAxial({ col: 8, row: 10 });
+    const state = openField([
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      makeUnit('b', 'p1', 'launcher', gunner),
+      makeUnit('z', 'p2', 'launcher', contested),
+    ]);
+
+    // 'b' shells the hex 'a' is driving into. Phase 3 runs before phase 5, so
+    // by the time movement is validated the blocker is a corpse — and corpses
+    // block nothing (§9).
+    const result = resolve(
+      state,
+      [launch('b', contested), move('a', contested)],
+      NO_ORDERS,
+      0,
+    );
+
+    expect(unitOf(result.state, 'z').destroyed).toBe(true);
+    expect(positionOf(result.state, 'a')).toEqual(contested);
+  });
+});
+
+// --- the shape of the round's log -------------------------------------------
+
+describe('resolve() — event log ordering', () => {
+  it('emits the round in phase order, so a client can animate straight through', () => {
+    const site = north(CENTER, 2);
+    const gunner = offsetToAxial({ col: 8, row: 10 });
+    const state = openField([
+      makeUnit('eye', 'p1', 'drone', CENTER),
+      makeUnit('a', 'p1', 'launcher', CENTER),
+      makeUnit('b', 'p1', 'launcher', gunner),
+      makeUnit('fake', 'p2', 'decoy', site),
+      makeUnit('base', 'p2', 'interceptor', north(CENTER, 5)),
+    ]);
+
+    const result = resolve(
+      state,
+      [
+        fly('eye', north(CENTER, 2)), // sees the decoy, survives
+        launch('a', north(CENTER, 4)), // flies into the bubble, intercepted
+        launch('b', site), // destroys the decoy
+      ],
+      NO_ORDERS,
+      0,
+    );
+
+    expect(result.events.map((e) => e.type)).toEqual([
+      // Phase 1 — recon.
+      'DRONE_MOVED',
+      'ASSET_SPOTTED',
+      // Phase 2 — the whole volley leaves the ground, then defenses engage.
+      'LAUNCH_DETECTED',
+      'LAUNCH_DETECTED',
+      'MISSILE_INTERCEPTED',
+      // Phase 3 — arrivals first (never naming a victim), then the damage.
+      'IMPACT',
+      'UNIT_DESTROYED',
+    ]);
   });
 });
 
@@ -1009,8 +1432,8 @@ describe('resolve() — round bookkeeping and purity', () => {
 describe('resolve() — determinism', () => {
   /**
    * A round with every kind of outcome in it: a move, a standoff, a block, a
-   * dropped order, a drone that sweeps and survives, and a drone shot down
-   * mid-flight.
+   * dropped order, a drone that sweeps and survives, a drone shot down
+   * mid-flight, a missile that kills, and a missile that is intercepted.
    */
   function busyRound(): {
     state: GameState;
@@ -1023,38 +1446,55 @@ describe('resolve() — determinism', () => {
     const droneDest = north(droneStart, FLIGHT);
     const droneLane = hexLine(droneStart, droneDest);
     const spyStart = offsetToAxial({ col: 3, row: 15 });
+    // A lane of its own on the west edge: 'v' fires north into 'shield'.
+    const gunner = offsetToAxial({ col: 1, row: 8 });
+    const shield = offsetToAxial({ col: 1, row: 10 });
     const state = openField([
       makeUnit('a', 'p1', 'launcher', n[0]),
       makeUnit('b', 'p1', 'launcher', far),
+      // Fires at 'w', four hexes north and outside every bubble.
+      makeUnit('c', 'p1', 'launcher', offsetToAxial({ col: 15, row: 18 })),
       makeUnit('eye', 'p1', 'drone', droneStart),
+      makeUnit('shield', 'p1', 'interceptor', shield),
       makeUnit('z', 'p2', 'launcher', n[3]),
       makeUnit('y', 'p2', 'launcher', offsetToAxial({ col: 18, row: 4 })),
+      makeUnit('v', 'p2', 'launcher', gunner),
       makeUnit('spy', 'p2', 'drone', spyStart),
       // Sits on p1's drone lane: 'eye' dies entering droneLane[2]...
       makeUnit('base', 'p2', 'interceptor', droneLane[3]),
-      // ...but not before photographing this one.
+      // ...but not before photographing this one, which 'c' then kills.
       makeUnit('w', 'p2', 'launcher', droneLane[1]),
     ]);
     return {
       state,
-      p1: [move('a', CENTER), move('b', neighbors(far)[0]), fly('eye', droneDest)],
+      p1: [
+        move('a', CENTER),
+        move('b', neighbors(far)[0]),
+        launch('c', droneLane[1]),
+        fly('eye', droneDest),
+      ],
       p2: [
         move('z', CENTER),
         move('y', neighbors(offsetToAxial({ col: 18, row: 4 }))[0]),
+        launch('v', north(gunner, -4)),
         fly('spy', north(spyStart, FLIGHT)),
       ],
     };
   }
 
-  it('the fixture really does exercise the recon phase', () => {
-    // Guards the tests below: if a refactor stopped downing the drone, they
-    // would still pass while covering nothing.
+  it('the fixture really does exercise every phase', () => {
+    // Guards the tests below: if a refactor stopped downing the drone or
+    // intercepting the missile, they would still pass while covering nothing.
     const { state, p1, p2 } = busyRound();
     const types = new Set(resolve(state, p1, p2, 0).events.map((e) => e.type));
 
     expect(types).toContain('DRONE_MOVED');
     expect(types).toContain('DRONE_DOWNED');
     expect(types).toContain('ASSET_SPOTTED');
+    expect(types).toContain('LAUNCH_DETECTED');
+    expect(types).toContain('MISSILE_INTERCEPTED');
+    expect(types).toContain('IMPACT');
+    expect(types).toContain('UNIT_DESTROYED');
     expect(types).toContain('UNIT_MOVED');
     expect(types).toContain('MOVE_FAILED');
   });

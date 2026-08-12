@@ -215,7 +215,26 @@ export const RULES = {
   /** Missile range in hexes from the firing launcher (spec §7). */
   missileRange: 6,
 
-  /** An interceptor base covers its own hex + all hexes within this radius. */
+  /**
+   * Hits a landing missile deals to whatever occupies its target hex (spec §3).
+   *
+   * Damage is hits-based with no variance, and hits STACK within a round: two
+   * missiles landing on the same full-health bunker in one round total 2 and
+   * destroy it outright. That alpha strike is a deliberate option — a way to
+   * skip the decoy test at the price of a wasted missile if the site turns out
+   * to be the fake (§12) — so the impact phase totals damage per hex rather
+   * than applying one hit per hex.
+   */
+  missileDamage: 1,
+
+  /**
+   * An interceptor base covers its own hex + all hexes within this radius.
+   *
+   * READ THE NOTE ON `reconSwathRadius` BELOW BEFORE CHANGING THIS. The two
+   * radii interact: while the swath radius is <= this one, a drone can never
+   * photograph a base, and the decision to accept that (spec §11, "Bases are
+   * inferred, never photographed") is a design ruling, not an accident.
+   */
   interceptorCoverageRadius: 1,
 
   /**
@@ -232,11 +251,17 @@ export const RULES = {
    * Bases are then findable only by *inference* from the public 7-candidate
    * clues, `MISSILE_INTERCEPTED` and `DRONE_DOWNED`.
    *
-   * Raising this to 2 is the one-number change that makes §12's "finding
-   * interceptor bases narrows the bunker hunt" true: the drone could then fly
-   * past at distance 2, outside the bubble, and still see the base. It also
+   * DECIDED 2026-08-11 (before build-order step 6): this stays at 1, and bases
+   * are found by *inference* from the two public 7-candidate clues rather than
+   * by photograph (spec §11, "Bases are inferred, never photographed"). A drone
+   * lost over enemy ground is therefore intel, not a wasted round.
+   *
+   * Raising this to 2 is the one-number change that would let the drone fly
+   * past at distance 2, outside the bubble, and photograph the base. It also
    * widens every other reveal from a 3-wide corridor to a 5-wide one, which is
-   * a large buff to recon overall — hence a playtest decision, not a bug fix.
+   * a large buff to recon overall and shortens the bunker hunt — the game's
+   * clock. Revisit it in playtest (§8 step 10) with real games behind it, never
+   * as a drive-by fix.
    */
   reconSwathRadius: 1,
 

@@ -47,8 +47,8 @@ function isLiveEnemyBase(unit: Unit, viewer: PlayerId): boolean {
  *
  * This is the whole of the drone-kill rule: a drone entering a hex for which
  * this returns true is destroyed, no capacity is consumed, and no further check
- * is needed. Missiles (step 6) need to know *which* base engaged them, so they
- * will want a richer variant added here rather than this boolean.
+ * is needed. Missiles need to know *which* base engaged them — that is
+ * `basesCovering` below.
  */
 export function isCoveredByEnemy(
   units: readonly Unit[],
@@ -56,4 +56,31 @@ export function isCoveredByEnemy(
   viewer: PlayerId,
 ): boolean {
   return units.some((unit) => isLiveEnemyBase(unit, viewer) && covers(unit, hex));
+}
+
+/**
+ * Every base hostile to `viewer` that covers `hex`, in ascending base-id order
+ * (spec §10; build-order step 6).
+ *
+ * The missile counterpart of `isCoveredByEnemy`. A missile needs the bases
+ * themselves rather than a yes/no, because each base may destroy only
+ * `RULES.interceptsPerRound` missiles per round and the caller has to know whose
+ * capacity to spend. A drone kill needs none of that — it is free and uncapped —
+ * which is why the boolean above stays.
+ *
+ * The sort is spec §10's second tiebreak: "one missile entering two bases'
+ * coverage at once — bases by base id." Unlike the missile-side tiebreak (which
+ * is ordered by origin hex, see `missiles.ts`), sorting bases by id leaks
+ * nothing. A base belongs to the defender, who already knows their own ids;
+ * `MISSILE_INTERCEPTED` never names one; and a base cannot move, so there is no
+ * cross-round identity to track (§6, §11).
+ */
+export function basesCovering(
+  units: readonly Unit[],
+  hex: Hex,
+  viewer: PlayerId,
+): Unit[] {
+  return units
+    .filter((unit) => isLiveEnemyBase(unit, viewer) && covers(unit, hex))
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }

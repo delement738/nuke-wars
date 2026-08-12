@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { distance, hexesInRange, hexLine, neighbors, type Hex } from './hex';
+import {
+  compareHex,
+  distance,
+  hexesInRange,
+  hexLine,
+  neighbors,
+  type Hex,
+} from './hex';
 
 const ORIGIN: Hex = { q: 0, r: 0 };
 
@@ -222,5 +229,50 @@ describe('hexLine', () => {
         expect(hexLine(a, b)).toEqual([...hexLine(b, a)].reverse());
       }
     }
+  });
+});
+
+describe('compareHex', () => {
+  it('orders by q first, then by r', () => {
+    expect(compareHex({ q: 1, r: 9 }, { q: 2, r: 0 })).toBeLessThan(0);
+    expect(compareHex({ q: 2, r: 0 }, { q: 2, r: 1 })).toBeLessThan(0);
+    expect(compareHex({ q: 2, r: 1 }, { q: 2, r: 0 })).toBeGreaterThan(0);
+  });
+
+  it('is zero only for equal hexes', () => {
+    expect(compareHex(ORIGIN, { q: 0, r: 0 })).toBe(0);
+    expect(compareHex(ORIGIN, { q: 0, r: -1 })).not.toBe(0);
+  });
+
+  it('is a total order — sorting is stable, complete, and reversible', () => {
+    const hexes: Hex[] = [
+      { q: 2, r: -1 },
+      { q: -3, r: 4 },
+      { q: 2, r: -3 },
+      { q: 0, r: 0 },
+      { q: -3, r: 0 },
+    ];
+
+    const ascending = [...hexes].sort(compareHex);
+
+    expect(ascending).toEqual([
+      { q: -3, r: 0 },
+      { q: -3, r: 4 },
+      { q: 0, r: 0 },
+      { q: 2, r: -3 },
+      { q: 2, r: -1 },
+    ]);
+    // Sorting a shuffled copy lands in the same place: no pair is left
+    // undecided, which is what "some fixed sequence" in §10 actually requires.
+    expect([...hexes].reverse().sort(compareHex)).toEqual(ascending);
+  });
+
+  it('never ties two distinct hexes, over a whole neighbourhood', () => {
+    const region = hexesInRange(ORIGIN, 3);
+    const ties = region.flatMap((a) =>
+      region.filter((b) => a !== b && compareHex(a, b) === 0),
+    );
+
+    expect(ties).toEqual([]);
   });
 });
