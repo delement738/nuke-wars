@@ -10,7 +10,7 @@ Each side fields the entire roster: **3 mobile launchers** (move *or* fire, neve
 
 ## Status
 
-**V1 (hotseat) — in development.** The design was pivoted on 2026-08-11 (see the spec) and the sim code is fully migrated to it. Built and tested so far: hex math including the `hexLine` flight primitive, self-validating symmetric map generation (mountain ranges, re-rolled until playable), launcher movement, and `resolve()` with its recon-drone and ground-movement phases — 205 tests. The hex map renders with pan/zoom/select. Next up is the launch/intercept/impact phase. Not yet playable.
+**V1 (hotseat) — in development.** The design was pivoted on 2026-08-11 (see the spec) and the sim code is fully migrated to it. Built and tested so far: hex math including the `hexLine` flight primitive, self-validating symmetric map generation (mountain ranges, re-rolled until playable), launcher movement, and `resolve()` with four of its five phases — recon drone, launch and interception, impact, and ground movement — 269 tests. The hex map renders with pan/zoom/select. Next up is dead hand, win/draw outcomes and the state machine. Not yet playable.
 
 See the "Current status" section of [CLAUDE.md](CLAUDE.md) for exactly where things stand and what's next.
 
