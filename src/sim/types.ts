@@ -19,6 +19,32 @@ import type { MapData } from './map';
 
 export type PlayerId = 'p1' | 'p2';
 
+/**
+ * The two players, in canonical iteration order.
+ *
+ * A runtime value in a types module, deliberately. "There are exactly two
+ * players" is the same fact as `PlayerId` above, and every module that iterates
+ * them — resolve(), outcomes.ts, and the visibility filter in build-order step 8
+ * — must iterate them in the SAME order, or the event log stops being
+ * byte-identical for the same physical round (spec §6). One shared constant
+ * makes that true by construction instead of by three modules agreeing.
+ */
+export const PLAYERS: readonly PlayerId[] = ['p1', 'p2'];
+
+/**
+ * The other player.
+ *
+ * Small enough to inline and load-bearing enough not to. Intel is keyed by the
+ * *viewer* — `intel.p1` is what p1 knows about p2 — so a hand-written
+ * `player === 'p1' ? 'p2' : 'p1'` written in the wrong direction files every
+ * contact against the player who caused it. That is the §11 trap that would give
+ * each player a map of their own launches and hide the enemy's, and it looks
+ * perfectly reasonable in a diff. One function, used everywhere, cannot drift.
+ */
+export function opponentOf(player: PlayerId): PlayerId {
+  return player === 'p1' ? 'p2' : 'p1';
+}
+
 export type UnitId = string;
 
 /** The five unit kinds in V1's roster (spec §2). 8 assets per player total. */
