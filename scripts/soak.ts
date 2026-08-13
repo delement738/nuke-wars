@@ -29,16 +29,10 @@ import { describe, it } from 'vitest';
 
 import { RULES } from '../src/sim/defs';
 import { hexKey, offsetToAxial } from '../src/sim/hex';
-import { generateMap, makeRng, type MapData } from '../src/sim/map';
+import { generateMap, makeRng } from '../src/sim/map';
 import { reconSwath } from '../src/sim/recon';
 import { resolve } from '../src/sim/resolve';
-import {
-  PLACEMENT_ORDER,
-  legalPlacementHexes,
-  startMatch,
-  type Placement,
-  type PlayerSetup,
-} from '../src/sim/setup';
+import { startMatch } from '../src/sim/setup';
 import {
   PLAYERS,
   opponentOf,
@@ -50,6 +44,7 @@ import {
 } from '../src/sim/types';
 import { filterForPlayer } from '../src/sim/visibility';
 import { cpuOrders, type CpuDifficulty } from '../src/state/cpu';
+import { sandboxSetup } from '../src/state/sandbox';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -71,42 +66,6 @@ const PAIRINGS: readonly CpuDifficulty[] = ['easy', 'medium', 'hard'];
  * plus the dead-hand round is the true maximum; this is comfortably above it.
  */
 const ROUND_GUARD = RULES.roundCap * 4;
-
-// ---------------------------------------------------------------------------
-// Placement — deliberately randomised, unlike the sandbox fixture
-// ---------------------------------------------------------------------------
-
-/**
- * A legal secret setup with the assets placed at random, mirroring the walk in
- * `src/state/sandbox.ts` but choosing each hex with `rng` instead of a fixed
- * fraction of the legal list.
- *
- * The duplication is on purpose. `sandboxSetup` is deterministic by design — a
- * sandbox you cannot re-run twice is a bad debugging tool — but that makes the
- * bunker land in the *same relative spot* on every board, and a harness built on
- * it would measure how well the CPU finds that one spot rather than how well it
- * searches. Randomising placement is the difference between measuring the game
- * and measuring the fixture.
- *
- * What it does NOT do is invent its own idea of legality: every hex comes out of
- * `legalPlacementHexes`, the same §12 validator the setup UI will highlight
- * with, so this cannot drift from the rules.
- */
-function randomSetup(map: MapData, player: PlayerId, rng: () => number): PlayerSetup {
-  const placed: Placement[] = [];
-
-  for (const kind of PLACEMENT_ORDER) {
-    for (let i = 0; i < RULES.placementCounts[kind]; i++) {
-      const legal = legalPlacementHexes(map, player, kind, placed);
-      if (legal.length === 0) {
-        throw new Error(`soak: no legal hex for ${player}'s ${kind} #${i + 1}`);
-      }
-      placed.push({ kind, hex: legal[Math.floor(rng() * legal.length)] });
-    }
-  }
-
-  return placed;
-}
 
 // ---------------------------------------------------------------------------
 // What one match tells us
@@ -185,11 +144,23 @@ function knownSiteKeys(state: GameState, player: PlayerId): Set<string> {
 
 function playMatch(seed: number, difficulty: Record<PlayerId, CpuDifficulty>): MatchStats {
   const map = generateMap(undefined, undefined, seed);
+
+  // **One stream, consumed sequentially — never two streams from one seed.**
+  // Identically-seeded streams would make each side's setup a deterministic
+  // function of the other's (see `sandboxSetup`, and CLAUDE.md gotcha 41 for the
+  // same trap applied to these two sides' *orders*). Drawing both from this one
+  // stream in turn gives them genuinely different picks.
+  //
+  // `sandboxSetup` is imported rather than copied. The harness used to carry its
+  // own randomised walk because the sandbox fixture placed at fixed fractions and
+  // would have measured how well the CPU finds one spot rather than how well it
+  // searches; step 10b made the fixture seeded-random for exactly that reason, so
+  // the two are now the same function and only one of them should exist.
   const setupRng = makeRng(seed);
 
   let state: GameState = startMatch(map, {
-    p1: randomSetup(map, 'p1', setupRng),
-    p2: randomSetup(map, 'p2', setupRng),
+    p1: sandboxSetup(map, 'p1', setupRng),
+    p2: sandboxSetup(map, 'p2', setupRng),
   });
 
   // Fixed for the whole match: units are never added or removed, only flagged

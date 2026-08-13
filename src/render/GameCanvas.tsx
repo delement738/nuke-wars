@@ -13,29 +13,45 @@
 // state is a module-private variable in `src/state/match.ts`.
 //
 // The file is deliberately thin — create the app, hold the camera, hand the
-// layers to `./draw`. Three effects with three different lifetimes:
+// layers to `./draw`. Effects with different lifetimes:
 //
 //   1. **the application**, once per mount (StrictMode remounts it in dev);
-//   2. **terrain**, once per map — the biggest layer, and the map is fixed for a
-//      whole match;
-//   3. **pieces**, on every state change — units, intel and the selection.
+//   2. **terrain**, once per board — the biggest layer, and the board outlives
+//      any one match: it is drawn on the setup screen too;
+//   3. **pieces**, on every state change — units, intel and the selection;
+//   4. **the order overlay** and 5. **the setup overlay**, both hover-driven and
+//      therefore redrawn far more often than the board is.
+//
+// Exactly one of (3, 4) and (5) has anything to draw at a time: `useView()` is
+// null while the human is still placing their assets, because a `GameState`
+// only exists on the far side of `startMatch` (build-order step 10b).
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Application, Container } from 'pixi.js';
-import { hoverHex, pickHex } from '../state/match';
+import { hoverHex, pickHex, SANDBOX_PLAYER } from '../state/match';
 import { targetsFor } from '../state/orders';
+import {
+  exclusionHexes,
+  placementSlots,
+  placementTargets,
+} from '../state/placement';
 import {
   useDraft,
   useHovered,
+  useMap,
   useOrderMode,
+  usePlaced,
   useSelected,
+  useSelectedSlot,
   useSelectedUnitId,
   useView,
 } from '../state/useMatch';
 import {
+  clearLayer,
   drawCoverage,
   drawIntel,
   drawOrders,
+  drawPlacement,
   drawSelection,
   drawTerrain,
   drawUnits,
@@ -69,6 +85,7 @@ interface Scene {
   world: Container;
   terrain: Container;
   coverage: Container;
+  placement: Container;
   selection: Container;
   orders: Container;
   intel: Container;
@@ -104,21 +121,35 @@ export default function GameCanvas() {
       host.appendChild(app.canvas);
 
       const world = new Container();
-      // Draw order, bottom to top: the board, what my bases cover, the tile I
-      // clicked, the orders I am giving, what I know of the enemy, then my own
-      // units on top. Orders sit *under* intel and units deliberately — a range
-      // wash must never obscure a detected enemy or a piece of mine.
+      // Draw order, bottom to top: the board, what my bases cover, where I may
+      // build during setup, the tile I clicked, the orders I am giving, what I
+      // know of the enemy, then my own units on top. Orders sit *under* intel
+      // and units deliberately — a range wash must never obscure a detected
+      // enemy or a piece of mine. The setup and match layers never hold content
+      // at the same time; they are separate so neither has to know about the
+      // other's lifetime.
       const terrain = new Container();
       const coverage = new Container();
+      const placement = new Container();
       const selection = new Container();
       const orders = new Container();
       const intel = new Container();
       const units = new Container();
-      world.addChild(terrain, coverage, selection, orders, intel, units);
+      world.addChild(terrain, coverage, placement, selection, orders, intel, units);
       app.stage.addChild(world);
 
       attachCamera(app, world, dragRef);
-      setScene({ app, world, terrain, coverage, selection, orders, intel, units });
+      setScene({
+        app,
+        world,
+        terrain,
+        coverage,
+        placement,
+        selection,
+        orders,
+        intel,
+        units,
+      });
     })();
 
     return () => {
@@ -130,7 +161,14 @@ export default function GameCanvas() {
     };
   }, []);
 
+  // `map` comes from the store directly rather than out of `view`, because the
+  // setup screen has to draw a board before there is a match to have a view of.
+  // That is not a gap in the visibility filter: terrain is public (spec §11) and
+  // `VisibleGameState.map` is this same object by reference.
+  const map = useMap();
   const view = useView();
+  const placed = usePlaced();
+  const selectedSlot = useSelectedSlot();
   const selected = useSelected();
   const selectedUnitId = useSelectedUnitId();
   const orderMode = useOrderMode();
@@ -142,24 +180,44 @@ export default function GameCanvas() {
   // and drawing's job is to draw it (CLAUDE.md's render rule). Memoised because
   // `moveTargets` runs a flood fill and this re-renders on every hover.
   const orderUnit = useMemo(
-    () => view.units.find((unit) => unit.id === selectedUnitId) ?? null,
-    [view.units, selectedUnitId],
+    () => view?.units.find((unit) => unit.id === selectedUnitId) ?? null,
+    [view, selectedUnitId],
   );
   const targets = useMemo(
-    () => (orderUnit && orderMode ? targetsFor(view, orderUnit, orderMode) : []),
+    () => (view && orderUnit && orderMode ? targetsFor(view, orderUnit, orderMode) : []),
     [view, orderUnit, orderMode],
   );
 
+  // The setup screen's two hex sets, from the same §12 validator the engine
+  // re-checks the finished setup with. Both are keyed on the selected roster
+  // slot, because placement order is free: the highlight is "where may THIS
+  // asset go", and for an asset already on the board that means "where may it
+  // move to". Memoised for the same reason as above — `placementTargets` scans
+  // the whole home zone and this re-renders on hover.
+  const setupTargets = useMemo(
+    () => (view ? [] : placementTargets(map, SANDBOX_PLAYER, placed, selectedSlot)),
+    [view, map, placed, selectedSlot],
+  );
+  const setupExclusion = useMemo(
+    () => (view ? [] : exclusionHexes(map, SANDBOX_PLAYER, placed, selectedSlot)),
+    [view, map, placed, selectedSlot],
+  );
+  const setupSlots = useMemo(
+    () => (view ? [] : placementSlots(placed)),
+    [view, placed],
+  );
+  const setupSelectedHex = setupSlots[selectedSlot]?.hex ?? null;
+
   // --- 2. terrain, and the camera's opening framing -------------------------
-  // Keyed on the map object, which the sim shares by reference from round to
-  // round (the filter is a projection, not a deep clone), so this runs once per
-  // match rather than once per round.
+  // Keyed on the map object, which outlives any one match and which the sim
+  // shares by reference from round to round (the filter is a projection, not a
+  // deep clone), so this runs once per board rather than once per round.
   useEffect(() => {
     if (!scene) return;
 
     drawTerrain(
       scene.terrain,
-      view.map,
+      map,
       (hex) => {
         // A click that ended a pan is not a click on a tile.
         //
@@ -172,11 +230,21 @@ export default function GameCanvas() {
     );
 
     fitToScreen(scene);
-  }, [scene, view.map]);
+  }, [scene, map]);
 
   // --- 3. everything that changes round to round ----------------------------
+  // `view` is null on the setup screen, and the layers are cleared rather than
+  // left alone: a new match sends the client back to setup, and a units layer
+  // that kept painting the last match's board would be the map saying something
+  // the state does not.
   useEffect(() => {
     if (!scene) return;
+    if (!view) {
+      clearLayer(scene.coverage);
+      clearLayer(scene.intel);
+      clearLayer(scene.units);
+      return;
+    }
     drawCoverage(scene.coverage, view);
     drawIntel(scene.intel, view.intel);
     drawUnits(scene.units, view.units);
@@ -192,6 +260,10 @@ export default function GameCanvas() {
   // board does — redrawing units and intel at that rate would be waste.
   useEffect(() => {
     if (!scene) return;
+    if (!view) {
+      clearLayer(scene.orders);
+      return;
+    }
     drawOrders(scene.orders, view, {
       unit: orderUnit,
       mode: orderMode,
@@ -200,6 +272,24 @@ export default function GameCanvas() {
       draft,
     });
   }, [scene, view, orderUnit, orderMode, targets, hovered, draft]);
+
+  // --- 5. the setup overlay (build-order step 10b) ---------------------------
+  // Also hover-driven, and also cleared on the transition — here the other way
+  // round, when placement finishes and the match begins.
+  useEffect(() => {
+    if (!scene) return;
+    if (view) {
+      clearLayer(scene.placement);
+      return;
+    }
+    drawPlacement(scene.placement, {
+      targets: setupTargets,
+      exclusion: setupExclusion,
+      slots: setupSlots,
+      selectedHex: setupSelectedHex,
+      hovered,
+    });
+  }, [scene, view, setupTargets, setupExclusion, setupSlots, setupSelectedHex, hovered]);
 
   return <div ref={hostRef} className="canvas-host" />;
 }

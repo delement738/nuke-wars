@@ -9,7 +9,13 @@ import {
   offsetToAxial,
   type Hex,
 } from '../sim/hex';
-import { generateMap, tileAt, type MapData, type TileData } from '../sim/map';
+import {
+  generateMap,
+  makeRng,
+  tileAt,
+  type MapData,
+  type TileData,
+} from '../sim/map';
 import { validateLaunch } from '../sim/missiles';
 import { reachableHexes, validateMove } from '../sim/movement';
 import { validateFly } from '../sim/recon';
@@ -103,9 +109,13 @@ function contact(hex: Hex): LauncherContact {
 /** A real match view, built the way the store builds one. */
 function realView(seed = 42, player: PlayerId = 'p1'): VisibleGameState {
   const map = generateMap(undefined, undefined, seed);
+  // One seeded stream consumed in turn — never two streams from one seed, which
+  // would make each side's setup a deterministic function of the other's (see
+  // `sandboxSetup`).
+  const setupRng = makeRng(seed);
   const truth = startMatch(map, {
-    p1: sandboxSetup(map, 'p1'),
-    p2: sandboxSetup(map, 'p2'),
+    p1: sandboxSetup(map, 'p1', setupRng),
+    p2: sandboxSetup(map, 'p2', setupRng),
   });
   return filterForPlayer(truth, player);
 }

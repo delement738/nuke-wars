@@ -16,6 +16,10 @@ export default function SelectionPanel() {
   const view = useView();
   const selected = useSelected();
 
+  // Unreachable in practice — `App` mounts this only once a match exists — but
+  // `useView()` is nullable because the setup screen has no board (step 10b).
+  if (!view) return null;
+
   if (!selected) {
     return (
       <section className="panel">

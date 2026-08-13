@@ -59,6 +59,10 @@ export default function OrderPanel() {
   const orderMode = useOrderMode();
   const draft = useDraft();
 
+  // Unreachable in practice — `App` mounts this only once a match exists — but
+  // `useView()` is nullable because the setup screen has no board (step 10b).
+  if (!view) return null;
+
   // The viewer switch is a sandbox control, and orders always belong to the
   // human. Drafting while looking at the CPU's board would be queueing orders
   // for a side you are only spectating, so entry is switched off rather than

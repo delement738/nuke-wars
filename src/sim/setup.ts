@@ -58,11 +58,22 @@ export interface Placement {
 export type PlayerSetup = readonly Placement[];
 
 /**
- * Spec §12's placement order.
+ * Spec §12's roster, in canonical order.
  *
- * Not a balance number, so it stays here rather than in `defs.ts`: it is
- * structural. The bases come last because their exclusion rule is measured
- * against both sites, so a base placed before them could not be checked at all.
+ * **This is the order assets are *listed and built in*, not an order the player
+ * must place them in** (changed 2026-08-13). It has two jobs, both structural:
+ * it is the order `startingUnits` adds a player's placed assets to
+ * `GameState.units`, which §9 makes the log's order and therefore has to be a
+ * function of the setup rather than of the clicks that produced it; and it is
+ * the order the setup UI lists the four slots in.
+ *
+ * It used to be an *enforced* sequence, with `validatePlacement` rejecting
+ * anything else as OUT_OF_ORDER, because the ≥3 exclusion rule was only checked
+ * from the base's side and a base placed first would have had nothing to be
+ * checked against. That check is now symmetric (see `validatePlacement`), so the
+ * ordering constraint is gone and the set of legal boards is unchanged.
+ *
+ * Not a balance number, so it stays here rather than in `defs.ts`.
  * `setup.test.ts` asserts this covers exactly the kinds in
  * `RULES.placementCounts`, so a new placeable kind cannot be added to the roster
  * without being given a position in the order.
@@ -75,13 +86,12 @@ export const PLACEMENT_ORDER = [
 
 export type PlacementIllegalReason =
   | 'ALREADY_PLACED' // this kind's `RULES.placementCounts` is full
-  | 'OUT_OF_ORDER' // bunker -> decoy -> bases (see PLACEMENT_ORDER)
   | 'OFF_MAP' // not a real tile
   | 'OUTSIDE_HOME_ZONE' // outside `RULES.homeZoneRows` for this player
   | 'SPAWN_HEX' // §12: placement may never use one of the 8 public spawns
   | 'FORBIDDEN_TERRAIN' // not in `RULES.placementTerrain` for this kind
   | 'HEX_TAKEN' // one of this player's own placed assets is already there
-  | 'TOO_CLOSE_TO_SITE'; // base inside `RULES.bunkerExclusionRadius` of a site
+  | 'EXCLUSION_ZONE'; // a base and a site closer than `bunkerExclusionRadius`
 
 export type PlacementValidation =
   | { legal: true }
@@ -111,6 +121,35 @@ function countOf(placed: PlayerSetup, kind: PlaceableKind): number {
 }
 
 /**
+ * The first kind still owed by `placed`, in canonical roster order, or null when
+ * the roster is complete (spec §12).
+ *
+ * **A suggestion, not a requirement** — placement order is free (see
+ * `validatePlacement`), so this is what the setup UI *pre-selects* after each
+ * placement so a player who just wants to click four times never has to choose.
+ * It is also what `sandboxSetup` walks.
+ *
+ * It lives here rather than in the UI because it is made of `PLACEMENT_ORDER`
+ * plus `RULES.placementCounts` and nothing else, and those belong to the roster.
+ * A client that derived the roster for itself would be a second definition of
+ * what a complete setup is.
+ */
+export function nextPlacementKind(placed: PlayerSetup): PlaceableKind | null {
+  for (const kind of PLACEMENT_ORDER) {
+    if (countOf(placed, kind) < RULES.placementCounts[kind]) return kind;
+  }
+  return null;
+}
+
+/** Whether `kind` is a bunker site — the real one or the decoy. §12's
+ *  indistinguishability principle in one predicate: every rule that asks this
+ *  question must get the same answer for both, and the only way to guarantee
+ *  that is for there to be one place the question is asked. */
+function isSite(kind: PlaceableKind): boolean {
+  return kind === 'bunker' || kind === 'decoy';
+}
+
+/**
  * Whether `playerId` may place `kind` on `hex`, given what they have already
  * placed (spec §12).
  *
@@ -119,7 +158,11 @@ function countOf(placed: PlayerSetup, kind: PlaceableKind): number {
  * where it was going to stand. Within the geometry the order is
  * outward-to-inward — is it a tile at all, is it your ground, is it a hex
  * placement may never use, will the terrain take it, is it free, is it clear of
- * your own sites — which is the order a player would ask them in.
+ * the exclusion zone — which is the order a player would ask them in.
+ *
+ * **There is no placement order** (changed 2026-08-13). `placed` is whatever the
+ * player has put down so far, in any sequence, and every check here reads it as
+ * a set rather than as a prefix of a fixed roster.
  */
 export function validatePlacement(
   map: MapData,
@@ -130,16 +173,6 @@ export function validatePlacement(
 ): PlacementValidation {
   if (countOf(placed, kind) >= RULES.placementCounts[kind]) {
     return { legal: false, reason: 'ALREADY_PLACED' };
-  }
-
-  // Everything earlier in the order must be finished first. This is what
-  // guarantees both sites exist by the time a base is checked against them —
-  // without it, the exclusion rule would silently pass for a base placed first.
-  for (const earlier of PLACEMENT_ORDER) {
-    if (earlier === kind) break;
-    if (countOf(placed, earlier) < RULES.placementCounts[earlier]) {
-      return { legal: false, reason: 'OUT_OF_ORDER' };
-    }
   }
 
   const offset = axialToOffset(hex);
@@ -173,18 +206,25 @@ export function validatePlacement(
 
   // §12: a base must be at least `bunkerExclusionRadius` from BOTH the bunker
   // and the decoy, so neither site nor its neighbours sit inside friendly
-  // coverage. The rule is identical for the two kinds and the reason code
-  // deliberately does not say which site was too close — an asymmetry here would
-  // be the shape of tell §12 exists to prevent, and the player who sees this
-  // message knows both positions anyway.
-  if (kind === 'interceptor') {
-    const tooClose = placed.some(
-      (p) =>
-        (p.kind === 'bunker' || p.kind === 'decoy') &&
-        distance(p.hex, hex) < RULES.bunkerExclusionRadius,
-    );
-    if (tooClose) return { legal: false, reason: 'TOO_CLOSE_TO_SITE' };
-  }
+  // coverage — no point-blank shield.
+  //
+  // **Checked symmetrically, from whichever side is being placed** (changed
+  // 2026-08-13). The rule is a constraint on a *pair*, so asking it only of the
+  // base was what forced a placement order: a base put down first had no site to
+  // measure against and passed vacuously. Asking it of whichever asset arrives
+  // second removes that need without changing the set of legal boards by a
+  // single hex, and it is what lets the setup UI offer the four assets in any
+  // order.
+  //
+  // The reason code deliberately does not say *which* asset was too close, and
+  // in particular never distinguishes bunker from decoy — an asymmetry here
+  // would be exactly the shape of tell §12 exists to prevent, and the player
+  // seeing this message knows all their own positions anyway.
+  const tooClose = placed.some(
+    (p) => isSite(p.kind) !== isSite(kind) &&
+      distance(p.hex, hex) < RULES.bunkerExclusionRadius,
+  );
+  if (tooClose) return { legal: false, reason: 'EXCLUSION_ZONE' };
 
   return { legal: true };
 }
@@ -195,8 +235,13 @@ export function validatePlacement(
  *
  * Scans the home zone rather than the whole board, because a placement outside
  * it can never be legal; the returned hexes are in the map's own column-major
- * order, so the list is deterministic. Returns empty when it is not this kind's
- * turn, which is the same answer the UI wants: nothing to highlight.
+ * order, so the list is deterministic. Returns empty when this kind's roster
+ * slots are all full, which is the same answer the UI wants: nothing to
+ * highlight.
+ *
+ * Any kind may be asked about at any time — there is no placement order (see
+ * `validatePlacement`), so this answers "where could my decoy go right now" even
+ * with the bunker still in hand.
  */
 export function legalPlacementHexes(
   map: MapData,
@@ -227,6 +272,12 @@ export function legalPlacementHexes(
  * other way (a saved game, a V1.5 client message, a test) is held to the same
  * rules. A short roster fails as INCOMPLETE against the first missing slot; an
  * over-long one fails as ALREADY_PLACED on the placement that overflowed.
+ *
+ * **Replay order stopped mattering when the exclusion check became symmetric**
+ * (2026-08-13). A base and a site closer than `bunkerExclusionRadius` are now
+ * caught whichever of the two the replay reaches second, so a setup submitted in
+ * any sequence gets the same verdict — which is what makes free placement safe
+ * to expose at all. `setup.test.ts` pins it by shuffling a bad setup.
  */
 export function validateSetup(
   map: MapData,
@@ -265,6 +316,14 @@ function makeUnit(
  * Every unit one player starts with: 3 launchers and a drone on their public
  * spawn hexes, plus the 4 assets they placed in secret (spec §7, §12).
  *
+ * **Placements are emitted in `PLACEMENT_ORDER`, not in the order the player
+ * placed them** (added 2026-08-13, when placement order became free). Unit array
+ * order is canonical because §9 makes it the log's order, and "canonical" has to
+ * mean a function of the *setup* rather than of the clicks that produced it —
+ * otherwise two players who built identical boards in different sequences would
+ * generate differently-ordered logs from the same position. Sorting here is what
+ * keeps that invariant true now that the UI no longer imposes a sequence.
+ *
  * Ids are readable (`p1-launcher-2`) because the engine and its tests are the
  * only readers — nothing derives meaning from a `UnitId` (§6), and no event that
  * masks a decoy carries one, so a readable id can never become a tell. The two
@@ -286,13 +345,15 @@ function startingUnits(playerId: PlayerId, setup: PlayerSetup): Unit[] {
     ),
   );
 
-  const seen = new Map<PlaceableKind, number>();
-  for (const { kind, hex } of setup) {
-    const n = (seen.get(kind) ?? 0) + 1;
-    seen.set(kind, n);
-    // Single-instance kinds get a bare name; only the two bases are numbered.
-    const suffix = RULES.placementCounts[kind] > 1 ? `-${n}` : '';
-    units.push(makeUnit(`${playerId}-${kind}${suffix}`, playerId, kind, hex));
+  for (const kind of PLACEMENT_ORDER) {
+    // Within a kind, the player's own sequence is kept — it is what numbers the
+    // two bases, and it is the only ordering left that the player controls.
+    const ofKind = setup.filter((p) => p.kind === kind);
+    ofKind.forEach(({ hex }, i) => {
+      // Single-instance kinds get a bare name; only the two bases are numbered.
+      const suffix = RULES.placementCounts[kind] > 1 ? `-${i + 1}` : '';
+      units.push(makeUnit(`${playerId}-${kind}${suffix}`, playerId, kind, hex));
+    });
   }
 
   return units;

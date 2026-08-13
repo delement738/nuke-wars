@@ -25,10 +25,11 @@
 // stays a plain testable object — the same reason the engine is dependency-free.
 
 import { hexKey, type Hex } from '../sim/hex';
-import { generateMap, makeRng } from '../sim/map';
+import { generateMap, makeRng, type MapData } from '../sim/map';
 import { resolve } from '../sim/resolve';
 import { startMatch, type PlayerSetup } from '../sim/setup';
 import {
+  PLAYERS,
   opponentOf,
   type GameEvent,
   type GameState,
@@ -55,6 +56,17 @@ import {
   type OrderDraft,
   type OrderMode,
 } from './orders';
+import {
+  emptyPlacementDraft,
+  type PlacementDraft,
+  firstEmptySlot,
+  placementComplete,
+  placementDraftOf,
+  placementSetup,
+  placementSlots,
+  withPlacementInSlot,
+  withoutSlot,
+} from './placement';
 import { sandboxSetup } from './sandbox';
 
 /**
@@ -97,6 +109,38 @@ export interface LogEntry {
 export interface MatchState {
   /** Map seed of the running match — shown in the HUD so a board is repeatable. */
   seed: number;
+  /**
+   * The board (build-order step 10b).
+   *
+   * Held at the top level, unredacted, and outliving `truth`: it exists from the
+   * moment a match is *set up*, which is before there is a `GameState` to filter.
+   * That is not a hole in the visibility filter — **terrain is public** (spec
+   * §11), and `VisibleGameState.map` is already this same object by reference,
+   * since the filter has nothing to hide here. Hidden information covers assets,
+   * never tiles (CLAUDE.md gotcha 7).
+   */
+  map: MapData;
+  /**
+   * The human's secret placements, one entry per roster slot (spec §12).
+   *
+   * Populated on the setup screen and left in place once the match starts, where
+   * it is simply a record of where they put their own four assets — their own
+   * knowledge, which they are always allowed to see (§11 rule 1). In session
+   * 10c's hotseat this becomes one per player and gotcha 36's discipline applies
+   * then: the inactive player must not see the other's.
+   */
+  placed: PlacementDraft;
+  /**
+   * Which roster slot the setup screen is positioning — the asset a board click
+   * will place or move (spec §12; placement order is free).
+   *
+   * Never null while placing: it starts at the bunker and advances to the first
+   * empty slot after each placement, so a player who just wants to click four
+   * times never has to choose one. Once the roster is full it stays on the slot
+   * last touched, and a further click relocates that asset — which is the point
+   * of the explicit Start button.
+   */
+  selectedSlot: number;
   /** How the CPU (`SANDBOX_DUMMY`) plays. A sandbox control, same as `viewer`. */
   difficulty: CpuDifficulty;
   /** Whose redacted view is on screen. A sandbox control; step 10's handoff owns it. */
@@ -123,8 +167,21 @@ export interface MatchState {
   /** Which order kind the panel is composing for the selected unit, or null.
    *  In the store rather than the panel because the canvas draws from it too. */
   orderMode: OrderMode | null;
-  /** Both players' redacted boards, rebuilt from `truth` after every change. */
-  views: Record<PlayerId, VisibleGameState>;
+  /**
+   * Both players' redacted boards, rebuilt from `truth` after every change —
+   * and **null until the match starts** (build-order step 10b).
+   *
+   * There is genuinely no board to redact while the human is still placing their
+   * assets: `startMatch` is what turns two secret setups into a `GameState`
+   * (§12), so before it runs there is nothing for `filterForPlayer` to project.
+   * A placeholder view would mean inventing engine state in the client, which is
+   * the one thing this layer must never do.
+   *
+   * This is therefore also **the setup screen's discriminator**, and deliberately
+   * the only one: `views === null` *is* "we are still placing". A separate
+   * `stage` field would be a second fact that could disagree with this one.
+   */
+  views: Record<PlayerId, VisibleGameState> | null;
   /** Both players' permanent event histories, filtered on the way in. */
   logs: Record<PlayerId, LogEntry[]>;
 }
@@ -133,24 +190,45 @@ export interface MatchState {
 // The truth (module-private — see the header)
 // ---------------------------------------------------------------------------
 
-function freshTruth(seed: number): GameState {
-  // Width and height are left at their defaults: board size is a spec §7 number
-  // that belongs to the sim, and repeating it here would be a second place for
-  // it to be wrong.
-  const map = generateMap(undefined, undefined, seed);
+/**
+ * **Null while the human is still placing their assets** (build-order step 10b).
+ *
+ * A `GameState` only exists on the far side of `startMatch`, which needs two
+ * complete secret setups (§12) — so for the whole setup screen there is no truth
+ * to hold, and the honest representation of that is nothing rather than a
+ * half-built board. Every action below that touches the match guards on it.
+ */
+let truth: GameState | null = null;
 
-  const setups: Record<PlayerId, PlayerSetup> = {
-    p1: sandboxSetup(map, 'p1'),
-    p2: sandboxSetup(map, 'p2'),
-  };
-
-  // The SETUP -> ORDER_PHASE edge of §5's state machine. `startMatch` re-checks
-  // both setups and throws on an illegal one, so the sandbox fixture is held to
-  // exactly the rules step 10's UI will be.
-  return startMatch(map, setups);
+/**
+ * A fresh board for `seed`.
+ *
+ * Width and height are left at their defaults: board size is a spec §7 number
+ * that belongs to the sim, and repeating it here would be a second place for it
+ * to be wrong.
+ */
+function freshMap(seed: number): MapData {
+  return generateMap(undefined, undefined, seed);
 }
 
-let truth: GameState = freshTruth(DEFAULT_SEED);
+/**
+ * Which stream a sandbox setup is drawn from (build-order step 10b).
+ *
+ * Per player rather than one shared stream, for two reasons. It must not be two
+ * streams from one *seed* — that would make each side's setup a deterministic
+ * function of the other's (see `sandboxSetup`) — and keying on the player rather
+ * than on call order means the CPU's board at a given seed is the same whether
+ * or not the human pressed Auto-place, which is what "same seed, same match"
+ * has to mean to be worth anything.
+ *
+ * The offset keeps this clear of `resolveRound`'s `seed * 100000 + round` space,
+ * which runs to `RULES.roundCap`.
+ */
+const SETUP_RNG_OFFSET = 90000;
+
+function setupRng(seed: number, player: PlayerId): () => number {
+  return makeRng(seed * 100000 + SETUP_RNG_OFFSET + PLAYERS.indexOf(player));
+}
 
 /** Both redacted views of the current truth (spec §6 layer 2). */
 function viewsOf(state: GameState): Record<PlayerId, VisibleGameState> {
@@ -171,6 +249,9 @@ function viewsOf(state: GameState): Record<PlayerId, VisibleGameState> {
  */
 export const matchStore = createStore<MatchState>()(() => ({
   seed: DEFAULT_SEED,
+  map: freshMap(DEFAULT_SEED),
+  placed: emptyPlacementDraft(),
+  selectedSlot: 0,
   difficulty: DEFAULT_DIFFICULTY,
   viewer: SANDBOX_PLAYER,
   selected: null,
@@ -178,7 +259,9 @@ export const matchStore = createStore<MatchState>()(() => ({
   hovered: null,
   draft: EMPTY_DRAFT,
   orderMode: null,
-  views: viewsOf(truth),
+  // The client opens on the setup screen, not on a match: nothing is playable
+  // until the human has placed their bunker, decoy and two bases (§12).
+  views: null,
   logs: { p1: [], p2: [] },
 }));
 
@@ -192,6 +275,7 @@ export const matchStore = createStore<MatchState>()(() => ({
  * it is already written down in `filterEventsForPlayer`.
  */
 function publish(round: number, events: readonly GameEvent[]): void {
+  if (!truth) return; // no match — nothing to project and nothing to log
   const { logs } = matchStore.getState();
 
   matchStore.setState({
@@ -222,21 +306,169 @@ function appendLog(
 // Actions — the only way anything changes
 // ---------------------------------------------------------------------------
 
-/** Start a fresh sandbox match on a new map. Clears both logs, the selection
- *  and any orders drafted for the match that just ended. */
+/**
+ * Roll a fresh board and return to the setup screen (build-order step 10b).
+ *
+ * It no longer starts a match: a match begins when the human finishes placing
+ * (`placeHex`) or skips it (`autoPlace`). Everything from the previous match —
+ * both logs, the selection, any drafted orders, and the previous placements — is
+ * cleared, because none of it means anything on a new board.
+ */
 export function newMatch(seed: number = DEFAULT_SEED): void {
-  truth = freshTruth(seed);
+  truth = null;
   matchStore.setState({
     seed,
+    map: freshMap(seed),
+    placed: emptyPlacementDraft(),
+    selectedSlot: 0,
     viewer: SANDBOX_PLAYER,
     selected: null,
     selectedUnitId: null,
     hovered: null,
     draft: EMPTY_DRAFT,
     orderMode: null,
-    views: viewsOf(truth),
+    views: null,
     logs: { p1: [], p2: [] },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Setup placement (build-order step 10b)
+// ---------------------------------------------------------------------------
+
+/**
+ * The `SETUP -> ORDER_PHASE` edge of spec §5's state machine, from the client's
+ * side: the human's finished setup plus one invented for the CPU become the
+ * board round 1 is played on.
+ *
+ * The CPU's setup is generated **here, at match start** — not when the map was
+ * rolled. That is what makes "the setup screen cannot leak the opponent's
+ * placements" structural rather than careful: while the human is placing, no
+ * enemy setup exists anywhere in the client to leak. The same reasoning as
+ * gotcha 30, one level up from the validator.
+ *
+ * `startMatch` re-validates both setups and throws on an illegal one (§12), so
+ * the human's placements are held to exactly the rules the highlight offered
+ * them — the UI is not trusted to have got it right, it is checked.
+ */
+function beginMatch(humanSetup: PlayerSetup): void {
+  const { seed, map } = matchStore.getState();
+
+  const setups: Record<PlayerId, PlayerSetup> = { p1: [], p2: [] };
+  setups[SANDBOX_PLAYER] = humanSetup;
+  setups[SANDBOX_DUMMY] = sandboxSetup(
+    map,
+    SANDBOX_DUMMY,
+    setupRng(seed, SANDBOX_DUMMY),
+  );
+
+  truth = startMatch(map, setups);
+  matchStore.setState({
+    placed: placementDraftOf(humanSetup),
+    views: viewsOf(truth),
+    selected: null,
+    selectedUnitId: null,
+    hovered: null,
+  });
+}
+
+/**
+ * Choose which of your four assets you are positioning (spec §12).
+ *
+ * Any slot, at any time — placement order is free, so this is the whole input
+ * the setup screen needs beyond the board itself. Selecting a slot that is
+ * already placed selects its hex too, so the board shows you which asset you
+ * have picked up.
+ */
+export function selectSlot(slotId: number): void {
+  if (truth) return;
+
+  const slot = placementSlots(matchStore.getState().placed)[slotId];
+  if (!slot) return;
+
+  matchStore.setState({ selectedSlot: slotId, selected: slot.hex });
+}
+
+/**
+ * Put the selected slot's asset on `hex` — placing it, or **moving it** if that
+ * slot is already on the board (spec §12).
+ *
+ * An illegal hex is dropped rather than stored — `withPlacementInSlot` checks it
+ * against the real §12 validator — so nothing downstream has to defend against a
+ * setup containing one.
+ *
+ * Selection then advances to the first still-empty slot, which is what lets a
+ * player who does not care about order simply click four times. When none is
+ * empty it stays put, so the last asset placed is the one a further click moves.
+ *
+ * **This does NOT start the match**, and that is a deliberate reversal of how it
+ * worked when placement was a fixed sequence. Back then the fourth click was
+ * unambiguously "I am done". Now that any asset can be repositioned at any time,
+ * auto-starting on the fourth placement would snatch the board away at exactly
+ * the moment the player finally has the whole thing in front of them to judge.
+ * `startPlacedMatch` is the explicit commitment instead.
+ */
+export function placeHex(hex: Hex): void {
+  if (truth) return; // the match has started; placement is over
+
+  const { map, placed, selectedSlot } = matchStore.getState();
+  const next = withPlacementInSlot(map, SANDBOX_PLAYER, placed, selectedSlot, hex);
+  if (next === placed) return; // illegal — the same reference means nothing moved
+
+  matchStore.setState({
+    placed: next,
+    selectedSlot: firstEmptySlot(next) ?? selectedSlot,
+    selected: hex,
+  });
+}
+
+/** Take the selected slot's asset back off the board. Refused once the match has
+ *  started — a setup is secret and final the moment the board is built (§12). */
+export function clearSlot(slotId: number): void {
+  if (truth) return;
+  const { placed } = matchStore.getState();
+  const next = withoutSlot(placed, slotId);
+  if (next === placed) return;
+
+  matchStore.setState({ placed: next, selectedSlot: slotId, selected: null });
+}
+
+/** Take everything back off the board and start the setup over. */
+export function clearPlacements(): void {
+  if (truth) return;
+  matchStore.setState({
+    placed: emptyPlacementDraft(),
+    selectedSlot: 0,
+    selected: null,
+  });
+}
+
+/**
+ * Commit the setup and begin the match (spec §12's `SETUP -> ORDER_PHASE` edge).
+ *
+ * A no-op on an incomplete roster rather than a throw: the button is disabled
+ * until all four are down, so reaching here early is a UI event, not a caller
+ * bug — the same reasoning as `resolveRound` on a finished match.
+ */
+export function startPlacedMatch(): void {
+  if (truth) return;
+  const { placed } = matchStore.getState();
+  if (!placementComplete(placed)) return;
+  beginMatch(placementSetup(placed));
+}
+
+/**
+ * Skip placing by hand: take the sandbox fixture's setup and start (step 10b).
+ *
+ * A convenience for the times you are testing something that is not placement,
+ * and deliberately the *same* function the CPU's setup comes from — so the board
+ * it produces is one the engine would have accepted from a human, not a
+ * special case that could quietly diverge from the rules.
+ */
+export function autoPlace(): void {
+  if (truth) return;
+  const { seed, map } = matchStore.getState();
+  beginMatch(sandboxSetup(map, SANDBOX_PLAYER, setupRng(seed, SANDBOX_PLAYER)));
 }
 
 /**
@@ -266,7 +498,7 @@ export function newMatch(seed: number = DEFAULT_SEED): void {
  * pressed twice is a UI event, not a caller bug.
  */
 export function resolveRound(): void {
-  if (truth.phase === 'GAME_OVER') return;
+  if (!truth || truth.phase === 'GAME_OVER') return;
 
   // Stamped before resolving: `resolve` hands back the *next* round's number
   // (and freezes it on game over), while these events belong to the round that
@@ -319,8 +551,8 @@ export function resolveRound(): void {
  * are independent: one stops a wrong order being *stored*, the other stops it
  * being *offered*.
  */
-function orderingView(): VisibleGameState {
-  return matchStore.getState().views[SANDBOX_PLAYER];
+function orderingView(): VisibleGameState | null {
+  return matchStore.getState().views?.[SANDBOX_PLAYER] ?? null;
 }
 
 /**
@@ -333,7 +565,8 @@ function orderingView(): VisibleGameState {
  * otherwise be true forever (see the note in `./orders`).
  */
 function resolveIfComplete(): void {
-  if (allDecided(orderingView(), matchStore.getState().draft)) resolveRound();
+  const view = orderingView();
+  if (view && allDecided(view, matchStore.getState().draft)) resolveRound();
 }
 
 /**
@@ -345,7 +578,10 @@ function resolveIfComplete(): void {
  * "pick a target" to "pick a unit", which is the loop the player is actually in.
  */
 export function setOrder(order: Order): void {
-  const draft = withOrder(orderingView(), matchStore.getState().draft, order);
+  const view = orderingView();
+  if (!view) return;
+
+  const draft = withOrder(view, matchStore.getState().draft, order);
   matchStore.setState({ draft, orderMode: null, hovered: null });
   resolveIfComplete();
 }
@@ -360,8 +596,8 @@ export function setOrder(order: Order): void {
  */
 export function holdUnit(unitId: UnitId): void {
   const view = orderingView();
-  const unit = view.units.find((u) => u.id === unitId);
-  if (!unit) return;
+  const unit = view?.units.find((u) => u.id === unitId);
+  if (!view || !unit) return;
 
   const draft = withHold(view, matchStore.getState().draft, unit);
   matchStore.setState({ draft, orderMode: null, hovered: null });
@@ -406,7 +642,7 @@ export function hoverHex(hex: Hex | null): void {
  * one the engine ended. Nothing downstream needs a special case.
  */
 export function resign(player: PlayerId): void {
-  if (truth.phase === 'GAME_OVER') return;
+  if (!truth || truth.phase === 'GAME_OVER') return;
 
   const outcome: Outcome = { type: 'CAPITULATION', winner: opponentOf(player) };
   truth = { ...truth, phase: 'GAME_OVER', outcome };
@@ -451,7 +687,7 @@ export function selectHex(hex: Hex | null): void {
   const view = orderingView();
   const key = hex ? hexKey(hex) : null;
   const unit =
-    key === null
+    view === null || key === null
       ? undefined
       : orderableUnits(view).find((u) => hexKey(u.position) === key);
 
@@ -465,7 +701,7 @@ export function selectHex(hex: Hex | null): void {
 
 /** Select one of your own units by id — the panel's way past a stacked hex. */
 export function selectUnit(unitId: UnitId): void {
-  const unit = orderingView().units.find((u) => u.id === unitId);
+  const unit = orderingView()?.units.find((u) => u.id === unitId);
   if (!unit) return;
   matchStore.setState({
     selected: unit.position,
@@ -486,10 +722,20 @@ export function selectUnit(unitId: UnitId): void {
  *
  * While spectating as the CPU it can only ever select, because `orderMode` is
  * cleared by `setViewer` and the panel offers no way to set it again.
+ *
+ * **Before the match starts a click places an asset** (build-order step 10b).
+ * Same principle, one screen earlier: the canvas reports a click and this decides
+ * what it meant. The setup screen therefore needs no click handler of its own,
+ * and cannot grow one that disagrees with this about what a hex click does.
  */
 export function pickHex(hex: Hex): void {
-  const { orderMode, selectedUnitId } = matchStore.getState();
   const view = orderingView();
+  if (!view) {
+    placeHex(hex);
+    return;
+  }
+
+  const { orderMode, selectedUnitId } = matchStore.getState();
   const unit = selectedUnitId
     ? view.units.find((u) => u.id === selectedUnitId)
     : undefined;
@@ -508,9 +754,18 @@ export function pickHex(hex: Hex): void {
 // Reads — for tests and for the hooks in ./useMatch
 // ---------------------------------------------------------------------------
 
-/** What `player` is allowed to see of the board right now. */
-export function viewFor(player: PlayerId): VisibleGameState {
-  return matchStore.getState().views[player];
+/**
+ * What `player` is allowed to see of the board right now — or **null while the
+ * setup screen is still collecting placements**, because there is no board yet
+ * (see `MatchState.views`).
+ */
+export function viewFor(player: PlayerId): VisibleGameState | null {
+  return matchStore.getState().views?.[player] ?? null;
+}
+
+/** Whether a match is running. False on the setup screen. */
+export function matchStarted(): boolean {
+  return matchStore.getState().views !== null;
 }
 
 /** `player`'s permanent history — every event they were allowed to see (§11). */

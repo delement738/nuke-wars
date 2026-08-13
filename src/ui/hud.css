@@ -71,6 +71,9 @@
 .muted { color: #8496aa; }
 .own { color: #5aa9ff; }
 .enemy { color: #ff8371; }
+/* Matches COLOR.place in src/render/draw.ts — a legend line that names a colour
+ * has to be drawn in it, or it is just a sentence. */
+.buildable { color: #f2c14e; }
 .alert { color: #ffd54a; font-weight: 600; }
 
 .outcome {
@@ -147,22 +150,28 @@
   color: #4a5d75;
 }
 
-/* --- order builder (build-order step 10a) --------------------------------- */
+/* --- unit / roster list ---------------------------------------------------
+ *
+ * Shared by the order builder (step 10a) and the setup roster (step 10b): both
+ * are "here is each of your things, and what you have decided about it", one
+ * screen apart. Scoping these to `.orders` and copying them for `.setup` is how
+ * the two silently drift apart.
+ */
 
-.orders .unit-list {
+.unit-list {
   list-style: none;
   margin: 0 0 10px;
   padding: 0;
 }
 
-.orders .unit {
+.unit {
   border-top: 1px solid #1c2732;
   padding: 2px 0;
 }
 
-.orders .unit:first-child { border-top: none; }
+.unit:first-child { border-top: none; }
 
-.orders .unit-name {
+.unit-name {
   align-items: baseline;
   background: none;
   border: none;
@@ -177,14 +186,15 @@
   width: 100%;
 }
 
-.orders .unit-name:hover { color: #ffffff; }
+.unit-name:hover { color: #ffffff; }
 
-.orders .unit.active .unit-name { color: #ffd54a; font-weight: 600; }
+.unit.active .unit-name { color: #ffd54a; font-weight: 600; }
 
-.orders .decision {
+.decision {
   color: #8496aa;
   font-size: 12px;
   font-weight: 400;
 }
 
-.orders .unit.active .decision { color: #d6e2ee; }
+.unit.active .decision { color: #d6e2ee; }
+

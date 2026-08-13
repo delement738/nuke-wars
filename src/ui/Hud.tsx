@@ -11,8 +11,12 @@
 // without it. The CPU side (SANDBOX_DUMMY) is decided by `src/state/cpu.ts`
 // from its own redacted view, same as any player.
 //
-// Still to come: setup placement (session 10b) and the real hotseat handoff
-// (session 10c).
+// Both players' assets are now really placed before the match: the human's on
+// `SetupPanel`'s screen (session 10b), the CPU's by the same fixture that backs
+// Auto-place. `App` mounts this component only once that has happened, which is
+// why the board it reads is never null in practice.
+//
+// Still to come: the real hotseat handoff (session 10c).
 //
 // The viewer switch is a **sandbox control**, not the handoff. It exists to make
 // the visibility filter visible: flip it and the board redraws as the other
@@ -43,6 +47,12 @@ export default function Hud() {
   const viewer = useViewer();
   const seed = useSeed();
   const difficulty = useDifficulty();
+
+  // `App` only mounts this once a match exists, so a null view is unreachable —
+  // but `useView()` is nullable because the setup screen legitimately has no
+  // board (step 10b), and narrowing it here is cheaper than a second source of
+  // truth about which screen we are on.
+  if (!view) return null;
 
   const over = view.outcome !== null;
   const deadHand = view.phase === 'DEAD_HAND_PHASE';
@@ -144,6 +154,7 @@ export default function Hud() {
 
           <p className="footnote">
             Map seed {seed}. Same seed, same board. CPU difficulty: {difficulty}.
+            Either button abandons this match and returns to secret placement.
           </p>
         </section>
 

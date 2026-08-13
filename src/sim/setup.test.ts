@@ -11,6 +11,7 @@ import { generateMap, tileAt, type MapData, type TileData } from './map';
 import {
   PLACEMENT_ORDER,
   legalPlacementHexes,
+  nextPlacementKind,
   startMatch,
   validatePlacement,
   validateSetup,
@@ -110,19 +111,44 @@ describe('validatePlacement() — roster and order', () => {
     ).toEqual({ legal: false, reason: 'ALREADY_PLACED' });
   });
 
-  it('rejects the decoy before the bunker', () => {
-    expect(validatePlacement(makeMap(), 'p1', 'decoy', DECOY, [])).toEqual({
-      legal: false,
-      reason: 'OUT_OF_ORDER',
+  /**
+   * There is no placement order (changed 2026-08-13). Each of the four assets
+   * may be the first one down — the old OUT_OF_ORDER rejection existed only
+   * because the ≥3 exclusion rule was checked from the base's side alone, and it
+   * is now checked symmetrically instead.
+   */
+  it('accepts any of the four kinds as the first placement', () => {
+    const map = makeMap();
+
+    expect(validatePlacement(map, 'p1', 'bunker', BUNKER, [])).toEqual({
+      legal: true,
+    });
+    expect(validatePlacement(map, 'p1', 'decoy', DECOY, [])).toEqual({
+      legal: true,
+    });
+    expect(validatePlacement(map, 'p1', 'interceptor', BASE_A, [])).toEqual({
+      legal: true,
     });
   });
 
-  it('rejects a base before both sites are down — the exclusion rule needs them', () => {
+  it('accepts a base with only one site down, and with none', () => {
+    const map = makeMap();
+
     expect(
-      validatePlacement(makeMap(), 'p1', 'interceptor', BASE_A, [
+      validatePlacement(map, 'p1', 'interceptor', BASE_A, [
         place('bunker', BUNKER),
       ]),
-    ).toEqual({ legal: false, reason: 'OUT_OF_ORDER' });
+    ).toEqual({ legal: true });
+    expect(
+      validatePlacement(map, 'p1', 'interceptor', BASE_A, [
+        place('decoy', DECOY),
+      ]),
+    ).toEqual({ legal: true });
+  });
+
+  it('accepts a setup submitted in reverse roster order', () => {
+    const reversed = [...LEGAL_SETUP].reverse();
+    expect(validateSetup(makeMap(), 'p1', reversed)).toEqual({ legal: true });
   });
 
   it('covers exactly the placeable kinds', () => {
@@ -198,7 +224,7 @@ describe('validatePlacement() — the interceptor exclusion', () => {
 
     expect(
       validatePlacement(makeMap(), 'p1', 'interceptor', close, SITES),
-    ).toEqual({ legal: false, reason: 'TOO_CLOSE_TO_SITE' });
+    ).toEqual({ legal: false, reason: 'EXCLUSION_ZONE' });
   });
 
   it('rejects a base too close to the DECOY, at a legal distance from the bunker', () => {
@@ -210,7 +236,58 @@ describe('validatePlacement() — the interceptor exclusion', () => {
 
     expect(
       validatePlacement(makeMap(), 'p1', 'interceptor', close, SITES),
-    ).toEqual({ legal: false, reason: 'TOO_CLOSE_TO_SITE' });
+    ).toEqual({ legal: false, reason: 'EXCLUSION_ZONE' });
+  });
+
+  /**
+   * The other half of the same rule (added 2026-08-13). The constraint is on a
+   * *pair*, so it has to be enforced from whichever side arrives second —
+   * otherwise placing the base first would let a player put a site right on top
+   * of it, which is the point-blank shield §12 exists to forbid.
+   *
+   * Both sites are tested, because a rule that caught only the bunker would make
+   * "the site you are allowed to build beside your base" provably the decoy.
+   */
+  it('rejects a SITE placed too close to an existing base — both kinds', () => {
+    const map = makeMap();
+    const bases: PlayerSetup = [place('interceptor', BASE_A)];
+    const close = at(0, 16 - (RULES.bunkerExclusionRadius - 1));
+    expect(distance(BASE_A, close)).toBe(RULES.bunkerExclusionRadius - 1);
+
+    expect(validatePlacement(map, 'p1', 'bunker', close, bases)).toEqual({
+      legal: false,
+      reason: 'EXCLUSION_ZONE',
+    });
+    expect(validatePlacement(map, 'p1', 'decoy', close, bases)).toEqual({
+      legal: false,
+      reason: 'EXCLUSION_ZONE',
+    });
+  });
+
+  it('gives the same verdict whichever order the pair is submitted in', () => {
+    // The property that makes free placement safe: an illegal board is illegal
+    // no matter how it was assembled. Without the symmetric check, the
+    // base-first sequence passes and an unplayable setup reaches startMatch.
+    const map = makeMap();
+    const close = at(0, 16 - (RULES.bunkerExclusionRadius - 1));
+
+    const siteFirst: PlayerSetup = [
+      place('bunker', close),
+      place('interceptor', BASE_A),
+    ];
+    const baseFirst: PlayerSetup = [
+      place('interceptor', BASE_A),
+      place('bunker', close),
+    ];
+
+    expect(validateSetup(map, 'p1', siteFirst)).toMatchObject({
+      legal: false,
+      reason: 'EXCLUSION_ZONE',
+    });
+    expect(validateSetup(map, 'p1', baseFirst)).toMatchObject({
+      legal: false,
+      reason: 'EXCLUSION_ZONE',
+    });
   });
 
   it('accepts a base at exactly the exclusion radius — the bound is inclusive', () => {
@@ -276,8 +353,42 @@ describe('legalPlacementHexes()', () => {
     expect(before.some((h) => hexKey(h) === hexKey(BASE_A))).toBe(true);
   });
 
-  it('offers nothing when it is not this kind’s turn', () => {
-    expect(legalPlacementHexes(makeMap(), 'p1', 'interceptor', [])).toEqual([]);
+  it('offers ground for any kind at any time — there is no placement order', () => {
+    // With nothing placed, all three kinds are offered the same ground: no
+    // exclusion applies yet, and §12 gives bunker, decoy and base identical
+    // terrain and zone rules.
+    const map = makeMap();
+    const bunker = legalPlacementHexes(map, 'p1', 'bunker', []).map(hexKey);
+    const decoy = legalPlacementHexes(map, 'p1', 'decoy', []).map(hexKey);
+    const base = legalPlacementHexes(map, 'p1', 'interceptor', []).map(hexKey);
+
+    expect(bunker.length).toBeGreaterThan(0);
+    expect(decoy).toEqual(bunker);
+    expect(base).toEqual(bunker);
+  });
+
+  it('offers nothing once that kind’s roster slots are full', () => {
+    expect(
+      legalPlacementHexes(makeMap(), 'p1', 'interceptor', LEGAL_SETUP),
+    ).toEqual([]);
+  });
+
+  /**
+   * The mirror of the base exclusion, seen through the highlight: with a base
+   * already down, the ground offered for a site has a hole in it. Both site
+   * kinds get exactly the same hole, or terrain itself would identify the real
+   * bunker (§12).
+   */
+  it('withholds the same ground from bunker and decoy near a placed base', () => {
+    const map = makeMap();
+    const bases: PlayerSetup = [place('interceptor', BASE_A)];
+
+    const bunker = legalPlacementHexes(map, 'p1', 'bunker', bases).map(hexKey);
+    const decoy = legalPlacementHexes(map, 'p1', 'decoy', bases).map(hexKey);
+    const open = legalPlacementHexes(map, 'p1', 'bunker', []).map(hexKey);
+
+    expect(bunker).toEqual(decoy);
+    expect(bunker.length).toBeLessThan(open.length);
   });
 
   it('gives the two players disjoint ground — so neither can ever see the other', () => {
@@ -309,7 +420,7 @@ describe('validateSetup()', () => {
     expect(validateSetup(makeMap(), 'p1', broken)).toEqual({
       legal: false,
       index: 2,
-      reason: 'TOO_CLOSE_TO_SITE',
+      reason: 'EXCLUSION_ZONE',
     });
   });
 
@@ -443,5 +554,146 @@ describe('startMatch()', () => {
     });
 
     expect(state.units).toHaveLength(16);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nextPlacementKind (build-order step 10b)
+// ---------------------------------------------------------------------------
+
+describe('nextPlacementKind', () => {
+  const map = makeMap();
+
+  // Four widely-spaced hexes in P1's home zone, clear of every spawn row and far
+  // enough apart that the ≥3 exclusion rule never fires — this describe is about
+  // the *order* of placement, so nothing else should be able to reject a hex.
+  const SPOTS = [at(0, 14), at(4, 14), at(9, 14), at(14, 14)];
+
+  it('walks the roster in PLACEMENT_ORDER and then reports done', () => {
+    const steps: (Placement['kind'] | null)[] = [];
+    const placed: Placement[] = [];
+
+    // Four placements, so five answers: one before each and one after the last.
+    for (let i = 0; i <= SPOTS.length; i++) {
+      const kind = nextPlacementKind(placed);
+      steps.push(kind);
+      if (kind) placed.push(place(kind, SPOTS[i]));
+    }
+
+    expect(steps).toEqual(['bunker', 'decoy', 'interceptor', 'interceptor', null]);
+  });
+
+  it('only ever suggests a kind validatePlacement would accept', () => {
+    // It is a suggestion, not a rule — other kinds are legal too — but the one
+    // it names must never be refused, or the setup UI's pre-selection would
+    // highlight ground for an asset the validator then rejects.
+    const placed: Placement[] = [];
+
+    for (const spot of SPOTS) {
+      const kind = nextPlacementKind(placed);
+      expect(kind).not.toBeNull();
+      expect(validatePlacement(map, 'p1', kind!, spot, placed)).toEqual({
+        legal: true,
+      });
+      placed.push(place(kind!, spot));
+    }
+
+    expect(nextPlacementKind(placed)).toBeNull();
+  });
+
+  it('does not stop the other kinds being placed first', () => {
+    // The old behaviour: everything but `nextPlacementKind`'s answer was
+    // OUT_OF_ORDER. Now a suggestion is all it is.
+    expect(nextPlacementKind([])).toBe('bunker');
+    expect(validatePlacement(map, 'p1', 'interceptor', SPOTS[0], [])).toEqual({
+      legal: true,
+    });
+  });
+
+  it('reports what is still owed, even for a setup assembled out of order', () => {
+    // Not something the UI can produce — but a saved game or a V1.5 client
+    // message could, and "the first unfilled slot" is the answer that keeps
+    // validatePlacement's OUT_OF_ORDER rule satisfiable from there.
+    expect(nextPlacementKind([place('decoy', SPOTS[1])])).toBe('bunker');
+  });
+
+  it('reaches every kind in RULES.placementCounts, the right number of times', () => {
+    // A placeable asset missing from PLACEMENT_ORDER would never be reached, and
+    // a setup could then never complete. Walking to exhaustion is what catches it.
+    const placed: Placement[] = [];
+    let kind = nextPlacementKind(placed);
+
+    while (kind) {
+      placed.push(place(kind, SPOTS[placed.length]));
+      kind = nextPlacementKind(placed);
+    }
+
+    for (const [k, count] of Object.entries(RULES.placementCounts)) {
+      expect(placed.filter((p) => p.kind === k)).toHaveLength(count);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Canonical unit order (2026-08-13, when placement order became free)
+// ---------------------------------------------------------------------------
+
+describe('startMatch() — unit order is a function of the setup, not of the clicks', () => {
+  /**
+   * §9 emits unit-naming events in `GameState.units` order, so that order has to
+   * be canonical. Once the setup UI let a player place their four assets in any
+   * sequence, "canonical" stopped being free: two players who built the SAME
+   * board in different orders would otherwise produce differently-ordered logs
+   * from an identical position. `startingUnits` sorts by PLACEMENT_ORDER to fix
+   * it, and this is the test that would fail if that sort were removed.
+   */
+  it('produces identical units for the same board placed in a different order', () => {
+    const map = makeMap();
+    const forward: Record<PlayerId, PlayerSetup> = {
+      p1: LEGAL_SETUP,
+      p2: [
+        place('bunker', at(5, 5)),
+        place('decoy', at(5, 0)),
+        place('interceptor', at(0, 2)),
+        place('interceptor', at(11, 2)),
+      ],
+    };
+    const shuffled: Record<PlayerId, PlayerSetup> = {
+      // Bases first, then the decoy, then the bunker — legal now, and the exact
+      // sequence the old OUT_OF_ORDER rule existed to forbid.
+      p1: [
+        place('interceptor', BASE_A),
+        place('interceptor', BASE_B),
+        place('decoy', DECOY),
+        place('bunker', BUNKER),
+      ],
+      p2: forward.p2,
+    };
+
+    expect(startMatch(map, shuffled).units).toEqual(
+      startMatch(map, forward).units,
+    );
+  });
+
+  it('still numbers the two bases in the order the player placed them', () => {
+    // The one ordering the player keeps: which base is 1 and which is 2.
+    const map = makeMap();
+    const swapped: PlayerSetup = [
+      ...SITES,
+      place('interceptor', BASE_B),
+      place('interceptor', BASE_A),
+    ];
+    const units = startMatch(map, {
+      p1: swapped,
+      p2: [
+        place('bunker', at(5, 5)),
+        place('decoy', at(5, 0)),
+        place('interceptor', at(0, 2)),
+        place('interceptor', at(11, 2)),
+      ],
+    }).units;
+
+    const base1 = units.find((u) => u.id === 'p1-interceptor-1');
+    expect(base1?.position).toEqual(BASE_B);
   });
 });
