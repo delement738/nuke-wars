@@ -57,9 +57,15 @@ import {
   type OrderMode,
 } from './orders';
 import {
+  emptyPlacementDraft,
+  type PlacementDraft,
+  firstEmptySlot,
   placementComplete,
-  withPlacement,
-  withoutLastPlacement,
+  placementDraftOf,
+  placementSetup,
+  placementSlots,
+  withPlacementInSlot,
+  withoutSlot,
 } from './placement';
 import { sandboxSetup } from './sandbox';
 
@@ -115,7 +121,7 @@ export interface MatchState {
    */
   map: MapData;
   /**
-   * The human's secret placements so far, in placement order (spec §12).
+   * The human's secret placements, one entry per roster slot (spec §12).
    *
    * Populated on the setup screen and left in place once the match starts, where
    * it is simply a record of where they put their own four assets — their own
@@ -123,7 +129,18 @@ export interface MatchState {
    * 10c's hotseat this becomes one per player and gotcha 36's discipline applies
    * then: the inactive player must not see the other's.
    */
-  placed: PlayerSetup;
+  placed: PlacementDraft;
+  /**
+   * Which roster slot the setup screen is positioning — the asset a board click
+   * will place or move (spec §12; placement order is free).
+   *
+   * Never null while placing: it starts at the bunker and advances to the first
+   * empty slot after each placement, so a player who just wants to click four
+   * times never has to choose one. Once the roster is full it stays on the slot
+   * last touched, and a further click relocates that asset — which is the point
+   * of the explicit Start button.
+   */
+  selectedSlot: number;
   /** How the CPU (`SANDBOX_DUMMY`) plays. A sandbox control, same as `viewer`. */
   difficulty: CpuDifficulty;
   /** Whose redacted view is on screen. A sandbox control; step 10's handoff owns it. */
@@ -233,7 +250,8 @@ function viewsOf(state: GameState): Record<PlayerId, VisibleGameState> {
 export const matchStore = createStore<MatchState>()(() => ({
   seed: DEFAULT_SEED,
   map: freshMap(DEFAULT_SEED),
-  placed: [],
+  placed: emptyPlacementDraft(),
+  selectedSlot: 0,
   difficulty: DEFAULT_DIFFICULTY,
   viewer: SANDBOX_PLAYER,
   selected: null,
@@ -301,7 +319,8 @@ export function newMatch(seed: number = DEFAULT_SEED): void {
   matchStore.setState({
     seed,
     map: freshMap(seed),
-    placed: [],
+    placed: emptyPlacementDraft(),
+    selectedSlot: 0,
     viewer: SANDBOX_PLAYER,
     selected: null,
     selectedUnitId: null,
@@ -345,7 +364,7 @@ function beginMatch(humanSetup: PlayerSetup): void {
 
   truth = startMatch(map, setups);
   matchStore.setState({
-    placed: humanSetup,
+    placed: placementDraftOf(humanSetup),
     views: viewsOf(truth),
     selected: null,
     selectedUnitId: null,
@@ -354,48 +373,88 @@ function beginMatch(humanSetup: PlayerSetup): void {
 }
 
 /**
- * Place the current step's asset on `hex` (spec §12).
+ * Choose which of your four assets you are positioning (spec §12).
  *
- * An illegal hex is dropped rather than stored — `withPlacement` checks it
+ * Any slot, at any time — placement order is free, so this is the whole input
+ * the setup screen needs beyond the board itself. Selecting a slot that is
+ * already placed selects its hex too, so the board shows you which asset you
+ * have picked up.
+ */
+export function selectSlot(slotId: number): void {
+  if (truth) return;
+
+  const slot = placementSlots(matchStore.getState().placed)[slotId];
+  if (!slot) return;
+
+  matchStore.setState({ selectedSlot: slotId, selected: slot.hex });
+}
+
+/**
+ * Put the selected slot's asset on `hex` — placing it, or **moving it** if that
+ * slot is already on the board (spec §12).
+ *
+ * An illegal hex is dropped rather than stored — `withPlacementInSlot` checks it
  * against the real §12 validator — so nothing downstream has to defend against a
  * setup containing one.
  *
- * **Completing the roster starts the match**, the same way a complete order
- * draft resolves the round (`resolveIfComplete`): the fourth placement is the
- * last decision the setup screen is waiting for, so there is nothing left to
- * press a button for. Unlike the order draft this needs no empty-set guard —
- * `placementComplete` counts placements against a fixed roster rather than
- * asking whether an empty set of things is all decided (contrast `allDecided`,
- * gotcha 41c).
+ * Selection then advances to the first still-empty slot, which is what lets a
+ * player who does not care about order simply click four times. When none is
+ * empty it stays put, so the last asset placed is the one a further click moves.
+ *
+ * **This does NOT start the match**, and that is a deliberate reversal of how it
+ * worked when placement was a fixed sequence. Back then the fourth click was
+ * unambiguously "I am done". Now that any asset can be repositioned at any time,
+ * auto-starting on the fourth placement would snatch the board away at exactly
+ * the moment the player finally has the whole thing in front of them to judge.
+ * `startPlacedMatch` is the explicit commitment instead.
  */
 export function placeHex(hex: Hex): void {
   if (truth) return; // the match has started; placement is over
 
-  const { map, placed } = matchStore.getState();
-  const next = withPlacement(map, SANDBOX_PLAYER, placed, hex);
+  const { map, placed, selectedSlot } = matchStore.getState();
+  const next = withPlacementInSlot(map, SANDBOX_PLAYER, placed, selectedSlot, hex);
   if (next === placed) return; // illegal — the same reference means nothing moved
 
-  if (placementComplete(next)) {
-    beginMatch(next);
-    return;
-  }
-  matchStore.setState({ placed: next, selected: hex });
+  matchStore.setState({
+    placed: next,
+    selectedSlot: firstEmptySlot(next) ?? selectedSlot,
+    selected: hex,
+  });
 }
 
-/** Take back the most recent placement. Refused once the match has started —
- *  a setup is secret and final the moment the board is built (§12). */
-export function undoPlacement(): void {
+/** Take the selected slot's asset back off the board. Refused once the match has
+ *  started — a setup is secret and final the moment the board is built (§12). */
+export function clearSlot(slotId: number): void {
+  if (truth) return;
+  const { placed } = matchStore.getState();
+  const next = withoutSlot(placed, slotId);
+  if (next === placed) return;
+
+  matchStore.setState({ placed: next, selectedSlot: slotId, selected: null });
+}
+
+/** Take everything back off the board and start the setup over. */
+export function clearPlacements(): void {
   if (truth) return;
   matchStore.setState({
-    placed: withoutLastPlacement(matchStore.getState().placed),
+    placed: emptyPlacementDraft(),
+    selectedSlot: 0,
     selected: null,
   });
 }
 
-/** Start the placement sequence over from the bunker, on the same board. */
-export function clearPlacements(): void {
+/**
+ * Commit the setup and begin the match (spec §12's `SETUP -> ORDER_PHASE` edge).
+ *
+ * A no-op on an incomplete roster rather than a throw: the button is disabled
+ * until all four are down, so reaching here early is a UI event, not a caller
+ * bug — the same reasoning as `resolveRound` on a finished match.
+ */
+export function startPlacedMatch(): void {
   if (truth) return;
-  matchStore.setState({ placed: [], selected: null });
+  const { placed } = matchStore.getState();
+  if (!placementComplete(placed)) return;
+  beginMatch(placementSetup(placed));
 }
 
 /**

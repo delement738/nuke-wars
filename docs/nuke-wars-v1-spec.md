@@ -425,19 +425,27 @@ An earlier draft kept permanent "last seen (hex, round N)" ghost markers. They w
 
 **Fixed spawns (public knowledge, forced to plains by map generation):** each player's 3 launchers and drone spawn at the §7 coordinates. Map generation must guarantee these 8 hexes are plains; placement may never use a spawn hex.
 
-**Secret placement (SETUP phase, hotseat: P1 places while P2 looks away, then swap):** each player places, in order:
+**Secret placement (SETUP phase, hotseat: P1 places while P2 looks away, then swap):** each player places four assets:
 
 1. **Bunker** — any non-spawn hex in their home zone (P1 rows 13–18 in the south / P2 rows 0–5 in the north), on **plains or mountain**.
 2. **Decoy bunker** — the same constraints as the bunker, on a different hex. No minimum or maximum distance from the real bunker (see the design note below).
 3. **2 Interceptor bases** — any non-spawn, unoccupied hex in their home zone, on **plains or mountain**, each **at least 3 hexes from both their own bunker and their own decoy** (so both sites and their neighbors sit outside all friendly coverage — no point-blank shield; defending approach *lanes* at a distance is legal and is the intended skill).
 
+**The four may be placed in any order, and repositioned freely until the setup is committed** (changed 2026-08-13; see the amendment below). The list above is the roster, not a sequence.
+
 **All three placed assets may be built on any terrain** (`RULES.placementTerrain` in `src/sim/defs.ts`). The rule is "mobile things need plains, built things do not" — nothing static is driven into position, so nothing static cares whether a launcher could get there. Note that "passable" is therefore **not** the test for placement: `TerrainDef.groundPassable` answers only "may a ground unit *enter* this hex", and placement validation must read `RULES.placementTerrain` instead. The field is named `groundPassable` rather than `passable` specifically so that reaching for the wrong one looks wrong.
 
 Each step validates against the rules above, and the UI must offer only legal hexes. A 6-row × 16-column home zone (96 hexes) is far larger than two radius-2 exclusion zones, so no bunker/decoy pair can box a player out of legal base positions — but placement validation is still a pure function in `src/sim/`, tested, and the single authority both the UI and the engine call (`validatePlacement` / `legalPlacementHexes` / `nextPlacementKind` / `validateSetup` in `src/sim/setup.ts`, build-order steps 7 and 10b).
 
-**Which asset is placed next is derived, never tracked** (added 2026-08-13, step 10b). `nextPlacementKind(placed)` returns the first unfilled slot in the placement order, so the UI's "step 3 of 4" and the validator's `OUT_OF_ORDER` rule are the same fact read twice rather than two counters that can disagree. A client that kept its own cursor would eventually highlight hexes for a kind the validator refuses — on the one screen in the game where a refusal has no good explanation, because no hidden information is involved.
+**Which asset the UI pre-selects is derived, never tracked** (added 2026-08-13, step 10b). `nextPlacementKind(placed)` returns the first unfilled slot in roster order — a *suggestion*, since order is free, so that a player who just wants to click four times never has to choose one. It lives in `src/sim/setup.ts` because it is made of the roster and nothing else, and a client that defined its own roster would be a second definition of what a complete setup is.
 
-**The placement order is enforced, not merely suggested** (ruled 2026-08-11, step 7). A decoy submitted before the bunker, or a base before both sites, is rejected — the exclusion rule is measured against both sites, so a base placed first could not be checked against anything.
+**There is no placement order** (changed 2026-08-13, step 10b; it *was* enforced from 2026-08-11). Any of the four assets may be placed first, and any may be moved to a different hex until the setup is committed. The old rule existed for one reason — the ≥3 exclusion was checked only from the base's side, so a base placed first had no site to measure against and passed vacuously — and that reason is gone: **the exclusion is now checked from whichever of the pair arrives second**, which makes an illegal board illegal no matter what sequence assembled it.
+
+The set of legal *boards* is unchanged by this; only the order you may build one in. `validateSetup` therefore gives the same verdict on any permutation of a setup, which is what makes the freedom safe to expose — `setup.test.ts` pins it by shuffling a bad setup and expecting both orderings to fail with `EXCLUSION_ZONE`.
+
+Two consequences worth stating. **The reason code is `EXCLUSION_ZONE`, not `TOO_CLOSE_TO_SITE`**, because the violation is symmetric and naming the site half would be an asymmetry in a message the player reads; it still never says *which* asset was too close, and in particular never distinguishes bunker from decoy (§12's principle applies to error messages too). And **`startingUnits` sorts placements into the roster order before building `GameState.units`**: §9 emits unit-naming events in units order, so that order has to be a function of the setup rather than of the clicks that produced it, or two players who built the same board in different sequences would generate differently-ordered logs from an identical position.
+
+**Committing is explicit.** The match begins when the player says so, not on the fourth placement — with repositioning available, auto-starting on the last click would take the board away at the moment they finally have the whole thing in front of them to judge.
 
 **Validation never consults the opponent's placements**, and cannot need to: the two home zones are disjoint row bands (§7), so the two players' setups can never collide. That is also what keeps it safe. A validator that read the enemy's setup would turn the legal-hex highlight into a third detector (§11) — the enemy's secret placement would show up as a hole in your own overlay.
 

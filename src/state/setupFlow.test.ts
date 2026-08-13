@@ -14,6 +14,7 @@ import {
   SANDBOX_PLAYER,
   autoPlace,
   clearPlacements,
+  clearSlot,
   matchStarted,
   matchStore,
   newMatch,
@@ -21,25 +22,49 @@ import {
   placeHex,
   resign,
   resolveRound,
+  selectSlot,
   setOrder,
-  undoPlacement,
+  startPlacedMatch,
   viewFor,
 } from './match';
-import { ROSTER_SIZE, placementStep, placementTargets } from './placement';
+import {
+  ROSTER_SIZE,
+  placementSetup,
+  placementSlots,
+  placementTargets,
+} from './placement';
+
+/** Slot ids, by name, so the tests read as intent rather than as indexes. */
+const BUNKER = 0;
+const DECOY = 1;
+const BASE_1 = 2;
+const BASE_2 = 3;
 
 beforeEach(() => {
   newMatch();
 });
 
-/** The hexes the human may legally use for their current placement step. */
+/** The hexes the human may legally use for the slot they have selected. */
 function targets() {
-  const { map, placed } = matchStore.getState();
-  return placementTargets(map, SANDBOX_PLAYER, placed);
+  const { map, placed, selectedSlot } = matchStore.getState();
+  return placementTargets(map, SANDBOX_PLAYER, placed, selectedSlot);
 }
 
-/** Place the whole roster by hand, taking the first legal hex each time. */
+/** The player's roster, as the setup panel lists it. */
+function slots() {
+  return placementSlots(matchStore.getState().placed);
+}
+
+/** How many assets are on the board. */
+function placedCount(): number {
+  return placementSetup(matchStore.getState().placed).length;
+}
+
+/** Place the whole roster by hand and start — the selection auto-advances, so
+ *  this is four clicks and the Start button, and nothing else. */
 function placeAll(): void {
   for (let i = 0; i < ROSTER_SIZE; i++) placeHex(targets()[0]);
+  startPlacedMatch();
 }
 
 // ---------------------------------------------------------------------------
@@ -51,7 +76,15 @@ describe('newMatch', () => {
     expect(matchStarted()).toBe(false);
     expect(matchStore.getState().views).toBeNull();
     expect(viewFor(SANDBOX_PLAYER)).toBeNull();
-    expect(matchStore.getState().placed).toEqual([]);
+    expect(placedCount()).toBe(0);
+  });
+
+  it('opens with the whole roster listed and the first slot selected', () => {
+    // The roster is a fixed list from the first frame — it does not grow as
+    // assets are placed, because the player picks which one they are positioning.
+    expect(slots()).toHaveLength(ROSTER_SIZE);
+    expect(slots().every((slot) => slot.hex === null)).toBe(true);
+    expect(matchStore.getState().selectedSlot).toBe(BUNKER);
   });
 
   it('still has a board, because terrain is public (spec §11)', () => {
@@ -71,7 +104,7 @@ describe('newMatch', () => {
 
     newMatch();
     expect(matchStarted()).toBe(false);
-    expect(matchStore.getState().placed).toEqual([]);
+    expect(placedCount()).toBe(0);
     for (const player of PLAYERS) expect(viewFor(player)).toBeNull();
   });
 });
@@ -81,22 +114,56 @@ describe('newMatch', () => {
 // ---------------------------------------------------------------------------
 
 describe('placeHex', () => {
-  it('walks the §12 placement order: bunker, decoy, then both bases', () => {
+  it('pre-selects the roster in order, so four clicks fill it', () => {
     const kinds: string[] = [];
     for (let i = 0; i < ROSTER_SIZE; i++) {
-      kinds.push(placementStep(matchStore.getState().placed)!.kind);
+      kinds.push(slots()[matchStore.getState().selectedSlot].kind);
       placeHex(targets()[0]);
     }
 
     expect(kinds).toEqual(['bunker', 'decoy', 'interceptor', 'interceptor']);
+    expect(placedCount()).toBe(ROSTER_SIZE);
   });
 
-  it('ignores an illegal hex — nothing is placed and the step does not advance', () => {
-    // Deep in the enemy's home zone: outside this player's own zone entirely.
-    const enemyGround = offsetToAxial({ col: 8, row: 1 });
-    placeHex(enemyGround);
+  /**
+   * Placement order is free (§12, changed 2026-08-13). The bases used to be
+   * locked until both sites were down, because the ≥3 exclusion rule was checked
+   * only from the base's side; it is symmetric now, so any asset may go first.
+   */
+  it('accepts the four assets in any order', () => {
+    for (const slotId of [BASE_2, BUNKER, BASE_1, DECOY]) {
+      selectSlot(slotId);
+      placeHex(targets()[0]);
+    }
 
-    expect(matchStore.getState().placed).toEqual([]);
+    expect(placedCount()).toBe(ROSTER_SIZE);
+    startPlacedMatch();
+    expect(matchStarted()).toBe(true);
+  });
+
+  it('fills the slot that was selected, not the next one in the roster', () => {
+    selectSlot(BASE_2);
+    placeHex(targets()[0]);
+
+    expect(slots()[BASE_2].hex).not.toBeNull();
+    expect(slots()[BASE_1].hex).toBeNull();
+    expect(slots()[BUNKER].hex).toBeNull();
+  });
+
+  it('advances the selection to the first still-empty slot', () => {
+    selectSlot(BASE_1);
+    placeHex(targets()[0]);
+    // Bunker and decoy are still empty, so it goes back to the earliest gap
+    // rather than marching on to base 2.
+    expect(matchStore.getState().selectedSlot).toBe(BUNKER);
+  });
+
+  it('ignores an illegal hex — nothing is placed and the selection stays put', () => {
+    // Deep in the enemy's home zone: outside this player's own zone entirely.
+    placeHex(offsetToAxial({ col: 8, row: 1 }));
+
+    expect(placedCount()).toBe(0);
+    expect(matchStore.getState().selectedSlot).toBe(BUNKER);
     expect(matchStarted()).toBe(false);
   });
 
@@ -110,18 +177,32 @@ describe('placeHex', () => {
   });
 
   /**
-   * The auto-start rule, and the reason there is no "Begin match" button: the
-   * fourth placement is the last decision the setup screen is waiting for. Same
-   * shape as a complete order draft resolving its own round (step 10a).
+   * **The fourth placement does NOT start the match**, and that is a deliberate
+   * reversal of how it worked while placement was a fixed sequence. Any asset can
+   * now be repositioned at any time, so auto-starting on the last click would
+   * snatch the board away at exactly the moment the player finally has the whole
+   * thing in front of them to judge.
    */
-  it('starts the match on the last placement, and not before', () => {
-    for (let i = 0; i < ROSTER_SIZE - 1; i++) {
+  it('never starts the match on its own', () => {
+    for (let i = 0; i < ROSTER_SIZE; i++) {
       placeHex(targets()[0]);
       expect(matchStarted()).toBe(false);
     }
 
-    placeHex(targets()[0]);
+    startPlacedMatch();
     expect(matchStarted()).toBe(true);
+  });
+
+  it('moves an already-placed asset instead of adding a fifth', () => {
+    placeAllWithoutStarting();
+    const before = slots()[BUNKER].hex!;
+
+    selectSlot(BUNKER);
+    const elsewhere = targets().find((hex) => hexKey(hex) !== hexKey(before))!;
+    placeHex(elsewhere);
+
+    expect(placedCount()).toBe(ROSTER_SIZE);
+    expect(slots()[BUNKER].hex).toEqual(elsewhere);
   });
 
   it('builds a round-1 board with the full roster for both sides', () => {
@@ -140,10 +221,8 @@ describe('placeHex', () => {
   it('puts the human’s own assets where they clicked', () => {
     placeAll();
 
-    const { placed } = matchStore.getState();
     const own = viewFor(SANDBOX_PLAYER)!.units;
-
-    for (const placement of placed) {
+    for (const placement of placementSetup(matchStore.getState().placed)) {
       const unit = own.find((u) => hexKey(u.position) === hexKey(placement.hex));
       expect(unit?.kind).toBe(placement.kind);
     }
@@ -165,44 +244,103 @@ describe('placeHex', () => {
    */
   it('is what a board click does before the match starts', () => {
     pickHex(targets()[0]);
-    expect(matchStore.getState().placed).toHaveLength(1);
+    expect(placedCount()).toBe(1);
   });
 });
 
-describe('undoPlacement / clearPlacements', () => {
-  it('takes back the last placement and re-opens that step', () => {
-    placeHex(targets()[0]);
-    placeHex(targets()[0]);
-    expect(placementStep(matchStore.getState().placed)!.kind).toBe('interceptor');
+/** Fill the roster but stay on the setup screen. */
+function placeAllWithoutStarting(): void {
+  for (let i = 0; i < ROSTER_SIZE; i++) placeHex(targets()[0]);
+}
 
-    undoPlacement();
-    expect(matchStore.getState().placed).toHaveLength(1);
-    expect(placementStep(matchStore.getState().placed)!.kind).toBe('decoy');
+describe('selectSlot', () => {
+  it('selects an empty slot and clears the board selection', () => {
+    selectSlot(BASE_2);
+    expect(matchStore.getState().selectedSlot).toBe(BASE_2);
+    expect(matchStore.getState().selected).toBeNull();
   });
 
-  it('does nothing on an empty setup', () => {
-    undoPlacement();
-    expect(matchStore.getState().placed).toEqual([]);
+  it('selects a placed asset’s hex too, so the board shows what you picked up', () => {
+    placeHex(targets()[0]);
+    const bunkerHex = slots()[BUNKER].hex!;
+
+    selectSlot(DECOY);
+    selectSlot(BUNKER);
+    expect(matchStore.getState().selected).toEqual(bunkerHex);
   });
 
-  it('clears back to the bunker', () => {
-    placeHex(targets()[0]);
-    placeHex(targets()[0]);
+  it('ignores a slot id that is not on the roster', () => {
+    selectSlot(ROSTER_SIZE);
+    expect(matchStore.getState().selectedSlot).toBe(BUNKER);
+  });
+});
+
+describe('clearSlot / clearPlacements', () => {
+  it('takes one asset back off the board and leaves the rest', () => {
+    placeAllWithoutStarting();
+    const decoyHex = slots()[DECOY].hex;
+
+    clearSlot(BUNKER);
+    expect(slots()[BUNKER].hex).toBeNull();
+    expect(slots()[DECOY].hex).toEqual(decoyHex);
+    expect(placedCount()).toBe(ROSTER_SIZE - 1);
+  });
+
+  it('selects the slot it emptied, ready to re-place it', () => {
+    placeAllWithoutStarting();
+    clearSlot(BASE_2);
+    expect(matchStore.getState().selectedSlot).toBe(BASE_2);
+  });
+
+  it('does nothing to an empty slot', () => {
+    const before = matchStore.getState().placed;
+    clearSlot(BUNKER);
+    expect(matchStore.getState().placed).toBe(before);
+  });
+
+  it('clears everything and reselects the bunker', () => {
+    placeAllWithoutStarting();
     clearPlacements();
 
-    expect(matchStore.getState().placed).toEqual([]);
-    expect(placementStep(matchStore.getState().placed)!.kind).toBe('bunker');
+    expect(placedCount()).toBe(0);
+    expect(matchStore.getState().selectedSlot).toBe(BUNKER);
   });
 
-  it('cannot rewrite a setup once the match has started (§12 — it is secret and final)', () => {
+  it('cannot rewrite a setup once the match has started (§12 — secret and final)', () => {
     placeAll();
     const before = matchStore.getState().placed;
 
-    undoPlacement();
+    clearSlot(BUNKER);
     clearPlacements();
 
     expect(matchStore.getState().placed).toBe(before);
     expect(matchStarted()).toBe(true);
+  });
+});
+
+describe('startPlacedMatch', () => {
+  it('refuses an incomplete roster', () => {
+    placeHex(targets()[0]);
+    startPlacedMatch();
+    expect(matchStarted()).toBe(false);
+  });
+
+  it('starts on a full roster, with a setup the engine accepts', () => {
+    placeAllWithoutStarting();
+    startPlacedMatch();
+
+    const { map, placed } = matchStore.getState();
+    expect(matchStarted()).toBe(true);
+    expect(validateSetup(map, SANDBOX_PLAYER, placementSetup(placed))).toEqual({
+      legal: true,
+    });
+  });
+
+  it('is a no-op when a match is already running', () => {
+    placeAll();
+    const before = matchStore.getState().placed;
+    startPlacedMatch();
+    expect(matchStore.getState().placed).toBe(before);
   });
 });
 
@@ -216,7 +354,14 @@ describe('autoPlace', () => {
 
     const { map, placed } = matchStore.getState();
     expect(matchStarted()).toBe(true);
-    expect(validateSetup(map, SANDBOX_PLAYER, placed)).toEqual({ legal: true });
+    expect(validateSetup(map, SANDBOX_PLAYER, placementSetup(placed))).toEqual({
+      legal: true,
+    });
+  });
+
+  it('fills every roster slot, so the panel is not left half-empty', () => {
+    autoPlace();
+    expect(slots().every((slot) => slot.hex !== null)).toBe(true);
   });
 
   it('is a no-op once a match is running', () => {
@@ -273,9 +418,10 @@ describe('the setup screen and the visibility filter', () => {
     // The only placements anywhere in the store are the human's own, and there
     // are as many as they have clicked. There is no field an opponent's setup
     // could live in until `beginMatch` builds one.
-    expect(state.placed).toHaveLength(1);
+    expect(placedCount()).toBe(1);
+
     const zone = RULES.homeZoneRows[SANDBOX_PLAYER];
-    for (const { hex } of state.placed) {
+    for (const { hex } of placementSetup(state.placed)) {
       const { row } = axialToOffset(hex);
       expect(row).toBeGreaterThanOrEqual(zone.min);
       expect(row).toBeLessThanOrEqual(zone.max);
@@ -316,7 +462,8 @@ describe('the setup screen and the visibility filter', () => {
 
       const { map } = matchStore.getState();
       const indexOfBunker = (player: PlayerId) => {
-        const list = placementTargets(map, player, []); // the bunker is placed first
+        // The bunker's own slot, against an empty draft: the full legal list.
+        const list = placementTargets(map, player, [], BUNKER);
         const bunker = viewFor(player)!.units.find((u) => u.kind === 'bunker')!;
         return list.findIndex((hex) => hexKey(hex) === hexKey(bunker.position));
       };

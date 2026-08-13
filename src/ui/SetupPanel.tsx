@@ -1,32 +1,41 @@
 // UI LAYER — secret placement (build-order step 10b).
 //
 // Reads state, sends player intents, never mutates game state and never decides
-// a rule. Which asset is being placed and where it may go both come from
+// a rule. Which asset is selected and where it may go both come from
 // `src/state/placement.ts`, which asks the real §12 validator in
 // `src/sim/setup.ts` — the same function `startMatch` re-checks the finished
 // setup with. This file's whole job is to put those answers on screen.
 //
-// The loop it implements: bunker -> decoy -> base -> base, each on a highlighted
-// hex, and the match starts the moment the fourth is down. The placement order
-// is the spec's and it is enforced rather than suggested (§12) — the bases are
-// last because their exclusion rule is measured against both sites, so a base
-// placed first could not be checked against anything.
+// The loop it implements: pick one of your four assets from the roster, click a
+// gold hex to put it there, repeat, then Start. **Any asset, in any order**, and
+// an asset already on the board moves to wherever you click next — placement
+// order is free (§12, changed 2026-08-13), so the roster is a list of things you
+// own rather than a sequence you march through. The panel pre-selects the next
+// empty slot after each placement, so clicking four times in a row still works
+// without ever touching this list.
 //
-// There is no click handler here. The board is the input device, and a click on
-// it is routed by `pickHex` in the store, which is also what routes clicks
-// during play — one place that decides what clicking a hex means.
+// There is no click handler for the board here. The board is the input device,
+// and a click on it is routed by `pickHex` in the store, which is also what
+// routes clicks during play — one place that decides what clicking a hex means.
 
 import { RULES, type PlaceableKind } from '../sim/defs';
 import {
   autoPlace,
   clearPlacements,
+  clearSlot,
   newMatch,
-  undoPlacement,
+  selectSlot,
+  startPlacedMatch,
   SANDBOX_DUMMY,
   SANDBOX_PLAYER,
 } from '../state/match';
-import { ROSTER_SIZE, placementStep } from '../state/placement';
-import { usePlaced, useSeed } from '../state/useMatch';
+import {
+  ROSTER_SIZE,
+  placementComplete,
+  placementSlots,
+  type PlacementSlot,
+} from '../state/placement';
+import { usePlaced, useSeed, useSelectedSlot } from '../state/useMatch';
 import { hexLabel } from './eventText';
 
 /** What each asset is called on screen. */
@@ -39,11 +48,10 @@ const KIND_LABEL: Record<PlaceableKind, string> = {
 /**
  * Why you are placing this, in one line.
  *
- * The decoy's line is the load-bearing one: a player who treats it as a
- * throwaway has not understood that it is the thing that makes finding a site
- * worth nothing on its own (§12). It costs the attacker a missile, a launcher's
- * round, and the exposure of having fired, to learn which of your two sites is
- * real.
+ * The decoy's is the load-bearing one: a player who treats it as a throwaway has
+ * not understood that it is what makes finding a site worth nothing on its own
+ * (§12). It costs the attacker a missile, a launcher's round, and the exposure
+ * of having fired, to learn which of your two sites is real.
  */
 const KIND_BLURB: Record<PlaceableKind, string> = {
   bunker:
@@ -54,11 +62,24 @@ const KIND_BLURB: Record<PlaceableKind, string> = {
     'Shoots down one missile per round in the ring around it. It must sit at least 3 hexes from BOTH of your sites, so it can only defend an approach lane, never the bunker itself.',
 };
 
+/** "Interceptor base 2" — the two bases are numbered, the single sites are not. */
+function slotLabel(slot: PlacementSlot): string {
+  const name = KIND_LABEL[slot.kind];
+  return slot.ofKind > 1 ? `${name} ${slot.index}` : name;
+}
+
 export default function SetupPanel() {
   const placed = usePlaced();
+  const selectedSlot = useSelectedSlot();
   const seed = useSeed();
 
-  const step = placementStep(placed);
+  const slots = placementSlots(placed);
+  const active = slots[selectedSlot];
+  const ready = placementComplete(placed);
+  // Filled slots, NOT `placed.length` — the draft is a fixed-length array with a
+  // null per empty slot, so its length is always the roster size and a counter
+  // built from it reads "4 / 4" from the first frame.
+  const done = slots.filter((slot) => slot.hex !== null).length;
 
   return (
     <div className="hud">
@@ -67,7 +88,7 @@ export default function SetupPanel() {
           <h2>
             Secret placement
             <span className="viewing">
-              {placed.length} / {ROSTER_SIZE}
+              {done} / {ROSTER_SIZE}
             </span>
           </h2>
 
@@ -79,49 +100,65 @@ export default function SetupPanel() {
             or mountain both work: nothing static is driven into position.
           </p>
 
-          {step && (
+          <ul className="unit-list">
+            {slots.map((slot) => {
+              const isActive = slot.id === selectedSlot;
+              return (
+                <li key={slot.id} className={isActive ? 'unit active' : 'unit'}>
+                  <button
+                    type="button"
+                    className="unit-name"
+                    onClick={() => selectSlot(slot.id)}
+                  >
+                    <span>{slotLabel(slot)}</span>
+                    <span className="decision">
+                      {slot.hex ? hexLabel(slot.hex) : 'not placed'}
+                    </span>
+                  </button>
+
+                  {isActive && (
+                    <div className="buttons">
+                      {slot.hex && (
+                        <button type="button" onClick={() => clearSlot(slot.id)}>
+                          Pick back up
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+
+          {active && (
             <>
               <p className="alert">
-                Step {step.ordinal} of {ROSTER_SIZE}: place your{' '}
-                {KIND_LABEL[step.kind].toLowerCase()}
-                {step.ofKind > 1 ? ` (${step.index} of ${step.ofKind})` : ''}.
+                {active.hex
+                  ? `Click a gold hex to move your ${slotLabel(active).toLowerCase()}.`
+                  : `Click a gold hex to place your ${slotLabel(active).toLowerCase()}.`}
               </p>
-              <p className="footnote">{KIND_BLURB[step.kind]}</p>
+              <p className="footnote">{KIND_BLURB[active.kind]}</p>
             </>
           )}
 
-          <ol className="unit-list">
-            {placed.map((placement, i) => (
-              <li key={`${placement.kind}-${i}`} className="unit">
-                <span className="unit-name">
-                  <span>{KIND_LABEL[placement.kind]}</span>
-                  <span className="decision">{hexLabel(placement.hex)}</span>
-                </span>
-              </li>
-            ))}
-          </ol>
-
           <div className="buttons">
-            <button
-              type="button"
-              onClick={() => undoPlacement()}
-              disabled={placed.length === 0}
-            >
-              Undo
+            <button type="button" onClick={() => startPlacedMatch()} disabled={!ready}>
+              {ready ? 'Start match' : `Place all ${ROSTER_SIZE} to start`}
             </button>
             <button
               type="button"
               onClick={() => clearPlacements()}
-              disabled={placed.length === 0}
+              disabled={done === 0}
             >
               Start over
             </button>
           </div>
 
           <p className="footnote">
-            The match begins the moment your fourth asset is down. Your placement
-            is secret from then on — {SANDBOX_DUMMY.toUpperCase()} places theirs
-            at the same time, and neither of you ever sees the other's.
+            Place them in any order, and move any of them as often as you like —
+            nothing is committed until you press Start. From then on your setup is
+            secret: {SANDBOX_DUMMY.toUpperCase()} places theirs at the same time,
+            and neither of you ever sees the other's.
           </p>
         </section>
 
@@ -153,12 +190,13 @@ export default function SetupPanel() {
         <section className="panel legend">
           <h2>Legend</h2>
           <p className="buildable">
-            Gold — ground the current asset may be built on. Click one to place.
+            Gold — ground the selected asset may stand on. Click one to place or
+            move it. A gold ring marks the asset you have picked up.
           </p>
           <p className="enemy">
-            Red wash — too close to one of your own sites for an interceptor
-            base (within {RULES.bunkerExclusionRadius} hexes). It appears once
-            your bunker and decoy are down.
+            Red wash — denied to the selected asset by the exclusion rule: a base
+            and a site may never be within {RULES.bunkerExclusionRadius} hexes of
+            each other, whichever of the two you are placing.
           </p>
           <p className="muted">
             Blue — what you have placed: B bunker, X decoy, I interceptor base.

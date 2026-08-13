@@ -30,7 +30,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Application, Container } from 'pixi.js';
 import { hoverHex, pickHex, SANDBOX_PLAYER } from '../state/match';
 import { targetsFor } from '../state/orders';
-import { exclusionHexes, placementTargets } from '../state/placement';
+import {
+  exclusionHexes,
+  placementSlots,
+  placementTargets,
+} from '../state/placement';
 import {
   useDraft,
   useHovered,
@@ -38,6 +42,7 @@ import {
   useOrderMode,
   usePlaced,
   useSelected,
+  useSelectedSlot,
   useSelectedUnitId,
   useView,
 } from '../state/useMatch';
@@ -163,6 +168,7 @@ export default function GameCanvas() {
   const map = useMap();
   const view = useView();
   const placed = usePlaced();
+  const selectedSlot = useSelectedSlot();
   const selected = useSelected();
   const selectedUnitId = useSelectedUnitId();
   const orderMode = useOrderMode();
@@ -183,16 +189,24 @@ export default function GameCanvas() {
   );
 
   // The setup screen's two hex sets, from the same §12 validator the engine
-  // re-checks the finished setup with. Memoised for the same reason as above:
-  // `placementTargets` scans the whole home zone and this re-renders on hover.
+  // re-checks the finished setup with. Both are keyed on the selected roster
+  // slot, because placement order is free: the highlight is "where may THIS
+  // asset go", and for an asset already on the board that means "where may it
+  // move to". Memoised for the same reason as above — `placementTargets` scans
+  // the whole home zone and this re-renders on hover.
   const setupTargets = useMemo(
-    () => (view ? [] : placementTargets(map, SANDBOX_PLAYER, placed)),
-    [view, map, placed],
+    () => (view ? [] : placementTargets(map, SANDBOX_PLAYER, placed, selectedSlot)),
+    [view, map, placed, selectedSlot],
   );
   const setupExclusion = useMemo(
-    () => (view ? [] : exclusionHexes(map, SANDBOX_PLAYER, placed)),
-    [view, map, placed],
+    () => (view ? [] : exclusionHexes(map, SANDBOX_PLAYER, placed, selectedSlot)),
+    [view, map, placed, selectedSlot],
   );
+  const setupSlots = useMemo(
+    () => (view ? [] : placementSlots(placed)),
+    [view, placed],
+  );
+  const setupSelectedHex = setupSlots[selectedSlot]?.hex ?? null;
 
   // --- 2. terrain, and the camera's opening framing -------------------------
   // Keyed on the map object, which outlives any one match and which the sim
@@ -271,10 +285,11 @@ export default function GameCanvas() {
     drawPlacement(scene.placement, {
       targets: setupTargets,
       exclusion: setupExclusion,
-      placed,
+      slots: setupSlots,
+      selectedHex: setupSelectedHex,
       hovered,
     });
-  }, [scene, view, setupTargets, setupExclusion, placed, hovered]);
+  }, [scene, view, setupTargets, setupExclusion, setupSlots, setupSelectedHex, hovered]);
 
   return <div ref={hostRef} className="canvas-host" />;
 }

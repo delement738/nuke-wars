@@ -150,22 +150,28 @@
   color: #4a5d75;
 }
 
-/* --- order builder (build-order step 10a) --------------------------------- */
+/* --- unit / roster list ---------------------------------------------------
+ *
+ * Shared by the order builder (step 10a) and the setup roster (step 10b): both
+ * are "here is each of your things, and what you have decided about it", one
+ * screen apart. Scoping these to `.orders` and copying them for `.setup` is how
+ * the two silently drift apart.
+ */
 
-.orders .unit-list {
+.unit-list {
   list-style: none;
   margin: 0 0 10px;
   padding: 0;
 }
 
-.orders .unit {
+.unit {
   border-top: 1px solid #1c2732;
   padding: 2px 0;
 }
 
-.orders .unit:first-child { border-top: none; }
+.unit:first-child { border-top: none; }
 
-.orders .unit-name {
+.unit-name {
   align-items: baseline;
   background: none;
   border: none;
@@ -180,45 +186,15 @@
   width: 100%;
 }
 
-.orders .unit-name:hover { color: #ffffff; }
+.unit-name:hover { color: #ffffff; }
 
-.orders .unit.active .unit-name { color: #ffd54a; font-weight: 600; }
+.unit.active .unit-name { color: #ffd54a; font-weight: 600; }
 
-.orders .decision {
+.decision {
   color: #8496aa;
   font-size: 12px;
   font-weight: 400;
 }
 
-.orders .unit.active .decision { color: #d6e2ee; }
+.unit.active .decision { color: #d6e2ee; }
 
-/* --- setup placement (build-order step 10b) -------------------------------- */
-/*
- * The placed-assets list is a static record, not a menu — the same shape as the
- * order builder's unit list, minus the interactivity, because the two are the
- * same idea one screen apart: "here is what you have decided so far".
- */
-
-.setup .unit-list {
-  list-style: none;
-  margin: 0 0 10px;
-  padding: 0;
-}
-
-.setup .unit { border-top: 1px solid #1c2732; }
-
-.setup .unit:first-child { border-top: none; }
-
-.setup .unit-name {
-  align-items: baseline;
-  color: #d6e2ee;
-  display: flex;
-  gap: 8px;
-  justify-content: space-between;
-  padding: 6px 2px;
-}
-
-.setup .decision {
-  color: #8496aa;
-  font-size: 12px;
-}

@@ -26,7 +26,6 @@ import {
 } from '../sim/hex';
 import { tileAt, type MapData, type Terrain } from '../sim/map';
 import { reconSwath } from '../sim/recon';
-import type { PlayerSetup } from '../sim/setup';
 import type {
   MaskedStaticKind,
   Unit,
@@ -38,6 +37,7 @@ import type {
 // layer is handed them fully assembled — it draws the overlay, it never decides
 // what is in one.
 import type { DraftEntry, OrderDraft, OrderMode } from '../state/orders';
+import type { PlacementSlot } from '../state/placement';
 import { HEX, hexCenter, hexCorners } from './geometry';
 
 // --- palette ----------------------------------------------------------------
@@ -539,12 +539,15 @@ export function drawOrders(
  * there is nothing on this screen that could need one (CLAUDE.md gotcha 30).
  */
 export interface PlacementOverlay {
-  /** Hexes the current step may legally use. */
+  /** Hexes the selected roster slot may legally use. */
   targets: readonly Hex[];
-  /** Hexes inside the viewer's own ≥3 exclusion rings (§12). */
+  /** Hexes the ≥3 exclusion rule denies that slot (§12). */
   exclusion: readonly Hex[];
-  /** What they have placed so far, in placement order. */
-  placed: PlayerSetup;
+  /** The player's roster — the filled slots are what gets drawn. */
+  slots: readonly PlacementSlot[];
+  /** The hex holding the selected slot's asset, if it is on the board — drawn
+   *  lifted, so "the one I am moving" is visible among four identical blue tiles. */
+  selectedHex: Hex | null;
   /** The hex under the cursor — previews the asset before it is committed. */
   hovered: Hex | null;
 }
@@ -553,15 +556,19 @@ export interface PlacementOverlay {
  * The setup screen's board layer (spec §12).
  *
  * Three things, bottom to top: the ground the exclusion rule denies, the ground
- * the current asset may be built on, and the assets already placed. The player's
+ * the selected asset may be built on, and the assets already placed. The player's
  * own decoy is drawn as an X exactly as it is during play — the mask is for the
  * enemy, and a player who cannot tell their own bunker from their own decoy
  * cannot play (§12).
  *
  * The exclusion wash goes underneath the legal-hex highlight rather than being
- * subtracted from it, because the two sets are disjoint anyway: a hex too close
- * to a site is not in `targets` to begin with. Drawing it is what turns "some
- * hexes are missing from the highlight" into a rule the player can see.
+ * subtracted from it, because the two sets are disjoint anyway: a hex the rule
+ * denies is not in `targets` to begin with. Drawing it is what turns "some hexes
+ * are missing from the highlight" into a rule the player can see.
+ *
+ * The selected asset gets a gold ring, because placement order is free: four
+ * identical blue tiles with no marker would leave "which one am I about to move"
+ * answerable only from the panel.
  */
 export function drawPlacement(layer: Container, overlay: PlacementOverlay): void {
   clear(layer);
@@ -589,8 +596,20 @@ export function drawPlacement(layer: Container, overlay: PlacementOverlay): void
     );
   }
 
-  for (const { kind, hex } of overlay.placed) {
+  const selectedKey = overlay.selectedHex ? hexKey(overlay.selectedHex) : null;
+
+  for (const { kind, hex } of overlay.slots) {
+    if (!hex) continue; // an empty roster slot has nothing on the board yet
     const { x, y } = centerOf(hex);
+
+    if (hexKey(hex) === selectedKey) {
+      layer.addChild(
+        new Graphics()
+          .poly(hexCorners(x, y, HEX * 0.82))
+          .stroke({ width: 3, color: COLOR.selected }),
+      );
+    }
+
     layer.addChild(
       new Graphics()
         .poly(hexCorners(x, y, HEX * 0.62))
