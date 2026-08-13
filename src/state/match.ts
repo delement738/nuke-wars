@@ -25,7 +25,7 @@
 // stays a plain testable object — the same reason the engine is dependency-free.
 
 import type { Hex } from '../sim/hex';
-import { generateMap } from '../sim/map';
+import { generateMap, makeRng } from '../sim/map';
 import { resolve } from '../sim/resolve';
 import { startMatch, type PlayerSetup } from '../sim/setup';
 import {
@@ -40,18 +40,24 @@ import {
 } from '../sim/types';
 import { filterEventsForPlayer, filterForPlayer } from '../sim/visibility';
 import { createStore } from 'zustand/vanilla';
+import { cpuOrders, type CpuDifficulty } from './cpu';
 import { sandboxSetup } from './sandbox';
 
 /**
- * The side a human plays in the sandbox; the other is the static dummy (spec §8
- * step 9). Written as constants rather than assumed to be p1 everywhere, so step
- * 10's hotseat handoff replaces two definitions instead of hunting literals.
+ * The side a human plays in the sandbox; the other is the CPU (spec §8 step 9
+ * shipped it as a static dummy that never ordered anything — `src/state/cpu.ts`
+ * replaced that with a real, difficulty-tiered opponent). Written as constants
+ * rather than assumed to be p1 everywhere, so step 10's hotseat handoff
+ * replaces two definitions instead of hunting literals.
  */
 export const SANDBOX_PLAYER: PlayerId = 'p1';
 export const SANDBOX_DUMMY: PlayerId = opponentOf(SANDBOX_PLAYER);
 
 /** Map seed a fresh sandbox match uses when none is given. */
 export const DEFAULT_SEED = 42;
+
+/** Difficulty a fresh sandbox match starts at. */
+export const DEFAULT_DIFFICULTY: CpuDifficulty = 'medium';
 
 /**
  * One line of a player's permanent history (spec §6, §11).
@@ -77,6 +83,8 @@ export interface LogEntry {
 export interface MatchState {
   /** Map seed of the running match — shown in the HUD so a board is repeatable. */
   seed: number;
+  /** How the CPU (`SANDBOX_DUMMY`) plays. A sandbox control, same as `viewer`. */
+  difficulty: CpuDifficulty;
   /** Whose redacted view is on screen. A sandbox control; step 10's handoff owns it. */
   viewer: PlayerId;
   /** The hex the player clicked, or null. Presentation state, not game state. */
@@ -129,6 +137,7 @@ function viewsOf(state: GameState): Record<PlayerId, VisibleGameState> {
  */
 export const matchStore = createStore<MatchState>()(() => ({
   seed: DEFAULT_SEED,
+  difficulty: DEFAULT_DIFFICULTY,
   viewer: SANDBOX_PLAYER,
   selected: null,
   views: viewsOf(truth),
@@ -188,17 +197,28 @@ export function newMatch(seed: number = DEFAULT_SEED): void {
 }
 
 /**
- * Resolve one round: the human's orders against the dummy's silence (spec §8
- * step 9).
+ * Resolve one round: the human's orders against the CPU's (spec §8 step 9's
+ * seam; step 9 shipped the CPU side as `[]`, unconditionally — `src/state/cpu.ts`
+ * fills it in).
  *
- * `orders` defaults to none because step 9 has no order builder — that is step
- * 10 — and a launcher with no order holds while a drone with no order hovers
- * (§3), which is a perfectly legal round. The parameter exists so step 10 plugs
- * a real order list into this seam rather than rewriting the round loop.
+ * `orders` defaults to none because there is still no order builder for the
+ * human side — that is step 10 — and a launcher with no order holds while a
+ * drone with no order hovers (§3), which is a perfectly legal round. The
+ * parameter exists so step 10 plugs a real order list into this seam rather
+ * than rewriting the round loop.
+ *
+ * The CPU is handed `filterForPlayer(truth, SANDBOX_DUMMY)`, never `truth` —
+ * the exact same redacted view a human in that seat would get — so playing
+ * against it is not playing against an opponent who can see through the fog
+ * (`src/state/cpu.ts`'s whole design rests on this). Its `rng` is derived from
+ * the match seed and the round number so a match at a fixed seed and
+ * difficulty always plays out identically, matching the rest of this
+ * codebase's determinism discipline.
  *
  * One call covers both kinds of round: `resolve` reads `state.phase` and runs a
  * normal round or the dead-hand volley accordingly (§5), so this function does
- * not know the difference and must not learn it.
+ * not know the difference and must not learn it — nor does the CPU call above,
+ * since `cpuOrders` reads `view.phase` the same way.
  *
  * A finished match is a no-op rather than a throw. The engine throws on a
  * GAME_OVER state and is right to — the phase is its own to set — but a button
@@ -212,8 +232,16 @@ export function resolveRound(orders: readonly Order[] = []): void {
   // was just played.
   const round = truth.round;
 
-  const submitted: Record<PlayerId, readonly Order[]> = { p1: [], p2: [] };
+  const { seed, difficulty } = matchStore.getState();
+  const cpuView = filterForPlayer(truth, SANDBOX_DUMMY);
+  const cpuRng = makeRng(seed * 100000 + round);
+
+  const submitted: Record<PlayerId, readonly Order[]> = {
+    p1: [],
+    p2: [],
+  };
   submitted[SANDBOX_PLAYER] = orders;
+  submitted[SANDBOX_DUMMY] = cpuOrders(cpuView, difficulty, SANDBOX_DUMMY, cpuRng);
 
   const result = resolve(
     truth,
@@ -250,6 +278,11 @@ export function resign(player: PlayerId): void {
 /** Switch which player's redacted view is rendered (a sandbox control). */
 export function setViewer(viewer: PlayerId): void {
   matchStore.setState({ viewer, selected: null });
+}
+
+/** Change how the CPU plays, effective from the next `resolveRound()` call. */
+export function setDifficulty(difficulty: CpuDifficulty): void {
+  matchStore.setState({ difficulty });
 }
 
 /** Select a hex, or clear the selection with null. */

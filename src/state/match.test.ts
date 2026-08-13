@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { axialToOffset, hexKey, offsetToAxial } from '../sim/hex';
 import { PLAYERS, type Order, type PlayerId, type VisibleEvent } from '../sim/types';
 import {
+  DEFAULT_DIFFICULTY,
   SANDBOX_PLAYER,
   logFor,
   matchStore,
@@ -9,6 +10,7 @@ import {
   resign,
   resolveRound,
   selectHex,
+  setDifficulty,
   setViewer,
   viewFor,
 } from './match';
@@ -176,15 +178,30 @@ describe('resolveRound', () => {
     ).toEqual(launcher.position);
   });
 
-  it('leaves the dummy opponent silent', () => {
-    // The dummy issues no orders, so nothing of p2's ever moves or fires. p1's
-    // log should therefore never carry an enemy launch.
+  it('the CPU (SANDBOX_DUMMY) actually plays, unlike the old static dummy', () => {
+    // src/state/cpu.ts replaced the always-[] dummy (spec §8 step 9) with a
+    // real opponent. At the default difficulty ('medium') and no intel yet on
+    // round 1, every living launcher and the drone have nothing to fire at, so
+    // they advance — p2's board should look different after a round resolves.
+    // Difficulty-specific behaviour itself is covered exhaustively in
+    // cpu.test.ts; this only pins that resolveRound() is actually wired to it.
     const before = viewFor('p2').units.map((unit) => hexKey(unit.position));
+
     resolveRound();
     resolveRound();
 
-    expect(viewFor('p2').units.map((unit) => hexKey(unit.position))).toEqual(before);
-    expect(eventsOfKind('p1', 'LAUNCH_DETECTED')).toHaveLength(0);
+    expect(viewFor('p2').units.map((unit) => hexKey(unit.position))).not.toEqual(before);
+  });
+
+  it('is deterministic — the CPU plays identically across two fresh matches at the same seed', () => {
+    resolveRound();
+    const first = viewFor('p2').units.map((unit) => hexKey(unit.position));
+
+    newMatch(matchStore.getState().seed);
+    resolveRound();
+    const second = viewFor('p2').units.map((unit) => hexKey(unit.position));
+
+    expect(second).toEqual(first);
   });
 });
 
@@ -229,5 +246,19 @@ describe('view controls', () => {
     selectHex({ q: 1, r: 1 });
     setViewer('p2');
     expect(matchStore.getState().selected).toBeNull();
+  });
+});
+
+describe('setDifficulty', () => {
+  it('defaults to DEFAULT_DIFFICULTY and can be changed', () => {
+    expect(matchStore.getState().difficulty).toBe(DEFAULT_DIFFICULTY);
+    setDifficulty('hard');
+    expect(matchStore.getState().difficulty).toBe('hard');
+  });
+
+  it('survives a new match on a different map (a sandbox setting, not per-match state)', () => {
+    setDifficulty('easy');
+    newMatch(999);
+    expect(matchStore.getState().difficulty).toBe('easy');
   });
 });
