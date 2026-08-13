@@ -26,6 +26,7 @@ import {
 } from '../sim/hex';
 import { tileAt, type MapData, type Terrain } from '../sim/map';
 import { reconSwath } from '../sim/recon';
+import type { PlayerSetup } from '../sim/setup';
 import type {
   MaskedStaticKind,
   Unit,
@@ -64,6 +65,13 @@ const COLOR = {
   launch: 0xffa54a,
   fly: 0xb27dff,
   hold: 0x8496aa,
+
+  // Setup-screen colours (build-order step 10b). Gold for ground you may build
+  // on, and the enemy red for ground your own exclusion rule denies you —
+  // deliberately the same red as detected enemies, because in both cases it
+  // means "not yours to use".
+  place: 0xf2c14e,
+  excluded: 0xff5f4a,
 } as const;
 
 // Keyed by Terrain rather than by string, so removing or adding a terrain in the
@@ -105,6 +113,21 @@ const INTEL_STYLE = new TextStyle({
 /** Empty a layer, destroying what was in it. */
 function clear(layer: Container): void {
   for (const child of layer.removeChildren()) child.destroy({ children: true });
+}
+
+/**
+ * Empty a layer from outside this module (build-order step 10b).
+ *
+ * Every draw function below rebuilds its layer from scratch, so a layer is
+ * normally cleared by drawing it again — but a layer whose *data has gone away*
+ * has nothing to redraw it with. That happens twice now: the match layers when
+ * a new match sends the client back to the setup screen, and the setup layer
+ * when the match starts. Without this they would keep painting the last board
+ * they were given, which is the exact "the map says something the state doesn't"
+ * failure the rebuild-from-scratch policy exists to prevent.
+ */
+export function clearLayer(layer: Container): void {
+  clear(layer);
 }
 
 function centerOf(hex: Hex): { x: number; y: number } {
@@ -501,6 +524,80 @@ export function drawOrders(
   for (const entry of Object.values(draft)) {
     const owner = view.units.find((u) => u.id === entry.unitId);
     if (owner) drawMarker(layer, view, owner, entry);
+  }
+}
+
+// --- setup placement (build-order step 10b) ----------------------------------
+
+/**
+ * Everything the setup layer draws, assembled by the caller.
+ *
+ * As with `OrderOverlay`, the render layer decides nothing: which hexes are
+ * legal and which the exclusion rule denies are both answered by
+ * `src/state/placement.ts` asking the real §12 validator, and this file is handed
+ * the results. There is no `player` and no opponent setup in this type, because
+ * there is nothing on this screen that could need one (CLAUDE.md gotcha 30).
+ */
+export interface PlacementOverlay {
+  /** Hexes the current step may legally use. */
+  targets: readonly Hex[];
+  /** Hexes inside the viewer's own ≥3 exclusion rings (§12). */
+  exclusion: readonly Hex[];
+  /** What they have placed so far, in placement order. */
+  placed: PlayerSetup;
+  /** The hex under the cursor — previews the asset before it is committed. */
+  hovered: Hex | null;
+}
+
+/**
+ * The setup screen's board layer (spec §12).
+ *
+ * Three things, bottom to top: the ground the exclusion rule denies, the ground
+ * the current asset may be built on, and the assets already placed. The player's
+ * own decoy is drawn as an X exactly as it is during play — the mask is for the
+ * enemy, and a player who cannot tell their own bunker from their own decoy
+ * cannot play (§12).
+ *
+ * The exclusion wash goes underneath the legal-hex highlight rather than being
+ * subtracted from it, because the two sets are disjoint anyway: a hex too close
+ * to a site is not in `targets` to begin with. Drawing it is what turns "some
+ * hexes are missing from the highlight" into a rule the player can see.
+ */
+export function drawPlacement(layer: Container, overlay: PlacementOverlay): void {
+  clear(layer);
+
+  for (const hex of overlay.exclusion) {
+    const { x, y } = centerOf(hex);
+    layer.addChild(
+      new Graphics()
+        .poly(hexCorners(x, y))
+        .fill({ color: COLOR.excluded, alpha: 0.14 }),
+    );
+  }
+
+  const hoveredKey = overlay.hovered ? hexKey(overlay.hovered) : null;
+
+  for (const hex of overlay.targets) {
+    const { x, y } = centerOf(hex);
+    const isHovered = hexKey(hex) === hoveredKey;
+
+    layer.addChild(
+      new Graphics()
+        .poly(hexCorners(x, y))
+        .fill({ color: COLOR.place, alpha: isHovered ? 0.42 : 0.16 })
+        .stroke({ width: isHovered ? 2.5 : 1, color: COLOR.place, alpha: isHovered ? 1 : 0.4 }),
+    );
+  }
+
+  for (const { kind, hex } of overlay.placed) {
+    const { x, y } = centerOf(hex);
+    layer.addChild(
+      new Graphics()
+        .poly(hexCorners(x, y, HEX * 0.62))
+        .fill(COLOR.own)
+        .stroke({ width: 2, color: COLOR.outline }),
+      glyphAt(GLYPH[kind], x, y, GLYPH_STYLE),
+    );
   }
 }
 

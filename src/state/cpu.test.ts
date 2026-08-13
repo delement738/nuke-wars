@@ -12,7 +12,7 @@ import { generateMap, makeRng, type MapData, type TileData } from '../sim/map';
 import { validateLaunch as validateLaunchOrder } from '../sim/missiles';
 import { reachableHexes, validateMove } from '../sim/movement';
 import { reconSwath, validateFly } from '../sim/recon';
-import { startMatch } from '../sim/setup';
+import { startMatch, type PlayerSetup } from '../sim/setup';
 import {
   opponentOf,
   PLAYERS,
@@ -106,13 +106,24 @@ function staticReveal(hex: Hex): VisibleStaticReveal {
   return { hex, kind: 'bunker', round: 1 };
 }
 
+/**
+ * Two legal secret setups on `map`, drawn from one seeded stream.
+ *
+ * One stream consumed in turn, never two streams from the same seed — that
+ * would make each side's setup a deterministic function of the other's (see
+ * `sandboxSetup`). Seeded, so every test below stays reproducible.
+ */
+function fixtureSetups(map: MapData, seed: number): Record<PlayerId, PlayerSetup> {
+  const rng = makeRng(seed);
+  return { p1: sandboxSetup(map, 'p1', rng), p2: sandboxSetup(map, 'p2', rng) };
+}
+
 /** A real, freshly-started match's redacted view for `player` — the broad
  * legality/determinism checks run against this rather than a hand fixture, so
  * they exercise the real setup/spawn geometry too. */
 function realView(seed: number, player: PlayerId): { view: VisibleGameState; map: MapData } {
   const map = generateMap(undefined, undefined, seed);
-  const setups = { p1: sandboxSetup(map, 'p1'), p2: sandboxSetup(map, 'p2') };
-  const state = startMatch(map, setups);
+  const state = startMatch(map, fixtureSetups(map, seed));
   return { view: filterForPlayer(state, player), map };
 }
 
@@ -145,8 +156,7 @@ describe('cpuOrders — invariants that hold for every difficulty', () => {
       for (const player of PLAYERS) {
         for (const difficulty of DIFFICULTIES) {
           const map = generateMap(undefined, undefined, seed);
-          const setups = { p1: sandboxSetup(map, 'p1'), p2: sandboxSetup(map, 'p2') };
-          const truth = startMatch(map, setups);
+          const truth = startMatch(map, fixtureSetups(map, seed));
           const view = filterForPlayer(truth, player);
 
           for (const order of cpuOrders(view, difficulty, player, makeRng(seed))) {

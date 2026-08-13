@@ -18,13 +18,44 @@
 import { useStore } from 'zustand';
 import type { CpuDifficulty } from './cpu';
 import type { Hex } from '../sim/hex';
+import type { MapData } from '../sim/map';
+import type { PlayerSetup } from '../sim/setup';
 import type { PlayerId, UnitId, VisibleGameState } from '../sim/types';
 import { matchStore, type LogEntry } from './match';
 import type { OrderDraft, OrderMode } from './orders';
 
-/** The board as the current viewer is allowed to see it (spec §6 layer 2). */
-export function useView(): VisibleGameState {
-  return useStore(matchStore, (state) => state.views[state.viewer]);
+/**
+ * The board as the current viewer is allowed to see it (spec §6 layer 2) — or
+ * null while the setup screen is still collecting placements, because a
+ * `GameState` only exists on the far side of `startMatch` (§12).
+ */
+export function useView(): VisibleGameState | null {
+  return useStore(matchStore, (state) => state.views?.[state.viewer] ?? null);
+}
+
+/**
+ * Whether a match is running (build-order step 10b) — false on the setup screen.
+ *
+ * Derived from `views` rather than stored, so there is exactly one fact about
+ * which screen the client is on. It returns a boolean, which
+ * `useSyncExternalStore` compares by value, so deriving it costs no extra
+ * renders — unlike a selector that built a fresh object.
+ */
+export function useMatchStarted(): boolean {
+  return useStore(matchStore, (state) => state.views !== null);
+}
+
+/**
+ * The board itself. Available before a match exists, because terrain is public
+ * (spec §11) and the setup screen has to draw it.
+ */
+export function useMap(): MapData {
+  return useStore(matchStore, (state) => state.map);
+}
+
+/** The human's own placements so far, in placement order (spec §12). */
+export function usePlaced(): PlayerSetup {
+  return useStore(matchStore, (state) => state.placed);
 }
 
 /** The current viewer's permanent event history (spec §11). */

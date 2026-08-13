@@ -111,6 +111,29 @@ function countOf(placed: PlayerSetup, kind: PlaceableKind): number {
 }
 
 /**
+ * The kind that must be placed next, or null when the roster is complete
+ * (spec §12) — the setup UI's "you are placing your decoy" (build-order step
+ * 10b).
+ *
+ * It lives here rather than in the UI because it is the same fact
+ * `validatePlacement`'s OUT_OF_ORDER check is made of: `PLACEMENT_ORDER` plus
+ * `RULES.placementCounts`, and nothing else. A client that worked out the
+ * current step for itself would be a second implementation of the placement
+ * order, and the first thing it would drift into is offering a highlight for a
+ * kind the validator then rejects.
+ *
+ * Returns the first *unfilled* slot, so it answers "what is still owed" even for
+ * a setup assembled out of order — a partial setup holding only a decoy reports
+ * `bunker`, which is exactly the placement `validatePlacement` will accept next.
+ */
+export function nextPlacementKind(placed: PlayerSetup): PlaceableKind | null {
+  for (const kind of PLACEMENT_ORDER) {
+    if (countOf(placed, kind) < RULES.placementCounts[kind]) return kind;
+  }
+  return null;
+}
+
+/**
  * Whether `playerId` may place `kind` on `hex`, given what they have already
  * placed (spec §12).
  *

@@ -1,26 +1,37 @@
 // CLIENT STATE — not simulation code, and deliberately not in `src/sim/`.
 //
-// The sandbox opponent (build-order step 9). Step 9's goal is "single-player
-// sandbox vs a static dummy opponent" (spec §8), and a match cannot start
-// without two complete secret setups — so this file invents one for each side
-// until step 10 collects them from real players.
+// The sandbox opponent's secret setup (build-order step 9). A match cannot start
+// without two complete setups (§12), so this file invents one — for the CPU
+// always, and for the human when they press Auto-place instead of placing their
+// four assets by hand (step 10b).
 //
 // It is a *fixture*, not an AI and not a rule. Everything here is a placement
-// choice a human will make in step 10's setup UI, which is exactly why it lives
+// choice a human makes on the setup screen, which is exactly why it lives
 // outside `src/sim/`: the engine must not learn to place assets for anybody.
 //
 // Two properties are worth stating because tests depend on them:
 //
-//   1. **It is deterministic.** The same map always produces the same setup, so
-//      a sandbox match is as reproducible as the engine under it (spec §6). No
-//      `Math.random()` — the client is not held to the sim's determinism rule,
-//      but a sandbox you cannot re-run twice is a bad debugging tool.
+//   1. **It is reproducible.** The randomness comes from a caller-supplied
+//      seeded `rng`, never `Math.random()`, so a sandbox match at a given seed
+//      plays out identically every time — the client is not held to the sim's
+//      determinism rule (§6), but a sandbox you cannot re-run twice is a bad
+//      debugging tool.
 //   2. **It only ever offers hexes the engine already called legal.** Every
 //      placement comes out of `legalPlacementHexes`, the same §12 validator the
-//      setup UI will highlight with, so this file cannot drift from the rules —
-//      it has no rule knowledge of its own to drift with.
+//      setup UI highlights with, so this file cannot drift from the rules — it
+//      has no rule knowledge of its own to drift with.
+//
+// **Why the placement is random rather than a fixed spot (changed in step 10b).**
+// It used to take each asset at a fixed fraction of its legal-hex list, which is
+// reproducible but puts the CPU's bunker in the same relative place on every
+// board. That was harmless while the human had no way to hunt it and corrosive
+// the moment they did: you learn where to point the drone once and the bunker
+// hunt — half the game (§12) — stops being a hunt. Seeded randomness keeps the
+// reproducibility and drops the tell. `scripts/soak.ts` had already made this
+// exact argument and carried its own copy of the walk to avoid the fixture; that
+// copy is now this function, imported.
 
-import { RULES, type PlaceableKind } from '../sim/defs';
+import { RULES } from '../sim/defs';
 import type { MapData } from '../sim/map';
 import {
   PLACEMENT_ORDER,
@@ -31,41 +42,37 @@ import {
 import type { PlayerId } from '../sim/types';
 
 /**
- * Where in each kind's legal-hex list to take a placement, as a fraction of the
- * list (0 = first, 1 = last). One number per asset, in placement order.
- *
- * `legalPlacementHexes` returns the home zone in column-major order, so these
- * fractions spread the four assets across the width of the zone: the bunker
- * near the middle, the decoy off to one side, and the two bases out at either
- * end. That is a plausible-looking board rather than a good one — the dummy is
- * something to look at and shoot, not an opponent.
- *
- * `sandbox.test.ts` pins the length of each row to `RULES.placementCounts`, so
- * adding a placeable asset to the roster is a compile-clean but test-failing
- * change here rather than a silent index-out-of-bounds at runtime.
- */
-export const SANDBOX_PICKS = {
-  bunker: [0.5],
-  decoy: [0.2],
-  interceptor: [0.15, 0.85],
-} as const satisfies Record<PlaceableKind, readonly number[]>;
-
-/**
- * A complete, legal secret setup for `player` on `map` (spec §12).
+ * A complete, legal secret setup for `player` on `map`, drawn from `rng`
+ * (spec §12).
  *
  * Walks `PLACEMENT_ORDER` and asks the engine for the legal hexes at each step,
- * passing everything placed so far — which is precisely the interactive loop the
- * setup UI will run in step 10. The exclusion radius between a base and the two
- * sites (§12) therefore needs no code here: by the time a base is picked, the
- * bunker and decoy are already in `placed`, so the illegal hexes are simply not
- * in the list to pick from.
+ * passing everything placed so far — precisely the interactive loop the setup UI
+ * runs. The exclusion radius between a base and the two sites (§12) therefore
+ * needs no code here: by the time a base is picked, the bunker and decoy are
+ * already in `placed`, so the illegal hexes are simply not in the list.
+ *
+ * **Never draw the two players' setups from two identically-seeded streams.**
+ * Feeding both sides `makeRng(seed)` hands them the same sequence, and each side's
+ * setup then becomes a deterministic function of the other's: both take the same
+ * fractions of their own legal lists, and because the two home zones are 180°
+ * rotations of each other (§7) those lists run in opposite orders, so one
+ * player's index `k` pins the other to their index `n-1-k`. In a
+ * hidden-information game that is a player who can derive the enemy's board from
+ * their own. Same trap as CLAUDE.md gotcha 41. Either seed the two streams
+ * differently (what `match.ts` does, so the CPU's board does not depend on
+ * whether the human auto-placed) or consume one stream sequentially (what
+ * `scripts/soak.ts` does) — what must not happen is two streams from one seed.
  *
  * Throws if a step has no legal hex. That cannot happen on a generated 16-wide
  * home zone, so reaching it means either the map generator or `RULES` changed
  * under this file — and a sandbox that silently placed three assets instead of
  * four would fail later, inside `startMatch`, with a much worse error.
  */
-export function sandboxSetup(map: MapData, player: PlayerId): PlayerSetup {
+export function sandboxSetup(
+  map: MapData,
+  player: PlayerId,
+  rng: () => number,
+): PlayerSetup {
   const placed: Placement[] = [];
 
   for (const kind of PLACEMENT_ORDER) {
@@ -77,8 +84,7 @@ export function sandboxSetup(map: MapData, player: PlayerId): PlayerSetup {
         );
       }
 
-      const fraction = SANDBOX_PICKS[kind][i];
-      placed.push({ kind, hex: legal[Math.round((legal.length - 1) * fraction)] });
+      placed.push({ kind, hex: legal[Math.floor(rng() * legal.length)] });
     }
   }
 

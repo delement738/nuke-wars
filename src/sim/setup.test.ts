@@ -11,6 +11,7 @@ import { generateMap, tileAt, type MapData, type TileData } from './map';
 import {
   PLACEMENT_ORDER,
   legalPlacementHexes,
+  nextPlacementKind,
   startMatch,
   validatePlacement,
   validateSetup,
@@ -443,5 +444,78 @@ describe('startMatch()', () => {
     });
 
     expect(state.units).toHaveLength(16);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nextPlacementKind (build-order step 10b)
+// ---------------------------------------------------------------------------
+
+describe('nextPlacementKind', () => {
+  const map = makeMap();
+
+  // Four widely-spaced hexes in P1's home zone, clear of every spawn row and far
+  // enough apart that the ≥3 exclusion rule never fires — this describe is about
+  // the *order* of placement, so nothing else should be able to reject a hex.
+  const SPOTS = [at(0, 14), at(4, 14), at(9, 14), at(14, 14)];
+
+  it('walks the roster in PLACEMENT_ORDER and then reports done', () => {
+    const steps: (Placement['kind'] | null)[] = [];
+    const placed: Placement[] = [];
+
+    // Four placements, so five answers: one before each and one after the last.
+    for (let i = 0; i <= SPOTS.length; i++) {
+      const kind = nextPlacementKind(placed);
+      steps.push(kind);
+      if (kind) placed.push(place(kind, SPOTS[i]));
+    }
+
+    expect(steps).toEqual(['bunker', 'decoy', 'interceptor', 'interceptor', null]);
+  });
+
+  it('agrees with validatePlacement about what may be placed next', () => {
+    // The property that matters: the kind this returns is the one that does NOT
+    // fail OUT_OF_ORDER. If the two ever disagreed, the setup UI would highlight
+    // hexes for a kind the validator then refuses — on the one screen where a
+    // refusal has no good explanation, because no hidden information is involved.
+    const placed: Placement[] = [];
+
+    for (const spot of SPOTS) {
+      const kind = nextPlacementKind(placed);
+      expect(kind).not.toBeNull();
+
+      for (const other of PLACEMENT_ORDER) {
+        const check = validatePlacement(map, 'p1', other, spot, placed);
+        // Every other kind is either already full or not yet its turn.
+        expect(check.legal).toBe(other === kind);
+      }
+
+      placed.push(place(kind!, spot));
+    }
+
+    expect(nextPlacementKind(placed)).toBeNull();
+  });
+
+  it('reports what is still owed, even for a setup assembled out of order', () => {
+    // Not something the UI can produce — but a saved game or a V1.5 client
+    // message could, and "the first unfilled slot" is the answer that keeps
+    // validatePlacement's OUT_OF_ORDER rule satisfiable from there.
+    expect(nextPlacementKind([place('decoy', SPOTS[1])])).toBe('bunker');
+  });
+
+  it('reaches every kind in RULES.placementCounts, the right number of times', () => {
+    // A placeable asset missing from PLACEMENT_ORDER would never be reached, and
+    // a setup could then never complete. Walking to exhaustion is what catches it.
+    const placed: Placement[] = [];
+    let kind = nextPlacementKind(placed);
+
+    while (kind) {
+      placed.push(place(kind, SPOTS[placed.length]));
+      kind = nextPlacementKind(placed);
+    }
+
+    for (const [k, count] of Object.entries(RULES.placementCounts)) {
+      expect(placed.filter((p) => p.kind === k)).toHaveLength(count);
+    }
   });
 });

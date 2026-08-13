@@ -1,10 +1,17 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { axialToOffset, hexKey, offsetToAxial } from '../sim/hex';
-import { PLAYERS, type Order, type PlayerId, type VisibleEvent } from '../sim/types';
+import {
+  PLAYERS,
+  type Order,
+  type PlayerId,
+  type VisibleEvent,
+  type VisibleGameState,
+} from '../sim/types';
 import {
   DEFAULT_DIFFICULTY,
   SANDBOX_DUMMY,
   SANDBOX_PLAYER,
+  autoPlace,
   clearDraft,
   clearOrder,
   holdUnit,
@@ -20,7 +27,7 @@ import {
   setOrder,
   setOrderMode,
   setViewer,
-  viewFor,
+  viewFor as viewOrNull,
 } from './match';
 import {
   flyTargets,
@@ -32,9 +39,29 @@ import {
 
 // Every test starts from a fresh deterministic match. The store is a singleton
 // (a client has exactly one match), so this is the reset.
+//
+// `newMatch` alone now leaves the client on the setup screen (build-order step
+// 10b) — a match does not exist until someone has placed four assets. These
+// tests are about playing, so they take the sandbox fixture's setup and start.
+// `setup-placement.test.ts` covers the screen this skips.
 beforeEach(() => {
   newMatch();
+  autoPlace();
 });
+
+/**
+ * `viewFor`, narrowed.
+ *
+ * The store's `viewFor` is nullable because the setup screen legitimately has no
+ * board. Every test in this file runs on a started match, so a null view here is
+ * a broken fixture rather than a case to handle — throwing says so at the point
+ * of failure instead of leaving `!` scattered over a hundred assertions.
+ */
+function viewFor(player: PlayerId): VisibleGameState {
+  const view = viewOrNull(player);
+  if (!view) throw new Error(`viewFor(${player}): no match has started`);
+  return view;
+}
 
 /** Every event of one kind in a player's log, narrowed. */
 function eventsOfKind<K extends VisibleEvent['type']>(
@@ -64,7 +91,10 @@ describe('newMatch', () => {
     selectHex({ q: 0, r: 0 });
     setViewer('p2');
 
+    // `newMatch` alone now lands on the setup screen (step 10b), so getting back
+    // to a playable board is the same two calls the fixture makes.
     newMatch(7);
+    autoPlace();
 
     expect(viewFor('p1').round).toBe(1);
     expect(logFor('p1')).toHaveLength(0);
@@ -216,6 +246,7 @@ describe('resolveRound', () => {
     const first = viewFor('p2').units.map((unit) => hexKey(unit.position));
 
     newMatch(matchStore.getState().seed);
+    autoPlace();
     resolveRound();
     const second = viewFor('p2').units.map((unit) => hexKey(unit.position));
 
@@ -395,6 +426,7 @@ describe('the order draft', () => {
     newMatch();
     expect(matchStore.getState().draft).toEqual({});
 
+    autoPlace();
     holdUnit(launcher().id);
     resign(SANDBOX_PLAYER);
     expect(matchStore.getState().draft).toEqual({});

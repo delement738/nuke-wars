@@ -33,7 +33,9 @@ export default function EventLog() {
               <h3>Round {round}</h3>
               <ul>
                 {entries.map((entry, i) => (
-                  <li key={i}>{describeEvent(entry.event, viewer, view.units)}</li>
+                  <li key={i}>
+                    {describeEvent(entry.event, viewer, view?.units ?? [])}
+                  </li>
                 ))}
               </ul>
             </li>

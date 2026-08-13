@@ -71,6 +71,9 @@
 .muted { color: #8496aa; }
 .own { color: #5aa9ff; }
 .enemy { color: #ff8371; }
+/* Matches COLOR.place in src/render/draw.ts — a legend line that names a colour
+ * has to be drawn in it, or it is just a sentence. */
+.buildable { color: #f2c14e; }
 .alert { color: #ffd54a; font-weight: 600; }
 
 .outcome {
@@ -188,3 +191,34 @@
 }
 
 .orders .unit.active .decision { color: #d6e2ee; }
+
+/* --- setup placement (build-order step 10b) -------------------------------- */
+/*
+ * The placed-assets list is a static record, not a menu — the same shape as the
+ * order builder's unit list, minus the interactivity, because the two are the
+ * same idea one screen apart: "here is what you have decided so far".
+ */
+
+.setup .unit-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+}
+
+.setup .unit { border-top: 1px solid #1c2732; }
+
+.setup .unit:first-child { border-top: none; }
+
+.setup .unit-name {
+  align-items: baseline;
+  color: #d6e2ee;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 6px 2px;
+}
+
+.setup .decision {
+  color: #8496aa;
+  font-size: 12px;
+}
