@@ -31,19 +31,27 @@
 //     chance of a random legal move, blind shot, or flight, otherwise nothing.
 //   - MEDIUM advances toward the enemy's home zone and fires at whichever
 //     known target — contact or site — is nearest, in range, kind-blind.
-//   - HARD does what MEDIUM does, plus two concrete refinements: it prefers a
-//     confirmed launcher contact over a bunker/decoy site when both are in
-//     range (a contact is a certain kill this round, spec §11 — a launcher
-//     that fired cannot also have moved), and it prefers a reachable hex
-//     outside a known enemy launcher's range over one further toward the
-//     front but exposed.
+//   - HARD plays for the decapitation instead, with three concrete refinements:
+//     once recon has found a bunker/decoy site it drives its launchers into
+//     range of *that hex* rather than pushing at the front generically; it then
+//     shoots the site in preference to a launcher contact that is also in range
+//     (see `knownTargets` — this ordering is the opposite of the obvious one and
+//     the comment there explains why, with the measurement that settled it); and
+//     it prefers a reachable hex outside a known enemy launcher's range over one
+//     further forward but exposed.
+//
+// MEDIUM and HARD share one recon behaviour, because searching the enemy home
+// zone is not a difficulty setting — a drone that does not search is simply
+// broken. Both fly the serpentine tour in `sweepLanes`.
 
 import { RULES, UNIT_DEFS } from '../sim/defs';
 import {
   axialToOffset,
+  compareHex,
   distance,
   hexKey,
   hexesInRange,
+  offsetToAxial,
   type Hex,
 } from '../sim/hex';
 import { tileAt } from '../sim/map';
@@ -99,14 +107,107 @@ function knownEnemyHexes(view: VisibleGameState): Set<string> {
   return known;
 }
 
-/** The row this player advances toward: the near edge of the opponent's home
- * zone (spec §7) — as far as a launcher ever needs to go to threaten it. P1
- * marches north out of rows 13–18 toward P2's zone (0–5), so its target is
- * that zone's high-numbered edge; P2 mirrors it toward P1's low-numbered
- * edge. */
+/** The row this player's LAUNCHERS advance toward: the near edge of the
+ * opponent's home zone (spec §7) — as far as a launcher ever needs to go to
+ * threaten it. P1 marches north out of rows 13–18 toward P2's zone (0–5), so
+ * its target is that zone's high-numbered edge; P2 mirrors it toward P1's
+ * low-numbered edge.
+ *
+ * **This is a launcher's goal, never the drone's.** The drone's job is to
+ * search the whole zone, and stopping at its near edge would leave the far
+ * five-sixths — and the bunker in it — unphotographed for the entire match.
+ * See `sweepLanes`. */
 function advanceRow(player: PlayerId): number {
   const opponentZone = RULES.homeZoneRows[opponentOf(player)];
   return player === 'p1' ? opponentZone.max : opponentZone.min;
+}
+
+// ---------------------------------------------------------------------------
+// The recon sweep (medium & hard)
+// ---------------------------------------------------------------------------
+
+/**
+ * A serpentine tour of waypoints that, walked in order, photographs the whole
+ * of the opponent's home zone (spec §7, §11).
+ *
+ * Everything here is derived from `RULES` and the map width rather than written
+ * down, so retuning a home zone, the swath radius or the drone's range moves the
+ * lanes with it instead of silently leaving gaps:
+ *
+ *   - **Pass rows** are spaced `2 * reconSwathRadius + 1` apart, which is the
+ *     width of the corridor one pass photographs, so consecutive passes cover
+ *     adjacent strips with no seam between them. A 6-row zone at radius 1 needs
+ *     exactly two passes.
+ *   - **Lane columns** are spaced no wider than one flight, so every hop between
+ *     consecutive waypoints completes in a single round. (Holding the row and
+ *     moving N columns is exactly N hexes on this grid, so the drone's range is
+ *     directly a column budget.)
+ *   - **The order serpentines** — every other pass runs right-to-left — so each
+ *     pass ends beside where the next one starts and no round is spent flying
+ *     back across ground already photographed.
+ *
+ * The tour starts at the edge of the zone the drone arrives from, which is the
+ * only place the player's own home zone is consulted.
+ */
+export function sweepLanes(player: PlayerId, width: number): Hex[] {
+  const zone = RULES.homeZoneRows[opponentOf(player)];
+  const own = RULES.homeZoneRows[player];
+  const radius = RULES.reconSwathRadius;
+
+  const band = 2 * radius + 1;
+  const passes = Math.max(1, Math.ceil((zone.max - zone.min + 1) / band));
+  const rows: number[] = [];
+  for (let i = 0; i < passes; i++) {
+    // Clamped so the final pass hugs the far edge rather than overshooting it
+    // when the zone height is not a whole number of bands.
+    rows.push(Math.min(zone.min + radius + i * band, zone.max - radius));
+  }
+  // Sweep from the near edge inward. Derived from the zones rather than from
+  // `player === 'p1'` so it stays correct if the board is ever re-laid.
+  if (own.min > zone.max) rows.reverse();
+
+  // Lanes run edge to edge rather than inset by the swath radius. Insetting
+  // looks right and is not: the swath spreads `radius` COLUMNS sideways, but on
+  // staggered odd-q columns that spread is a diagonal, so a lane at column 1
+  // reaches (0, row) and (0, row+1) while leaving (0, row-1) unphotographed.
+  // Flying the edge itself costs nothing and removes the whole question.
+  const steps = Math.max(1, Math.ceil((width - 1) / UNIT_DEFS.drone.movement));
+  const cols: number[] = [];
+  for (let i = 0; i <= steps; i++) {
+    cols.push(Math.round(((width - 1) * i) / steps));
+  }
+
+  const lanes: Hex[] = [];
+  rows.forEach((row, pass) => {
+    const ordered = pass % 2 === 0 ? cols : [...cols].reverse();
+    for (const col of ordered) lanes.push(offsetToAxial({ col, row }));
+  });
+  return lanes;
+}
+
+/**
+ * The waypoint a drone at `from` should head for next — the whole of the sweep's
+ * "memory", derived from position alone.
+ *
+ * `cpuOrders` is stateless by design (see the header), so the drone cannot
+ * remember which lanes it has already flown. It does not need to: the tour is a
+ * fixed cycle, so "where am I on it" is answered by *which waypoint I am nearest
+ * to*, and the next one is the answer. That is self-correcting — a drone blown
+ * off course, or one that respawned mid-tour, rejoins at whatever point of the
+ * cycle it actually finds itself — and it re-sweeps forever once round, which is
+ * what catches launchers that have relocated since the last pass.
+ *
+ * The range check is the inbound case. A drone still crossing neutral ground is
+ * nearest to some lane it has not reached yet, and sending it to the one *after*
+ * that would cut the corner and skip a lane on every trip out.
+ */
+export function nextSweepWaypoint(from: Hex, lanes: readonly Hex[]): Hex {
+  let nearest = 0;
+  for (let i = 1; i < lanes.length; i++) {
+    if (distance(from, lanes[i]) < distance(from, lanes[nearest])) nearest = i;
+  }
+  if (distance(from, lanes[nearest]) > UNIT_DEFS.drone.movement) return lanes[nearest];
+  return lanes[(nearest + 1) % lanes.length];
 }
 
 // ---------------------------------------------------------------------------
@@ -121,21 +222,52 @@ export interface Target {
 
 /**
  * Everything this player currently has intel on, ranked for a HARD-tier
- * attacker. A launcher contact is a certain kill if reached this round — the
- * enemy launcher that fired could not also have moved (spec §11) — while a
- * bunker/decoy site is a valuable but uncertain test (§12: it might be the
- * fake). MEDIUM ignores the ranking (see `selectTarget`) and fires at
- * whichever is nearest, contact or site alike.
+ * attacker: **a bunker/decoy site outranks a launcher contact.** MEDIUM ignores
+ * the ranking entirely (see `selectTarget`) and fires at whichever is nearest,
+ * contact or site alike.
+ *
+ * This ordering was REVERSED on 2026-08-13, and the reasoning is worth keeping
+ * because the old way is the more obvious one. A contact is the better *shot*:
+ * it is a certain kill, since an enemy launcher that fired cannot also have
+ * moved (spec §11), where a site might be the decoy (§12). But it is the worse
+ * *move*. The bunker is the win condition (§1) and killing launchers only ever
+ * pays out as the consolation Disarmament; a site marker is permanent while the
+ * range to shoot it from is not, so a HARD launcher that drove across the board
+ * to reach a site and then spent its one order on a passing contact has thrown
+ * away the whole maneuver. Contact-first also made HARD's site-seeking movement
+ * fight itself, which is why the tier measured no stronger than MEDIUM.
+ *
+ * Measured, not assumed (`npm run soak`, 100 matches per pairing): flipping this
+ * took HARD from 50–50 against MEDIUM to 58–49, and its mirror-match
+ * decapitations from 36 to 45. It also gives the two tiers a coherent identity —
+ * HARD plays for the decapitation the match is about, MEDIUM fights the front.
  */
 function knownTargets(view: VisibleGameState): Target[] {
   const targets: Target[] = [];
   for (const contact of view.intel.contacts) {
-    targets.push({ hex: contact.hex, priority: 0 });
+    targets.push({ hex: contact.hex, priority: 1 });
   }
   for (const reveal of view.intel.staticReveals) {
-    targets.push({ hex: reveal.hex, priority: 1 });
+    targets.push({ hex: reveal.hex, priority: 0 });
   }
   return targets;
+}
+
+/**
+ * Hexes this player believes hold a bunker — which, after the visibility
+ * filter's mask, means "a bunker or a decoy" (spec §12: the CPU is entitled to
+ * exactly the same uncertainty a human is, and `VisibleStaticReveal.kind`
+ * cannot express 'decoy' at all).
+ *
+ * Interceptor bases are excluded because a site is a thing worth *driving to*
+ * and a base is not. In practice the list can never contain one anyway — the
+ * radii make a base impossible to photograph (spec §11) — so the filter is
+ * documentation as much as logic.
+ */
+function knownSites(view: VisibleGameState): Hex[] {
+  return view.intel.staticReveals
+    .filter((reveal) => reveal.kind === 'bunker')
+    .map((reveal) => reveal.hex);
 }
 
 /**
@@ -205,22 +337,46 @@ function nearestTo(hexes: readonly Hex[], from: Hex): Hex {
 export const SAFETY_DETOUR_TOLERANCE = 1;
 
 /**
- * The reachable hex making the most progress toward `targetRow`, never one in
+ * Where a launcher is trying to get to.
+ *
+ * Two shapes because the two tiers want genuinely different things, and
+ * flattening them into one number would lose the distinction:
+ *
+ *   - `row` — MEDIUM's standing goal: push toward the near edge of the enemy
+ *     home zone and fight whatever is there. Column-blind, which is why a
+ *     MEDIUM launcher advances straight up the board.
+ *   - `site` — HARD's goal once recon has found something: get within missile
+ *     range of *that hex*. Scored as the distance still to cover, so every hex
+ *     already in range scores 0 and the safety preference below becomes the
+ *     tiebreak — the launcher closes to the edge of its reach and then prefers
+ *     to sit somewhere the enemy cannot answer from.
+ */
+export type AdvanceGoal =
+  | { kind: 'row'; row: number }
+  | { kind: 'site'; site: Hex };
+
+function advanceScore(hex: Hex, goal: AdvanceGoal): number {
+  return goal.kind === 'row'
+    ? Math.abs(axialToOffset(hex).row - goal.row)
+    : Math.max(0, distance(hex, goal.site) - RULES.missileRange);
+}
+
+/**
+ * The reachable hex making the most progress toward `goal`, never one in
  * `avoid` (a known enemy site).
  *
- * When `danger` is given (HARD only) and the single most-advanced hex sits
- * inside it, a safe hex is taken instead ONLY if it costs at most
- * `SAFETY_DETOUR_TOLERANCE` hexes of extra progress — a short detour for
- * safety is worth it (spec §3: "the safe way to fire is from inside your own
- * interceptor coverage or outside enemy reach"), but refusing to advance at
- * all over a one-hex risk would make HARD more passive than MEDIUM, not
- * smarter. If the most-advanced hex is itself safe, or no safe alternative is
- * close enough, it is simply taken.
+ * When `danger` is given (HARD only) and the single best hex sits inside it, a
+ * safe hex is taken instead ONLY if it costs at most `SAFETY_DETOUR_TOLERANCE`
+ * of extra progress — a short detour for safety is worth it (spec §3: "the safe
+ * way to fire is from inside your own interceptor coverage or outside enemy
+ * reach"), but refusing to advance at all over a one-hex risk would make HARD
+ * more passive than MEDIUM, not smarter. If the best hex is itself safe, or no
+ * safe alternative is close enough, it is simply taken.
  */
 export function pickAdvanceDestination(
   believed: GameState,
   launcher: Unit,
-  targetRow: number,
+  goal: AdvanceGoal,
   avoid: ReadonlySet<string>,
   danger: ReadonlySet<string> | null,
 ): Hex | null {
@@ -232,7 +388,7 @@ export function pickAdvanceDestination(
     if (key === hexKey(launcher.position)) continue; // SAME_HEX is illegal
     if (avoid.has(key)) continue;
 
-    const score = Math.abs(axialToOffset(hex).row - targetRow);
+    const score = advanceScore(hex, goal);
     const safe = !danger || !danger.has(key);
 
     if (!best || score < best.score) best = { hex, score, safe };
@@ -244,14 +400,21 @@ export function pickAdvanceDestination(
   return bestSafe.score <= best.score + SAFETY_DETOUR_TOLERANCE ? bestSafe.hex : best.hex;
 }
 
-/** One launcher's order for MEDIUM/HARD: fire on anything in range (ranked
- * only for HARD), otherwise advance toward the front. */
+/**
+ * One launcher's order for MEDIUM/HARD: fire on anything in range (ranked only
+ * for HARD), otherwise advance toward `goal`.
+ *
+ * Firing is always preferred to moving, and unconditionally so — munitions are
+ * unlimited (spec §2), so the only cost of a launch is the contact it files on
+ * the defender's map (§11), and a shot that might kill something beats a hex of
+ * progress that certainly does not.
+ */
 function reactiveLauncherOrder(
   believed: GameState,
   player: PlayerId,
   launcher: Unit,
   targets: readonly Target[],
-  targetRow: number,
+  goal: AdvanceGoal,
   avoid: ReadonlySet<string>,
   danger: ReadonlySet<string> | null,
   ranked: boolean,
@@ -265,30 +428,45 @@ function reactiveLauncherOrder(
     if (validateLaunch(believed, player, order).legal) return order;
   }
 
-  const destination = pickAdvanceDestination(believed, launcher, targetRow, avoid, danger);
+  const destination = pickAdvanceDestination(believed, launcher, goal, avoid, danger);
   if (!destination) return null;
   const order: Order = { type: 'MOVE', unitId: launcher.id, destination };
   return validateMove(believed, player, order).legal ? order : null;
 }
 
-/** The drone's order for MEDIUM/HARD: fly as far toward the front as its
- * flight range allows, among every legal destination (spec §11 — straight
- * line, ignores terrain and units, so this is pure geometry, not a flood
- * fill). No sweep memory: every round re-picks fresh from the current hex. */
+/**
+ * The drone's order for MEDIUM/HARD: fly as far along the search tour as this
+ * round's range allows (spec §11 — a straight line that ignores terrain and
+ * units, so this is pure geometry and never the ground flood fill).
+ *
+ * Still stateless. The tour is fixed and `nextSweepWaypoint` reads the drone's
+ * place on it off its own position, so nothing has to be remembered between
+ * rounds — see the note there.
+ */
 function reactiveDroneOrder(
   believed: GameState,
   player: PlayerId,
   drone: Unit,
-  targetRow: number,
 ): Order | null {
+  const waypoint = nextSweepWaypoint(
+    drone.position,
+    sweepLanes(player, believed.map.width),
+  );
+
   const candidates = hexesInRange(drone.position, UNIT_DEFS.drone.movement).filter(
     (hex) => hexKey(hex) !== hexKey(drone.position) && onMap(believed.map, hex),
   );
 
   let best: { hex: Hex; score: number } | null = null;
   for (const hex of candidates) {
-    const score = Math.abs(axialToOffset(hex).row - targetRow);
-    if (!best || score < best.score) best = { hex, score };
+    const score = distance(hex, waypoint);
+    // `compareHex` breaks ties so the choice cannot depend on the order
+    // `hexesInRange` happens to enumerate in (the determinism discipline of
+    // spec §6, applied to a client that is not bound by it but benefits from
+    // being replayable).
+    if (!best || score < best.score || (score === best.score && compareHex(hex, best.hex) < 0)) {
+      best = { hex, score };
+    }
   }
   if (!best) return null;
 
@@ -435,10 +613,21 @@ export function cpuOrders(
   if (launchers.length > 0) {
     const avoid = knownEnemyHexes(view);
     const targets = knownTargets(view);
-    const targetRow = advanceRow(player);
+    const fallback: AdvanceGoal = { kind: 'row', row: advanceRow(player) };
     const danger = difficulty === 'hard' ? dangerHexes(view) : null;
+    // HARD prosecutes: once recon has found a site, its launchers drive to a
+    // hex they can shoot it from instead of pushing at the front generically.
+    // MEDIUM never does — that is the tier's whole distinction on the ground,
+    // and it is why MEDIUM fights an attrition war it cannot win outright while
+    // HARD plays for the decapitation the match is actually about (spec §1).
+    const sites = difficulty === 'hard' ? knownSites(view) : [];
 
     for (const launcher of launchers) {
+      const goal: AdvanceGoal =
+        sites.length > 0
+          ? { kind: 'site', site: nearestTo(sites, launcher.position) }
+          : fallback;
+
       const order =
         difficulty === 'easy'
           ? easyLauncherOrder(believed, player, launcher, rng)
@@ -447,7 +636,7 @@ export function cpuOrders(
               player,
               launcher,
               targets,
-              targetRow,
+              goal,
               avoid,
               danger,
               difficulty === 'hard',
@@ -461,7 +650,7 @@ export function cpuOrders(
     const order =
       difficulty === 'easy'
         ? easyDroneOrder(believed, player, drone, rng)
-        : reactiveDroneOrder(believed, player, drone, advanceRow(player));
+        : reactiveDroneOrder(believed, player, drone);
     if (order) orders.push(order);
   }
 
