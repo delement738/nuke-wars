@@ -20,11 +20,26 @@
 //      whole match;
 //   3. **pieces**, on every state change — units, intel and the selection.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Application, Container } from 'pixi.js';
-import { selectHex } from '../state/match';
-import { useSelected, useView } from '../state/useMatch';
-import { drawCoverage, drawIntel, drawSelection, drawTerrain, drawUnits } from './draw';
+import { hoverHex, pickHex } from '../state/match';
+import { targetsFor } from '../state/orders';
+import {
+  useDraft,
+  useHovered,
+  useOrderMode,
+  useSelected,
+  useSelectedUnitId,
+  useView,
+} from '../state/useMatch';
+import {
+  drawCoverage,
+  drawIntel,
+  drawOrders,
+  drawSelection,
+  drawTerrain,
+  drawUnits,
+} from './draw';
 
 /** Zoom limits, shared by the wheel handler and the initial fit. */
 const ZOOM = { min: 0.5, max: 2.5 } as const;
@@ -55,6 +70,7 @@ interface Scene {
   terrain: Container;
   coverage: Container;
   selection: Container;
+  orders: Container;
   intel: Container;
   units: Container;
 }
@@ -89,17 +105,20 @@ export default function GameCanvas() {
 
       const world = new Container();
       // Draw order, bottom to top: the board, what my bases cover, the tile I
-      // clicked, what I know of the enemy, then my own units on top.
+      // clicked, the orders I am giving, what I know of the enemy, then my own
+      // units on top. Orders sit *under* intel and units deliberately — a range
+      // wash must never obscure a detected enemy or a piece of mine.
       const terrain = new Container();
       const coverage = new Container();
       const selection = new Container();
+      const orders = new Container();
       const intel = new Container();
       const units = new Container();
-      world.addChild(terrain, coverage, selection, intel, units);
+      world.addChild(terrain, coverage, selection, orders, intel, units);
       app.stage.addChild(world);
 
       attachCamera(app, world, dragRef);
-      setScene({ app, world, terrain, coverage, selection, intel, units });
+      setScene({ app, world, terrain, coverage, selection, orders, intel, units });
     })();
 
     return () => {
@@ -113,6 +132,23 @@ export default function GameCanvas() {
 
   const view = useView();
   const selected = useSelected();
+  const selectedUnitId = useSelectedUnitId();
+  const orderMode = useOrderMode();
+  const hovered = useHovered();
+  const draft = useDraft();
+
+  // The unit being ordered, and the hexes it may legally be sent to. Computed
+  // here rather than in `draw.ts` because deciding what is legal is state's job
+  // and drawing's job is to draw it (CLAUDE.md's render rule). Memoised because
+  // `moveTargets` runs a flood fill and this re-renders on every hover.
+  const orderUnit = useMemo(
+    () => view.units.find((unit) => unit.id === selectedUnitId) ?? null,
+    [view.units, selectedUnitId],
+  );
+  const targets = useMemo(
+    () => (orderUnit && orderMode ? targetsFor(view, orderUnit, orderMode) : []),
+    [view, orderUnit, orderMode],
+  );
 
   // --- 2. terrain, and the camera's opening framing -------------------------
   // Keyed on the map object, which the sim shares by reference from round to
@@ -121,10 +157,19 @@ export default function GameCanvas() {
   useEffect(() => {
     if (!scene) return;
 
-    drawTerrain(scene.terrain, view.map, (hex) => {
-      // A click that ended a pan is not a click on a tile.
-      if (dragRef.current.moved <= DRAG_SLOP) selectHex(hex);
-    });
+    drawTerrain(
+      scene.terrain,
+      view.map,
+      (hex) => {
+        // A click that ended a pan is not a click on a tile.
+        //
+        // `pickHex`, not `selectHex`: what a click *means* depends on whether an
+        // order is being composed, and that is a state decision. The render
+        // layer reports where the player clicked and nothing else.
+        if (dragRef.current.moved <= DRAG_SLOP) pickHex(hex);
+      },
+      hoverHex,
+    );
 
     fitToScreen(scene);
   }, [scene, view.map]);
@@ -141,6 +186,20 @@ export default function GameCanvas() {
     if (!scene) return;
     drawSelection(scene.selection, selected);
   }, [scene, selected]);
+
+  // --- 4. the order overlay -------------------------------------------------
+  // Its own effect because it changes on hover, which is far more often than the
+  // board does — redrawing units and intel at that rate would be waste.
+  useEffect(() => {
+    if (!scene) return;
+    drawOrders(scene.orders, view, {
+      unit: orderUnit,
+      mode: orderMode,
+      targets,
+      hovered,
+      draft,
+    });
+  }, [scene, view, orderUnit, orderMode, targets, hovered, draft]);
 
   return <div ref={hostRef} className="canvas-host" />;
 }

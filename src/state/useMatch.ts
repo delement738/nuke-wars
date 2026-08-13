@@ -18,8 +18,9 @@
 import { useStore } from 'zustand';
 import type { CpuDifficulty } from './cpu';
 import type { Hex } from '../sim/hex';
-import type { PlayerId, VisibleGameState } from '../sim/types';
+import type { PlayerId, UnitId, VisibleGameState } from '../sim/types';
 import { matchStore, type LogEntry } from './match';
+import type { OrderDraft, OrderMode } from './orders';
 
 /** The board as the current viewer is allowed to see it (spec §6 layer 2). */
 export function useView(): VisibleGameState {
@@ -39,6 +40,26 @@ export function useViewer(): PlayerId {
 /** The selected hex, or null. */
 export function useSelected(): Hex | null {
   return useStore(matchStore, (state) => state.selected);
+}
+
+/** The unit currently being ordered, or null (build-order step 10a). */
+export function useSelectedUnitId(): UnitId | null {
+  return useStore(matchStore, (state) => state.selectedUnitId);
+}
+
+/** Which order kind the panel is composing, or null. */
+export function useOrderMode(): OrderMode | null {
+  return useStore(matchStore, (state) => state.orderMode);
+}
+
+/** The hex under the cursor — drives the flight-path preview. */
+export function useHovered(): Hex | null {
+  return useStore(matchStore, (state) => state.hovered);
+}
+
+/** This round's queued decisions, keyed by unit (spec §9's budget, structural). */
+export function useDraft(): OrderDraft {
+  return useStore(matchStore, (state) => state.draft);
 }
 
 /** The running match's map seed — shown in the HUD so a board can be re-rolled. */

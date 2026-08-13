@@ -16,8 +16,16 @@
 
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import { RULES } from '../sim/defs';
-import { axialToOffset, hexesInRange, offsetToAxial, type Hex } from '../sim/hex';
+import {
+  axialToOffset,
+  hexKey,
+  hexLine,
+  hexesInRange,
+  offsetToAxial,
+  type Hex,
+} from '../sim/hex';
 import { tileAt, type MapData, type Terrain } from '../sim/map';
+import { reconSwath } from '../sim/recon';
 import type {
   MaskedStaticKind,
   Unit,
@@ -25,6 +33,10 @@ import type {
   VisibleGameState,
   VisiblePlayerIntel,
 } from '../sim/types';
+// Types only. The order builder's shapes live in client state, and the render
+// layer is handed them fully assembled — it draws the overlay, it never decides
+// what is in one.
+import type { DraftEntry, OrderDraft, OrderMode } from '../state/orders';
 import { HEX, hexCenter, hexCorners } from './geometry';
 
 // --- palette ----------------------------------------------------------------
@@ -41,6 +53,17 @@ const COLOR = {
   selected: 0xffd54a,
   outline: 0x101820,
   glyph: 0x0b0f14,
+
+  // Order-builder colours. The three modes get three different *visual
+  // languages*, not just three hues, because they mean genuinely different
+  // things and colour alone would not survive a colour-blind player or a dim
+  // screen: MOVE fills ground you may stand on, LAUNCH outlines reach over
+  // ground you will never occupy, FLY dots airspace that ignores the ground
+  // entirely.
+  move: 0x4ad991,
+  launch: 0xffa54a,
+  fly: 0xb27dff,
+  hold: 0x8496aa,
 } as const;
 
 // Keyed by Terrain rather than by string, so removing or adding a terrain in the
@@ -109,11 +132,14 @@ export function drawTerrain(
   layer: Container,
   map: MapData,
   onPick: (hex: Hex) => void,
+  onHover: (hex: Hex | null) => void,
 ): void {
   clear(layer);
 
   for (const tile of map.tiles) {
     const { x, y } = hexCenter(tile.col, tile.row);
+    const hex = offsetToAxial({ col: tile.col, row: tile.row });
+
     const g = new Graphics()
       .poly(hexCorners(x, y))
       .fill(FILL[tile.terrain])
@@ -121,12 +147,16 @@ export function drawTerrain(
 
     g.eventMode = 'static';
     g.cursor = 'pointer';
-    g.on('pointerover', () => { g.alpha = 0.8; });
-    g.on('pointerout', () => { g.alpha = 1; });
-    // offsetToAxial, never a hand-rolled conversion: the sim reasons in axial
-    // and the map stores offsets, and one of those two conversions living in the
-    // render layer is how the two coordinate systems start to disagree.
-    g.on('pointertap', () => { onPick(offsetToAxial({ col: tile.col, row: tile.row })); });
+    // Hover is reported as well as shaded, because a straight-line flight has no
+    // preview until it has a destination — the cursor supplies it (spec §11:
+    // the player steers by choosing sweep lines).
+    g.on('pointerover', () => { g.alpha = 0.8; onHover(hex); });
+    g.on('pointerout', () => { g.alpha = 1; onHover(null); });
+    // `hex` above came from offsetToAxial, never a hand-rolled conversion: the
+    // sim reasons in axial and the map stores offsets, and one of those two
+    // conversions living in the render layer is how the two coordinate systems
+    // start to disagree.
+    g.on('pointertap', () => { onPick(hex); });
 
     layer.addChild(g);
   }
@@ -178,6 +208,300 @@ export function drawSelection(layer: Container, selected: Hex | null): void {
       .poly(hexCorners(x, y))
       .stroke({ width: 3, color: COLOR.selected }),
   );
+}
+
+// --- orders (build-order step 10a) -------------------------------------------
+
+/**
+ * Everything the orders layer draws, assembled by the caller.
+ *
+ * The render layer decides nothing: it is handed the unit, the mode, the legal
+ * targets and the draft, and draws exactly those. Working out *which* hexes are
+ * legal is `src/state/orders.ts`'s job, because that question is answered by the
+ * sim's validators and this file is not allowed to know a rule.
+ */
+export interface OrderOverlay {
+  /** The unit whose order is being composed, or null. */
+  unit: Unit | null;
+  /** The mode it is being composed in, or null when simply inspecting. */
+  mode: OrderMode | null;
+  /** Legal targets for (unit, mode). Empty unless both are set. */
+  targets: readonly Hex[];
+  /** The hex under the cursor — previews the exact line before it is committed. */
+  hovered: Hex | null;
+  /** Decisions already queued this round, drawn as markers. */
+  draft: OrderDraft;
+}
+
+/** The only correct on-map test (CLAUDE.md gotcha 37) — the map is a rectangle
+ *  in col/row, which is a slanted parallelogram in axial, so a straight line
+ *  between two on-map hexes can leave the board and a swath certainly does. */
+function onBoard(map: MapData, hex: Hex): boolean {
+  return tileAt(map, axialToOffset(hex)) !== undefined;
+}
+
+/**
+ * The corridor a flight along `path` would photograph (spec §11).
+ *
+ * `reconSwath` is the authority and returns hex *keys*; the geometry below only
+ * turns those back into hexes to draw. Filtering the enumeration against the set
+ * rather than re-deriving the radius means a retune of `reconSwathRadius` moves
+ * the preview with the rule instead of leaving the UI quietly lying.
+ */
+function swathHexes(path: readonly Hex[]): Hex[] {
+  const inSwath = reconSwath(path);
+  const seen = new Set<string>();
+  const hexes: Hex[] = [];
+
+  for (const step of path) {
+    for (const hex of hexesInRange(step, RULES.reconSwathRadius)) {
+      const key = hexKey(hex);
+      if (seen.has(key) || !inSwath.has(key)) continue;
+      seen.add(key);
+      hexes.push(hex);
+    }
+  }
+  return hexes;
+}
+
+/** A line with an arrowhead at `to`. Used for a committed move. */
+function arrow(from: Hex, to: Hex, color: number): Graphics {
+  const a = centerOf(from);
+  const b = centerOf(to);
+  const angle = Math.atan2(b.y - a.y, b.x - a.x);
+  const head = HEX * 0.42;
+
+  return new Graphics()
+    .moveTo(a.x, a.y)
+    .lineTo(b.x, b.y)
+    .stroke({ width: 3, color })
+    .poly([
+      b.x,
+      b.y,
+      b.x - head * Math.cos(angle - 0.4),
+      b.y - head * Math.sin(angle - 0.4),
+      b.x - head * Math.cos(angle + 0.4),
+      b.y - head * Math.sin(angle + 0.4),
+    ])
+    .fill(color);
+}
+
+/** A ringed cross. Used for a committed launch target. */
+function crosshair(hex: Hex, color: number): Graphics {
+  const { x, y } = centerOf(hex);
+  const r = HEX * 0.5;
+  return new Graphics()
+    .circle(x, y, r)
+    .stroke({ width: 2.5, color })
+    .moveTo(x - r * 1.3, y)
+    .lineTo(x + r * 1.3, y)
+    .moveTo(x, y - r * 1.3)
+    .lineTo(x, y + r * 1.3)
+    .stroke({ width: 2, color });
+}
+
+/** One candidate hex, styled by what picking it would mean. */
+function targetMark(mode: OrderMode, hex: Hex): Graphics {
+  const { x, y } = centerOf(hex);
+
+  switch (mode) {
+    // Ground you may end the round standing on — so it is filled, like ground.
+    case 'MOVE':
+      return new Graphics()
+        .poly(hexCorners(x, y))
+        .fill({ color: COLOR.move, alpha: 0.18 })
+        .stroke({ width: 1, color: COLOR.move, alpha: 0.35 });
+
+    // Reach, not ground: the missile passes over these and lands on one. An
+    // outline says "within range" without implying the launcher goes there.
+    case 'LAUNCH':
+      return new Graphics()
+        .poly(hexCorners(x, y, HEX * 0.9))
+        .stroke({ width: 1.5, color: COLOR.launch, alpha: 0.45 });
+
+    // Airspace. A dot floating over the tile, because the drone's range has
+    // nothing to do with the ground under it — it crosses mountains and units
+    // alike (spec §11).
+    case 'FLY':
+      return new Graphics()
+        .circle(x, y, HEX * 0.16)
+        .fill({ color: COLOR.fly, alpha: 0.5 });
+  }
+}
+
+/**
+ * What the hovered target would actually do, drawn before it is committed.
+ *
+ * The flight preview is the one that earns its keep: the drone's value is the
+ * corridor it photographs, not where it lands, and a player cannot choose a
+ * sweep line without seeing that corridor. **Both previews call `hexLine`** and
+ * never re-derive a path (CLAUDE.md gotcha 12) — the pinned epsilon nudge is
+ * what guarantees the line drawn here is the line the sim flies.
+ */
+function drawPreview(
+  layer: Container,
+  view: VisibleGameState,
+  unit: Unit,
+  mode: OrderMode,
+  target: Hex,
+): void {
+  const { x, y } = centerOf(target);
+
+  if (mode === 'MOVE') {
+    layer.addChild(
+      new Graphics()
+        .poly(hexCorners(x, y))
+        .fill({ color: COLOR.move, alpha: 0.4 })
+        .stroke({ width: 2.5, color: COLOR.move }),
+    );
+    return;
+  }
+
+  if (mode === 'LAUNCH') {
+    const a = centerOf(unit.position);
+    layer.addChild(
+      new Graphics()
+        .moveTo(a.x, a.y)
+        .lineTo(x, y)
+        .stroke({ width: 2, color: COLOR.launch, alpha: 0.7 }),
+      crosshair(target, COLOR.launch),
+    );
+    return;
+  }
+
+  // FLY — the path, then the corridor it would photograph.
+  const path = hexLine(unit.position, target);
+
+  for (const hex of swathHexes(path)) {
+    if (!onBoard(view.map, hex)) continue;
+    const c = centerOf(hex);
+    layer.addChild(
+      new Graphics()
+        .poly(hexCorners(c.x, c.y))
+        .fill({ color: COLOR.fly, alpha: 0.13 }),
+    );
+  }
+
+  for (const hex of path) {
+    if (!onBoard(view.map, hex)) continue;
+    const c = centerOf(hex);
+    layer.addChild(
+      new Graphics()
+        .poly(hexCorners(c.x, c.y, HEX * 0.55))
+        .stroke({ width: 2, color: COLOR.fly, alpha: 0.85 }),
+    );
+  }
+}
+
+/** One queued decision, drawn on the board so a full round can be read at a glance. */
+function drawMarker(
+  layer: Container,
+  view: VisibleGameState,
+  unit: Unit,
+  entry: DraftEntry,
+): void {
+  switch (entry.type) {
+    case 'MOVE':
+      layer.addChild(arrow(unit.position, entry.destination, COLOR.move));
+      return;
+
+    case 'LAUNCH': {
+      const a = centerOf(unit.position);
+      const b = centerOf(entry.target);
+      layer.addChild(
+        new Graphics()
+          .moveTo(a.x, a.y)
+          .lineTo(b.x, b.y)
+          .stroke({ width: 1.5, color: COLOR.launch, alpha: 0.5 }),
+        crosshair(entry.target, COLOR.launch),
+      );
+      return;
+    }
+
+    case 'FLY': {
+      const path = hexLine(unit.position, entry.destination);
+
+      for (const hex of swathHexes(path)) {
+        if (!onBoard(view.map, hex)) continue;
+        const c = centerOf(hex);
+        layer.addChild(
+          new Graphics()
+            .poly(hexCorners(c.x, c.y))
+            .fill({ color: COLOR.fly, alpha: 0.1 }),
+        );
+      }
+
+      const points: number[] = [];
+      for (const hex of path) {
+        const c = centerOf(hex);
+        points.push(c.x, c.y);
+      }
+      const line = new Graphics();
+      line.moveTo(points[0], points[1]);
+      for (let i = 2; i < points.length; i += 2) line.lineTo(points[i], points[i + 1]);
+      line.stroke({ width: 2.5, color: COLOR.fly });
+
+      const end = centerOf(entry.destination);
+      layer.addChild(
+        line,
+        new Graphics().circle(end.x, end.y, HEX * 0.22).fill(COLOR.fly),
+      );
+      return;
+    }
+
+    // Deliberate inaction — a launcher holding, a drone hovering and watching
+    // its own corridor (spec §3, §11). It submits nothing; the ring is there so
+    // "decided to hold" and "not yet decided" look different on the board.
+    case 'HOLD': {
+      const { x, y } = centerOf(unit.position);
+      layer.addChild(
+        new Graphics()
+          .circle(x, y, HEX * 0.78)
+          .stroke({ width: 2, color: COLOR.hold, alpha: 0.8 }),
+      );
+      return;
+    }
+  }
+}
+
+/**
+ * The order layer: what the selected unit could be told to do, and what every
+ * unit has already been told.
+ *
+ * **The move highlight is a prediction, not a promise** (spec §9). It is
+ * computed against the board as the player believes it to be, which has no
+ * enemy units in it beyond what they have detected — so a launcher ordered into
+ * unscouted ground can still find someone parked there, fail entirely, and hold.
+ * That risk is exactly what makes flying the drone worth a round, and the panel
+ * says so in words next to this.
+ */
+export function drawOrders(
+  layer: Container,
+  view: VisibleGameState,
+  overlay: OrderOverlay,
+): void {
+  clear(layer);
+
+  const { unit, mode, hovered, draft } = overlay;
+
+  if (unit && mode) {
+    for (const hex of overlay.targets) {
+      if (!onBoard(view.map, hex)) continue;
+      layer.addChild(targetMark(mode, hex));
+    }
+
+    // Only preview a hex the player could actually pick; hovering illegal ground
+    // must not draw a line the engine would never fly.
+    const legal =
+      hovered !== null &&
+      overlay.targets.some((hex) => hexKey(hex) === hexKey(hovered));
+    if (hovered && legal) drawPreview(layer, view, unit, mode, hovered);
+  }
+
+  for (const entry of Object.values(draft)) {
+    const owner = view.units.find((u) => u.id === entry.unitId);
+    if (owner) drawMarker(layer, view, owner, entry);
+  }
 }
 
 // --- pieces -----------------------------------------------------------------

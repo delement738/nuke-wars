@@ -4,14 +4,15 @@
 // screen comes from the current viewer's `VisibleGameState`; every button calls
 // an action in `src/state/match.ts`. There is no third path.
 //
-// What this is NOT yet: an order builder for the HUMAN side. Step 9's job was
-// the wiring — store owns the state, canvas draws the filtered view, HUD keeps
-// the log — and step 10 adds setup placement, orders, and the real hotseat
-// handoff (spec §8). So "Resolve round" submits an empty order list for
-// SANDBOX_PLAYER, which is a legal round on its own: a launcher with no order
-// holds, a drone with no order hovers (§3). The CPU side (SANDBOX_DUMMY) is
-// no longer empty — `src/state/cpu.ts` gives it a real, difficulty-tiered
-// order list, computed from its own redacted view, same as any player.
+// The human side now gives real orders (build-order step 10a): `OrderPanel`
+// drafts them and `resolveRound()` submits them. "Resolve round" stays as the
+// way to go early — undecided units simply hold, which is a legal round on its
+// own (§3) — but a draft that decides every orderable unit resolves itself
+// without it. The CPU side (SANDBOX_DUMMY) is decided by `src/state/cpu.ts`
+// from its own redacted view, same as any player.
+//
+// Still to come: setup placement (session 10b) and the real hotseat handoff
+// (session 10c).
 //
 // The viewer switch is a **sandbox control**, not the handoff. It exists to make
 // the visibility filter visible: flip it and the board redraws as the other
@@ -30,6 +31,7 @@ import {
 } from '../state/match';
 import { useDifficulty, useSeed, useView, useViewer } from '../state/useMatch';
 import EventLog from './EventLog';
+import OrderPanel from './OrderPanel';
 import SelectionPanel from './SelectionPanel';
 import { describeOutcome } from './eventText';
 import './hud.css';
@@ -84,11 +86,12 @@ export default function Hud() {
           </div>
 
           <p className="footnote">
-            You have no order builder yet (build-order step 10) — resolving now
-            holds every launcher and hovers the drone on your side. The CPU
-            still moves, fires, and flies on its own.
+            Resolving early is legal: any unit you have not decided holds, and a
+            drone with no order hovers and watches its own corridor (§3).
           </p>
         </section>
+
+        <OrderPanel />
 
         <SelectionPanel />
 
@@ -147,6 +150,7 @@ export default function Hud() {
         <section className="panel legend">
           <h2>Legend</h2>
           <p className="own">Blue — your units: L launcher, I interceptor base, D drone, B bunker, X decoy.</p>
+          <p className="muted">Order overlay: green fill — ground a launcher can reach. Amber outline — hexes it can fire on. Violet dots — where the drone can fly, with the corridor it would photograph shown on hover.</p>
           <p className="enemy">Red — what you have detected. Solid ring: a site or base, permanent. Circle: a launcher, this round only — bright if it fired, faint if recon saw it (it may have moved).</p>
           <p className="muted">Faint blue wash: ground your own interceptor bases cover.</p>
         </section>
