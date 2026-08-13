@@ -16,6 +16,7 @@
 // every render and re-render forever.
 
 import { useStore } from 'zustand';
+import type { CpuDifficulty } from './cpu';
 import type { Hex } from '../sim/hex';
 import type { PlayerId, VisibleGameState } from '../sim/types';
 import { matchStore, type LogEntry } from './match';
@@ -43,4 +44,9 @@ export function useSelected(): Hex | null {
 /** The running match's map seed — shown in the HUD so a board can be re-rolled. */
 export function useSeed(): number {
   return useStore(matchStore, (state) => state.seed);
+}
+
+/** How the CPU (`SANDBOX_DUMMY`) currently plays. */
+export function useDifficulty(): CpuDifficulty {
+  return useStore(matchStore, (state) => state.difficulty);
 }

@@ -4,29 +4,43 @@
 // screen comes from the current viewer's `VisibleGameState`; every button calls
 // an action in `src/state/match.ts`. There is no third path.
 //
-// What this is NOT yet: an order builder. Step 9's job is the wiring — store
-// owns the state, canvas draws the filtered view, HUD keeps the log — and step
-// 10 adds setup placement, orders, and the real hotseat handoff (spec §8). So
-// "Resolve round" submits an empty order list, which is a legal round: a
-// launcher with no order holds, a drone with no order hovers (§3).
+// What this is NOT yet: an order builder for the HUMAN side. Step 9's job was
+// the wiring — store owns the state, canvas draws the filtered view, HUD keeps
+// the log — and step 10 adds setup placement, orders, and the real hotseat
+// handoff (spec §8). So "Resolve round" submits an empty order list for
+// SANDBOX_PLAYER, which is a legal round on its own: a launcher with no order
+// holds, a drone with no order hovers (§3). The CPU side (SANDBOX_DUMMY) is
+// no longer empty — `src/state/cpu.ts` gives it a real, difficulty-tiered
+// order list, computed from its own redacted view, same as any player.
 //
 // The viewer switch is a **sandbox control**, not the handoff. It exists to make
 // the visibility filter visible: flip it and the board redraws as the other
 // player's picture — different units, different intel, a different log out of
 // one shared truth. Step 10 replaces it with a proper pass-the-screen sequence.
 
-import { newMatch, resign, resolveRound, SANDBOX_DUMMY, SANDBOX_PLAYER } from '../state/match';
-import { setViewer } from '../state/match';
-import { useSeed, useView, useViewer } from '../state/useMatch';
+import type { CpuDifficulty } from '../state/cpu';
+import {
+  newMatch,
+  resign,
+  resolveRound,
+  setDifficulty,
+  setViewer,
+  SANDBOX_DUMMY,
+  SANDBOX_PLAYER,
+} from '../state/match';
+import { useDifficulty, useSeed, useView, useViewer } from '../state/useMatch';
 import EventLog from './EventLog';
 import SelectionPanel from './SelectionPanel';
 import { describeOutcome } from './eventText';
 import './hud.css';
 
+const DIFFICULTIES: readonly CpuDifficulty[] = ['easy', 'medium', 'hard'];
+
 export default function Hud() {
   const view = useView();
   const viewer = useViewer();
   const seed = useSeed();
+  const difficulty = useDifficulty();
 
   const over = view.outcome !== null;
   const deadHand = view.phase === 'DEAD_HAND_PHASE';
@@ -70,9 +84,9 @@ export default function Hud() {
           </div>
 
           <p className="footnote">
-            No orders are issued yet — the order builder is build-order step 10.
-            Resolving now is a round in which every launcher holds and every drone
-            hovers.
+            You have no order builder yet (build-order step 10) — resolving now
+            holds every launcher and hovers the drone on your side. The CPU
+            still moves, fires, and flies on its own.
           </p>
         </section>
 
@@ -82,7 +96,8 @@ export default function Hud() {
           <h2>Sandbox</h2>
           <p className="muted">
             You are {SANDBOX_PLAYER.toUpperCase()}; {SANDBOX_DUMMY.toUpperCase()} is
-            a static dummy that never issues an order.
+            a CPU opponent that plays from its own redacted view, same as a human
+            in that seat would.
           </p>
 
           <div className="buttons">
@@ -103,6 +118,19 @@ export default function Hud() {
           </div>
 
           <div className="buttons">
+            {DIFFICULTIES.map((level) => (
+              <button
+                key={level}
+                type="button"
+                onClick={() => setDifficulty(level)}
+                disabled={difficulty === level}
+              >
+                {level[0].toUpperCase() + level.slice(1)}
+              </button>
+            ))}
+          </div>
+
+          <div className="buttons">
             <button type="button" onClick={() => newMatch(Date.now() % 100000)}>
               New map
             </button>
@@ -111,7 +139,9 @@ export default function Hud() {
             </button>
           </div>
 
-          <p className="footnote">Map seed {seed}. Same seed, same board.</p>
+          <p className="footnote">
+            Map seed {seed}. Same seed, same board. CPU difficulty: {difficulty}.
+          </p>
         </section>
 
         <section className="panel legend">
