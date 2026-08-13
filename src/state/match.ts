@@ -24,7 +24,7 @@
 // `src/sim/` may never import it. React lives in `./useMatch`, so this module
 // stays a plain testable object — the same reason the engine is dependency-free.
 
-import type { Hex } from '../sim/hex';
+import { hexKey, type Hex } from '../sim/hex';
 import { generateMap, makeRng } from '../sim/map';
 import { resolve } from '../sim/resolve';
 import { startMatch, type PlayerSetup } from '../sim/setup';
@@ -35,12 +35,26 @@ import {
   type Order,
   type Outcome,
   type PlayerId,
+  type UnitId,
   type VisibleEvent,
   type VisibleGameState,
 } from '../sim/types';
 import { filterEventsForPlayer, filterForPlayer } from '../sim/visibility';
 import { createStore } from 'zustand/vanilla';
 import { cpuOrders, type CpuDifficulty } from './cpu';
+import {
+  allDecided,
+  draftOrders,
+  isLegalOrder,
+  orderFor,
+  orderableUnits,
+  withHold,
+  withOrder,
+  withoutOrder,
+  EMPTY_DRAFT,
+  type OrderDraft,
+  type OrderMode,
+} from './orders';
 import { sandboxSetup } from './sandbox';
 
 /**
@@ -89,6 +103,26 @@ export interface MatchState {
   viewer: PlayerId;
   /** The hex the player clicked, or null. Presentation state, not game state. */
   selected: Hex | null;
+  /** Which of the human's own units is being ordered, or null. Kept alongside
+   *  `selected` rather than derived from it because the drone may hover over a
+   *  launcher (spec §2), and a stacked hex would otherwise be ambiguous. */
+  selectedUnitId: UnitId | null;
+  /** The hex under the cursor, or null. Presentation state — it drives the
+   *  flight-path preview, which needs a destination before one is committed. */
+  hovered: Hex | null;
+  /**
+   * Orders the human has queued for `SANDBOX_PLAYER` this round, keyed by unit
+   * so the §9 one-order-per-unit budget is structural (`./orders`).
+   *
+   * In sandbox this is not a secret — there is only one human at the screen, and
+   * the CPU decides its own orders inside `resolveRound` from its own redacted
+   * view. In session 10c's hotseat it becomes one, and gotcha 36's discipline
+   * applies then: two drafts, and the inactive player must not see the other's.
+   */
+  draft: OrderDraft;
+  /** Which order kind the panel is composing for the selected unit, or null.
+   *  In the store rather than the panel because the canvas draws from it too. */
+  orderMode: OrderMode | null;
   /** Both players' redacted boards, rebuilt from `truth` after every change. */
   views: Record<PlayerId, VisibleGameState>;
   /** Both players' permanent event histories, filtered on the way in. */
@@ -140,6 +174,10 @@ export const matchStore = createStore<MatchState>()(() => ({
   difficulty: DEFAULT_DIFFICULTY,
   viewer: SANDBOX_PLAYER,
   selected: null,
+  selectedUnitId: null,
+  hovered: null,
+  draft: EMPTY_DRAFT,
+  orderMode: null,
   views: viewsOf(truth),
   logs: { p1: [], p2: [] },
 }));
@@ -184,28 +222,31 @@ function appendLog(
 // Actions — the only way anything changes
 // ---------------------------------------------------------------------------
 
-/** Start a fresh sandbox match on a new map. Clears both logs and the selection. */
+/** Start a fresh sandbox match on a new map. Clears both logs, the selection
+ *  and any orders drafted for the match that just ended. */
 export function newMatch(seed: number = DEFAULT_SEED): void {
   truth = freshTruth(seed);
   matchStore.setState({
     seed,
     viewer: SANDBOX_PLAYER,
     selected: null,
+    selectedUnitId: null,
+    hovered: null,
+    draft: EMPTY_DRAFT,
+    orderMode: null,
     views: viewsOf(truth),
     logs: { p1: [], p2: [] },
   });
 }
 
 /**
- * Resolve one round: the human's orders against the CPU's (spec §8 step 9's
- * seam; step 9 shipped the CPU side as `[]`, unconditionally — `src/state/cpu.ts`
- * fills it in).
+ * Resolve one round: the human's drafted orders against the CPU's.
  *
- * `orders` defaults to none because there is still no order builder for the
- * human side — that is step 10 — and a launcher with no order holds while a
- * drone with no order hovers (§3), which is a perfectly legal round. The
- * parameter exists so step 10 plugs a real order list into this seam rather
- * than rewriting the round loop.
+ * The human's side comes from `draft` (build-order step 10a filled in the seam
+ * step 9 left as an unconditional `[]`). Undecided units simply contribute
+ * nothing, which is a perfectly legal round — a launcher with no order holds and
+ * a drone with no order hovers (§3) — so this is safe to call at any point in
+ * the order phase, with a full draft or an empty one.
  *
  * The CPU is handed `filterForPlayer(truth, SANDBOX_DUMMY)`, never `truth` —
  * the exact same redacted view a human in that seat would get — so playing
@@ -224,7 +265,7 @@ export function newMatch(seed: number = DEFAULT_SEED): void {
  * GAME_OVER state and is right to — the phase is its own to set — but a button
  * pressed twice is a UI event, not a caller bug.
  */
-export function resolveRound(orders: readonly Order[] = []): void {
+export function resolveRound(): void {
   if (truth.phase === 'GAME_OVER') return;
 
   // Stamped before resolving: `resolve` hands back the *next* round's number
@@ -232,7 +273,7 @@ export function resolveRound(orders: readonly Order[] = []): void {
   // was just played.
   const round = truth.round;
 
-  const { seed, difficulty } = matchStore.getState();
+  const { seed, difficulty, draft } = matchStore.getState();
   const cpuView = filterForPlayer(truth, SANDBOX_DUMMY);
   const cpuRng = makeRng(seed * 100000 + round);
 
@@ -240,18 +281,115 @@ export function resolveRound(orders: readonly Order[] = []): void {
     p1: [],
     p2: [],
   };
-  submitted[SANDBOX_PLAYER] = orders;
+  submitted[SANDBOX_PLAYER] = draftOrders(draft);
   submitted[SANDBOX_DUMMY] = cpuOrders(cpuView, difficulty, SANDBOX_DUMMY, cpuRng);
 
-  const result = resolve(
-    truth,
-    submitted.p1,
-    submitted.p2,
-    matchStore.getState().seed,
-  );
+  const result = resolve(truth, submitted.p1, submitted.p2, seed);
   truth = result.state;
 
+  // The draft belongs to the round that has just been played. Clearing it here
+  // rather than in the UI is what makes "orders are a one-round commitment"
+  // (§3) hold no matter which path resolved the round — the button, or a
+  // completed draft resolving itself.
+  matchStore.setState({
+    draft: EMPTY_DRAFT,
+    orderMode: null,
+    selected: null,
+    selectedUnitId: null,
+    hovered: null,
+  });
   publish(round, result.events);
+}
+
+// ---------------------------------------------------------------------------
+// Order drafting (build-order step 10a)
+// ---------------------------------------------------------------------------
+
+/**
+ * The board every drafted order is judged against.
+ *
+ * Deliberately `SANDBOX_PLAYER`'s view and NOT the current `viewer`'s. The
+ * viewer switch is a debug control, so flipping it to look at the CPU's picture
+ * must not turn the order builder into a way to order the CPU's units. Because a
+ * `VisibleGameState` holds only its owner's units (spec §6), an order naming any
+ * unit but the human's fails validation at the `find` — "you may only order your
+ * own pieces" is structural rather than a check that could be forgotten.
+ *
+ * The UI additionally disables order entry while spectating, so the two guards
+ * are independent: one stops a wrong order being *stored*, the other stops it
+ * being *offered*.
+ */
+function orderingView(): VisibleGameState {
+  return matchStore.getState().views[SANDBOX_PLAYER];
+}
+
+/**
+ * Resolve the round the moment every orderable unit has been decided.
+ *
+ * This is what makes the round fire on its own instead of waiting for a button.
+ * It is called only from the two actions that *add* a decision, and it leans
+ * entirely on `allDecided`'s empty-set guard — during the CPU's dead-hand round
+ * the human has no orderable units, and "all zero of them are decided" would
+ * otherwise be true forever (see the note in `./orders`).
+ */
+function resolveIfComplete(): void {
+  if (allDecided(orderingView(), matchStore.getState().draft)) resolveRound();
+}
+
+/**
+ * Queue an order, replacing whatever that unit was going to do.
+ *
+ * An illegal order is dropped rather than stored (`withOrder` checks it against
+ * the real sim validators), so nothing downstream has to defend against a draft
+ * containing one. Clearing `orderMode` afterwards returns the panel from
+ * "pick a target" to "pick a unit", which is the loop the player is actually in.
+ */
+export function setOrder(order: Order): void {
+  const draft = withOrder(orderingView(), matchStore.getState().draft, order);
+  matchStore.setState({ draft, orderMode: null, hovered: null });
+  resolveIfComplete();
+}
+
+/**
+ * Mark a unit as deliberately holding — a launcher that stays put, a drone that
+ * hovers and watches its own corridor (spec §3, §11).
+ *
+ * It submits nothing; its whole purpose is to say "I am finished with this unit"
+ * so a complete draft can resolve the round. Without it, a player who wanted to
+ * hold anything could never complete one.
+ */
+export function holdUnit(unitId: UnitId): void {
+  const view = orderingView();
+  const unit = view.units.find((u) => u.id === unitId);
+  if (!unit) return;
+
+  const draft = withHold(view, matchStore.getState().draft, unit);
+  matchStore.setState({ draft, orderMode: null, hovered: null });
+  resolveIfComplete();
+}
+
+/** Un-decide a unit. Never resolves the round — removing a decision cannot
+ *  complete a draft, and a player undoing an order wants to keep ordering. */
+export function clearOrder(unitId: UnitId): void {
+  matchStore.setState({
+    draft: withoutOrder(matchStore.getState().draft, unitId),
+    orderMode: null,
+  });
+}
+
+/** Discard every queued decision for this round. */
+export function clearDraft(): void {
+  matchStore.setState({ draft: EMPTY_DRAFT, orderMode: null });
+}
+
+/** Enter or leave target-picking for the selected unit. */
+export function setOrderMode(mode: OrderMode | null): void {
+  matchStore.setState({ orderMode: mode, hovered: null });
+}
+
+/** Track the cursor, so a flight can be previewed before it is committed. */
+export function hoverHex(hex: Hex | null): void {
+  matchStore.setState({ hovered: hex });
 }
 
 /**
@@ -272,12 +410,26 @@ export function resign(player: PlayerId): void {
 
   const outcome: Outcome = { type: 'CAPITULATION', winner: opponentOf(player) };
   truth = { ...truth, phase: 'GAME_OVER', outcome };
+  matchStore.setState({ draft: EMPTY_DRAFT, orderMode: null });
   publish(truth.round, [{ type: 'GAME_OVER', outcome }]);
 }
 
-/** Switch which player's redacted view is rendered (a sandbox control). */
+/**
+ * Switch which player's redacted view is rendered (a sandbox control).
+ *
+ * The selection is cleared because it means nothing on the other player's board;
+ * the **draft is deliberately left alone**, so glancing at the CPU's picture and
+ * coming back does not silently throw away the orders you had queued. Entry is
+ * disabled while spectating instead (see `orderingView`).
+ */
 export function setViewer(viewer: PlayerId): void {
-  matchStore.setState({ viewer, selected: null });
+  matchStore.setState({
+    viewer,
+    selected: null,
+    selectedUnitId: null,
+    orderMode: null,
+    hovered: null,
+  });
 }
 
 /** Change how the CPU plays, effective from the next `resolveRound()` call. */
@@ -285,9 +437,71 @@ export function setDifficulty(difficulty: CpuDifficulty): void {
   matchStore.setState({ difficulty });
 }
 
-/** Select a hex, or clear the selection with null. */
+/**
+ * Select a hex, or clear the selection with null.
+ *
+ * It also picks up whichever of the viewer's own orderable units is standing
+ * there, so clicking a launcher on the map is enough to start ordering it. A
+ * hex can legitimately hold two of your units — the drone is on the air layer
+ * and may hover directly over a launcher (spec §2) — so this takes the first
+ * orderable one and the panel offers the other explicitly. Ambiguity is resolved
+ * in the panel, never guessed at here.
+ */
 export function selectHex(hex: Hex | null): void {
-  matchStore.setState({ selected: hex });
+  const view = orderingView();
+  const key = hex ? hexKey(hex) : null;
+  const unit =
+    key === null
+      ? undefined
+      : orderableUnits(view).find((u) => hexKey(u.position) === key);
+
+  matchStore.setState({
+    selected: hex,
+    selectedUnitId: unit?.id ?? null,
+    orderMode: null,
+    hovered: null,
+  });
+}
+
+/** Select one of your own units by id — the panel's way past a stacked hex. */
+export function selectUnit(unitId: UnitId): void {
+  const unit = orderingView().units.find((u) => u.id === unitId);
+  if (!unit) return;
+  matchStore.setState({
+    selected: unit.position,
+    selectedUnitId: unit.id,
+    orderMode: null,
+    hovered: null,
+  });
+}
+
+/**
+ * A click on the map, routed.
+ *
+ * The render layer reports *that a hex was clicked* and nothing more — deciding
+ * what a click means is state's job, not drawing's (CLAUDE.md's render rule). If
+ * the player is picking a target and the hex is a legal one, the click commits
+ * the order; otherwise it selects the hex, which is also how you back out of
+ * target-picking by clicking somewhere irrelevant.
+ *
+ * While spectating as the CPU it can only ever select, because `orderMode` is
+ * cleared by `setViewer` and the panel offers no way to set it again.
+ */
+export function pickHex(hex: Hex): void {
+  const { orderMode, selectedUnitId } = matchStore.getState();
+  const view = orderingView();
+  const unit = selectedUnitId
+    ? view.units.find((u) => u.id === selectedUnitId)
+    : undefined;
+
+  if (orderMode && unit) {
+    const order = orderFor(unit, orderMode, hex);
+    if (isLegalOrder(view, order)) {
+      setOrder(order);
+      return;
+    }
+  }
+  selectHex(hex);
 }
 
 // ---------------------------------------------------------------------------

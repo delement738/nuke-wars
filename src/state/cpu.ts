@@ -10,11 +10,14 @@
 // **The CPU is handed exactly the fog a human in its seat would have.** It
 // never sees `truth` — only the `VisibleGameState` `filterForPlayer` already
 // produced for it — so it can be omniscient by neither accident nor a later
-// "just for tuning" edit. `believedState` below turns that redacted view back
-// into a `GameState`-shaped object containing ONLY what the player currently
-// knows to exist (their own units; nothing standing in for an enemy), and every
-// order this file proposes is checked against it with the SAME validators
-// `resolve()` trusts — `validateMove`, `validateLaunch`, `validateFly`. That is
+// "just for tuning" edit. `believedState` (now in `./belief`, shared with the
+// human's order builder since build-order step 10a) turns that redacted view
+// back into a `GameState`-shaped object containing ONLY what the player
+// currently knows to exist (their own units; nothing standing in for an enemy),
+// and every order this file proposes is checked against it with the SAME
+// validators `resolve()` trusts — `validateMove`, `validateLaunch`,
+// `validateFly`. Sharing that module with the UI is what makes "the CPU is bound
+// by the same fog a human is" a shared import rather than a promise. That is
 // deliberately one of the two shapes the spec's own open question about step 10
 // names ("a client-side board as I believe it to be", CLAUDE.md's "What step 9
 // leaves for step 10" note) — applied here to the CPU first, because it needed
@@ -63,49 +66,16 @@ import {
   type GameState,
   type Order,
   type PlayerId,
-  type PlayerIntel,
   type Unit,
   type VisibleGameState,
 } from '../sim/types';
+import { believedState, knownEnemyHexes } from './belief';
 
 export type CpuDifficulty = 'easy' | 'medium' | 'hard';
 
 /** Matches `makeRng`'s return shape (`src/sim/map.ts`) without importing it —
  * the CPU is client state, not simulation, and owns its own RNG instance. */
 export type Rng = () => number;
-
-// ---------------------------------------------------------------------------
-// Belief — turning a VisibleGameState back into a GameState the real
-// validators accept, containing only what this player actually knows.
-// ---------------------------------------------------------------------------
-
-/** Never read by `reachableHexes`/`validateMove`/`validateLaunch`/`validateFly`
- * — they touch only `units` and `map` — but `GameState` requires the field. */
-const EMPTY_INTEL: PlayerIntel = { staticReveals: [], contacts: [] };
-
-function believedState(view: VisibleGameState): GameState {
-  return {
-    round: view.round,
-    phase: view.phase,
-    map: view.map,
-    units: view.units,
-    intel: { p1: EMPTY_INTEL, p2: EMPTY_INTEL },
-    droneRespawnIn: { p1: 0, p2: 0 },
-    deadHandFor: view.deadHandFor,
-    outcome: view.outcome,
-  };
-}
-
-/** Hexes this player already believes hold an enemy asset (spec §11 intel) —
- * never a legal MOVE destination, even though `believedState` has no unit
- * there to reject it with `TILE_OCCUPIED`. Firing AT one of these is exactly
- * the point; this set is consulted for movement only. */
-function knownEnemyHexes(view: VisibleGameState): Set<string> {
-  const known = new Set<string>();
-  for (const reveal of view.intel.staticReveals) known.add(hexKey(reveal.hex));
-  for (const contact of view.intel.contacts) known.add(hexKey(contact.hex));
-  return known;
-}
 
 /** The row this player's LAUNCHERS advance toward: the near edge of the
  * opponent's home zone (spec §7) — as far as a launcher ever needs to go to
