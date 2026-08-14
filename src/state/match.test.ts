@@ -321,6 +321,12 @@ function mine() {
   return orderableUnits(viewFor(SANDBOX_PLAYER));
 }
 
+/** The human's own order draft. Per-player since build-order step 10c, so the
+ *  seat has to be named — in solo it is always `SANDBOX_PLAYER`'s. */
+function myDraft() {
+  return matchStore.getState().draft[SANDBOX_PLAYER];
+}
+
 function launcher(index = 0) {
   const unit = mine().filter((u) => u.kind === 'launcher')[index];
   if (!unit) throw new Error('no launcher');
@@ -335,7 +341,7 @@ function decideAllBut(n: number): void {
 
 /** The one unit still undecided. */
 function undecided() {
-  const unit = mine().find((u) => !(u.id in matchStore.getState().draft));
+  const unit = mine().find((u) => !(u.id in myDraft()));
   if (!unit) throw new Error('expected an undecided unit');
   return unit;
 }
@@ -347,12 +353,12 @@ describe('the order draft', () => {
     const order = orderFor(unit, 'MOVE', target);
 
     setOrder(order);
-    expect(matchStore.getState().draft[unit.id]).toEqual(order);
+    expect(myDraft()[unit.id]).toEqual(order);
 
     // Its own hex is SAME_HEX (spec §9), so this must not overwrite the good
     // order above with a nonsense one.
     setOrder(orderFor(unit, 'MOVE', unit.position));
-    expect(matchStore.getState().draft[unit.id]).toEqual(order);
+    expect(myDraft()[unit.id]).toEqual(order);
   });
 
   it('cannot draft an order for the CPU’s units, whatever the viewer is', () => {
@@ -365,7 +371,7 @@ describe('the order draft', () => {
       unitId: `${SANDBOX_DUMMY}-launcher-1`,
       destination: { q: 0, r: 0 },
     });
-    expect(matchStore.getState().draft).toEqual({});
+    expect(myDraft()).toEqual({});
   });
 
   it('replaces a unit’s order rather than queueing a second (spec §9)', () => {
@@ -375,20 +381,20 @@ describe('the order draft', () => {
     setOrder(orderFor(unit, 'MOVE', moveTargets(view, unit)[0]));
     setOrder(orderFor(unit, 'LAUNCH', launchTargets(view, unit)[0]));
 
-    expect(Object.keys(matchStore.getState().draft)).toEqual([unit.id]);
-    expect(matchStore.getState().draft[unit.id].type).toBe('LAUNCH');
+    expect(Object.keys(myDraft())).toEqual([unit.id]);
+    expect(myDraft()[unit.id].type).toBe('LAUNCH');
   });
 
   it('clears a single decision, and the whole draft', () => {
     const unit = launcher();
     setOrder(orderFor(unit, 'MOVE', moveTargets(viewFor(SANDBOX_PLAYER), unit)[0]));
     clearOrder(unit.id);
-    expect(matchStore.getState().draft).toEqual({});
+    expect(myDraft()).toEqual({});
 
     holdUnit(launcher(0).id);
     holdUnit(launcher(1).id);
     clearDraft();
-    expect(matchStore.getState().draft).toEqual({});
+    expect(myDraft()).toEqual({});
   });
 
   it('survives a look at the other player’s board', () => {
@@ -401,7 +407,7 @@ describe('the order draft', () => {
     setViewer(SANDBOX_DUMMY);
     setViewer(SANDBOX_PLAYER);
 
-    expect(matchStore.getState().draft[unit.id]).toEqual(order);
+    expect(myDraft()[unit.id]).toEqual(order);
     // It does leave target-picking, though, so a click on the way back cannot
     // land an order the player did not mean to give.
     expect(matchStore.getState().orderMode).toBeNull();
@@ -415,7 +421,7 @@ describe('the order draft', () => {
     setOrder(orderFor(unit, 'MOVE', destination));
     resolveRound();
 
-    expect(matchStore.getState().draft).toEqual({});
+    expect(myDraft()).toEqual({});
     const after = viewFor(SANDBOX_PLAYER).units.find((u) => u.id === unit.id);
     expect(after?.position).not.toEqual(before);
     expect(after?.position).toEqual(destination);
@@ -424,12 +430,12 @@ describe('the order draft', () => {
   it('is discarded by newMatch and by resigning', () => {
     holdUnit(launcher().id);
     newMatch();
-    expect(matchStore.getState().draft).toEqual({});
+    expect(myDraft()).toEqual({});
 
     autoPlace();
     holdUnit(launcher().id);
     resign(SANDBOX_PLAYER);
-    expect(matchStore.getState().draft).toEqual({});
+    expect(myDraft()).toEqual({});
   });
 });
 
@@ -443,7 +449,7 @@ describe('a completed draft resolves the round on its own', () => {
     holdUnit(undecided().id);
 
     expect(viewFor(SANDBOX_PLAYER).round).toBe(round + 1);
-    expect(matchStore.getState().draft).toEqual({});
+    expect(myDraft()).toEqual({});
   });
 
   it('counts a real order as a decision too, not only a hold', () => {
@@ -478,7 +484,7 @@ describe('a completed draft resolves the round on its own', () => {
     decideAllBut(1);
     const round = viewFor(SANDBOX_PLAYER).round;
 
-    clearOrder(Object.keys(matchStore.getState().draft)[0]);
+    clearOrder(Object.keys(myDraft())[0]);
     expect(viewFor(SANDBOX_PLAYER).round).toBe(round);
   });
 });
@@ -500,7 +506,7 @@ describe('clicking the map', () => {
     setOrderMode('MOVE');
     pickHex(target);
 
-    expect(matchStore.getState().draft[unit.id]).toEqual(
+    expect(myDraft()[unit.id]).toEqual(
       orderFor(unit, 'MOVE', target),
     );
     // Target-picking is over — the panel is back to picking a unit.
@@ -517,7 +523,7 @@ describe('clicking the map', () => {
     setOrderMode('MOVE');
     pickHex(far);
 
-    expect(matchStore.getState().draft).toEqual({});
+    expect(myDraft()).toEqual({});
     expect(matchStore.getState().selected).toEqual(far);
     expect(matchStore.getState().orderMode).toBeNull();
   });

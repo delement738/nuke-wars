@@ -68,13 +68,24 @@ import {
   withoutSlot,
 } from './placement';
 import { sandboxSetup } from './sandbox';
+import {
+  humanSeats,
+  isHotseat,
+  nextSeat,
+  openingSeat,
+  SOLO_SEATS,
+  type Seating,
+} from './seats';
 
 /**
  * The side a human plays in the sandbox; the other is the CPU (spec §8 step 9
  * shipped it as a static dummy that never ordered anything — `src/state/cpu.ts`
- * replaced that with a real, difficulty-tiered opponent). Written as constants
- * rather than assumed to be p1 everywhere, so step 10's hotseat handoff
- * replaces two definitions instead of hunting literals.
+ * replaced that with a real, difficulty-tiered opponent).
+ *
+ * These survive 10c as the *solo* seating's two roles, and nothing below
+ * branches on them any more: who is human is `seats`, and whose turn it is
+ * is `activeSeat` (see `./seats`). They remain because a handful of UI strings
+ * and tests legitimately mean "the seat the CPU plays in solo".
  */
 export const SANDBOX_PLAYER: PlayerId = 'p1';
 export const SANDBOX_DUMMY: PlayerId = opponentOf(SANDBOX_PLAYER);
@@ -121,18 +132,59 @@ export interface MatchState {
    */
   map: MapData;
   /**
+   * Who supplies each player's orders (build-order step 10c).
+   *
+   * Solo is `{ p1: 'human', p2: 'cpu' }` and hotseat is two humans. Everything
+   * that used to assume "p1 is the human" reads this instead, which is what let
+   * `resolveRound` lose its branch: each seat is asked the same question and
+   * only the source of the answer differs.
+   */
+  seats: Seating;
+  /**
+   * Whose turn it is to **act** — the player whose orders are being drafted and
+   * whose placements a board click positions (build-order step 10c).
+   *
+   * Deliberately distinct from `viewer`, which is whose picture is *drawn*. In
+   * hotseat they are always equal. In solo they come apart the moment the debug
+   * viewer switch is used to look at the CPU's board, and keeping them separate
+   * is what stops that from turning the order builder into a way to order the
+   * CPU's units (gotcha 41d) — `orderingView` reads this one, never `viewer`.
+   */
+  activeSeat: PlayerId;
+  /**
+   * **The screen is blanked, waiting for this player to sit down** — or null
+   * when someone is already at it (build-order step 10c).
+   *
+   * While it is set, `App` renders the handoff prompt and *nothing else*: no
+   * canvas, no panels. That is what re-establishes the secrecy 10b got for free.
+   * Until now "the setup screen cannot leak the opponent's placements" held
+   * because no enemy setup existed in the client at all (gotcha 43); in hotseat
+   * one genuinely does, so the guarantee becomes two rules instead — no hook
+   * takes a `PlayerId` from a caller (gotcha 36, see `./useMatch`), and `viewer`
+   * cannot change without passing through this blank.
+   *
+   * Null throughout a solo match: there is nobody to pass the screen to, and
+   * spectating the CPU must not blank it. That is why this is its own field
+   * rather than derived from `viewer !== activeSeat`, which is a legal and
+   * perfectly ordinary state in solo play.
+   */
+  handoff: PlayerId | null;
+  /**
    * The human's secret placements, one entry per roster slot (spec §12).
    *
    * Populated on the setup screen and left in place once the match starts, where
-   * it is simply a record of where they put their own four assets — their own
-   * knowledge, which they are always allowed to see (§11 rule 1). In session
-   * 10c's hotseat this becomes one per player and gotcha 36's discipline applies
-   * then: the inactive player must not see the other's.
+   * each is simply a record of where that player put their own four assets —
+   * their own knowledge, which they are always allowed to see (§11 rule 1).
+   *
+   * **One per player since 10c, and gotcha 36's discipline now applies**: in
+   * hotseat both drafts sit in the store at once, so the only thing that may
+   * read one is a hook keyed on `viewer`. There is deliberately no accessor
+   * that takes a `PlayerId` from a caller.
    */
-  placed: PlacementDraft;
+  placed: Record<PlayerId, PlacementDraft>;
   /**
-   * Which roster slot the setup screen is positioning — the asset a board click
-   * will place or move (spec §12; placement order is free).
+   * Which roster slot each player's setup screen is positioning — the asset a
+   * board click will place or move (spec §12; placement order is free).
    *
    * Never null while placing: it starts at the bunker and advances to the first
    * empty slot after each placement, so a player who just wants to click four
@@ -140,10 +192,16 @@ export interface MatchState {
    * last touched, and a further click relocates that asset — which is the point
    * of the explicit Start button.
    */
-  selectedSlot: number;
-  /** How the CPU (`SANDBOX_DUMMY`) plays. A sandbox control, same as `viewer`. */
+  selectedSlot: Record<PlayerId, number>;
+  /** How a `'cpu'` seat plays. A solo-mode control, same as the viewer switch. */
   difficulty: CpuDifficulty;
-  /** Whose redacted view is on screen. A sandbox control; step 10's handoff owns it. */
+  /**
+   * Whose redacted view is on screen.
+   *
+   * In hotseat this is the player at the keyboard, and only the handoff changes
+   * it. In solo it is additionally a debug control, which is exactly why
+   * `activeSeat` exists separately from it.
+   */
   viewer: PlayerId;
   /** The hex the player clicked, or null. Presentation state, not game state. */
   selected: Hex | null;
@@ -155,15 +213,16 @@ export interface MatchState {
    *  flight-path preview, which needs a destination before one is committed. */
   hovered: Hex | null;
   /**
-   * Orders the human has queued for `SANDBOX_PLAYER` this round, keyed by unit
-   * so the §9 one-order-per-unit budget is structural (`./orders`).
+   * Each player's queued orders for this round, keyed by unit so the §9
+   * one-order-per-unit budget is structural (`./orders`).
    *
-   * In sandbox this is not a secret — there is only one human at the screen, and
-   * the CPU decides its own orders inside `resolveRound` from its own redacted
-   * view. In session 10c's hotseat it becomes one, and gotcha 36's discipline
-   * applies then: two drafts, and the inactive player must not see the other's.
+   * In solo only one of the two is ever written: the CPU decides its own orders
+   * inside `resolveRound` from its own redacted view and never drafts. In
+   * hotseat both are live at once and hidden orders are the entire point of the
+   * game (§3, simultaneous), so gotcha 36's discipline applies here exactly as
+   * it does to `placed` — read only through a hook keyed on `viewer`.
    */
-  draft: OrderDraft;
+  draft: Record<PlayerId, OrderDraft>;
   /** Which order kind the panel is composing for the selected unit, or null.
    *  In the store rather than the panel because the canvas draws from it too. */
   orderMode: OrderMode | null;
@@ -238,6 +297,23 @@ function viewsOf(state: GameState): Record<PlayerId, VisibleGameState> {
   };
 }
 
+/**
+ * The per-player fields of a fresh setup screen (build-order step 10c).
+ *
+ * Written once and reused by the store's initial state, `newMatch` and
+ * `setSeating`, so "a new match starts with nothing placed and nothing drafted"
+ * is one definition rather than three that could drift apart — which matters
+ * more now than it did at 10b, because forgetting to clear the *other* player's
+ * draft would carry one player's secret placements into the next match.
+ */
+function freshDrafts(): Pick<MatchState, 'placed' | 'selectedSlot' | 'draft'> {
+  return {
+    placed: { p1: emptyPlacementDraft(), p2: emptyPlacementDraft() },
+    selectedSlot: { p1: 0, p2: 0 },
+    draft: { p1: EMPTY_DRAFT, p2: EMPTY_DRAFT },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // The store
 // ---------------------------------------------------------------------------
@@ -250,14 +326,17 @@ function viewsOf(state: GameState): Record<PlayerId, VisibleGameState> {
 export const matchStore = createStore<MatchState>()(() => ({
   seed: DEFAULT_SEED,
   map: freshMap(DEFAULT_SEED),
-  placed: emptyPlacementDraft(),
-  selectedSlot: 0,
+  // The client opens in solo, so the default experience is unchanged by 10c:
+  // one human placing four assets against a CPU. Hotseat is opted into.
+  seats: SOLO_SEATS,
+  activeSeat: SANDBOX_PLAYER,
+  handoff: null,
+  ...freshDrafts(),
   difficulty: DEFAULT_DIFFICULTY,
   viewer: SANDBOX_PLAYER,
   selected: null,
   selectedUnitId: null,
   hovered: null,
-  draft: EMPTY_DRAFT,
   orderMode: null,
   // The client opens on the setup screen, not on a match: nothing is playable
   // until the human has placed their bunker, decoy and two bases (§12).
@@ -315,20 +394,104 @@ function appendLog(
  * cleared, because none of it means anything on a new board.
  */
 export function newMatch(seed: number = DEFAULT_SEED): void {
+  const { seats } = matchStore.getState();
   truth = null;
+
+  // The seating deliberately survives: "New map" in a two-player game should
+  // roll a board, not silently drop you back into solo. Everything else goes,
+  // including *both* players' placements — carrying one over would put a hex a
+  // player chose on one board onto a different one.
+  const opening = openingSeat(seats, () => true) ?? SANDBOX_PLAYER;
+
   matchStore.setState({
     seed,
     map: freshMap(seed),
-    placed: emptyPlacementDraft(),
-    selectedSlot: 0,
-    viewer: SANDBOX_PLAYER,
+    ...freshDrafts(),
+    activeSeat: opening,
+    viewer: opening,
+    // Hotseat re-opens on a handoff, so the first player is asked to take the
+    // screen before their empty board is drawn. Solo has nobody to pass to.
+    handoff: isHotseat(seats) ? opening : null,
     selected: null,
     selectedUnitId: null,
     hovered: null,
-    draft: EMPTY_DRAFT,
     orderMode: null,
     views: null,
     logs: { p1: [], p2: [] },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Seating and the pass-the-screen handoff (build-order step 10c)
+// ---------------------------------------------------------------------------
+
+/**
+ * Choose who fills the two seats, and start a fresh setup (step 10c).
+ *
+ * It abandons whatever was in progress rather than trying to convert it: a
+ * half-built solo setup means nothing once a second human is placing, and a
+ * running match cannot grow a player. Changing the seating is choosing what
+ * kind of game to play, which is a thing you do before one starts.
+ */
+export function setSeating(seats: Seating): void {
+  matchStore.setState({ seats });
+  newMatch(matchStore.getState().seed);
+}
+
+/**
+ * The player at the screen has confirmed they are the right one (step 10c).
+ *
+ * This is the *only* action that changes `viewer` in hotseat, and it always
+ * moves `activeSeat` with it — so "the picture on screen belongs to the person
+ * whose turn it is" holds by construction. `activeSeat` is deliberately not
+ * moved when the handoff is *scheduled*: until someone presses the button, the
+ * previous player is still nominally the one at the keyboard, and nothing is
+ * drawn either way.
+ */
+export function takeScreen(): void {
+  const { handoff } = matchStore.getState();
+  if (!handoff) return;
+
+  matchStore.setState({
+    viewer: handoff,
+    activeSeat: handoff,
+    handoff: null,
+    selected: null,
+    selectedUnitId: null,
+    hovered: null,
+    orderMode: null,
+  });
+}
+
+/** Whether `player` still has a decision to make this round — the skip test the
+ *  handoff needs so a dead-hand round does not strand itself (see `./seats`). */
+function hasOrdersToGive(player: PlayerId): boolean {
+  const { views, draft } = matchStore.getState();
+  const view = views?.[player];
+  return view !== undefined && !allDecided(view, draft[player]);
+}
+
+/**
+ * Hand the screen to `player`, or — in solo, where there is nobody to hand it
+ * to — simply make them the active seat.
+ *
+ * Every turn change goes through here, which is what keeps the blank and the
+ * seat change from ever getting out of step.
+ */
+function passTo(player: PlayerId): void {
+  const { seats } = matchStore.getState();
+
+  if (!isHotseat(seats)) {
+    matchStore.setState({ activeSeat: player, viewer: player });
+    return;
+  }
+
+  matchStore.setState({
+    handoff: player,
+    selected: null,
+    selectedUnitId: null,
+    hovered: null,
+    orderMode: null,
   });
 }
 
@@ -351,25 +514,50 @@ export function newMatch(seed: number = DEFAULT_SEED): void {
  * the human's placements are held to exactly the rules the highlight offered
  * them — the UI is not trusted to have got it right, it is checked.
  */
-function beginMatch(humanSetup: PlayerSetup): void {
-  const { seed, map } = matchStore.getState();
+function beginMatch(setups: Record<PlayerId, PlayerSetup>): void {
+  truth = startMatch(matchStore.getState().map, setups);
 
-  const setups: Record<PlayerId, PlayerSetup> = { p1: [], p2: [] };
-  setups[SANDBOX_PLAYER] = humanSetup;
-  setups[SANDBOX_DUMMY] = sandboxSetup(
-    map,
-    SANDBOX_DUMMY,
-    setupRng(seed, SANDBOX_DUMMY),
-  );
-
-  truth = startMatch(map, setups);
   matchStore.setState({
-    placed: placementDraftOf(humanSetup),
+    // Round-trip every setup back through the draft shape, so a CPU seat's
+    // invented placements and a human's hand-placed ones are held identically.
+    // Each player still only ever sees their own (see `MatchState.placed`).
+    placed: { p1: placementDraftOf(setups.p1), p2: placementDraftOf(setups.p2) },
     views: viewsOf(truth),
     selected: null,
     selectedUnitId: null,
     hovered: null,
   });
+
+  // Round 1 opens on whoever has orders to give. In solo that is the human; in
+  // hotseat it is a handoff, because the board that just appeared is somebody's
+  // in particular.
+  const { seats } = matchStore.getState();
+  passTo(openingSeat(seats, hasOrdersToGive) ?? SANDBOX_PLAYER);
+}
+
+/**
+ * Every seat's finished setup: the human ones taken from their drafts, the CPU
+ * ones invented here (build-order step 10c generalises 10b's single call).
+ *
+ * A CPU seat's setup is still generated at **match start** rather than when the
+ * map was rolled, which is what kept 10b's "the setup screen cannot leak the
+ * opponent's placements" structural (gotcha 43). In hotseat that guarantee can
+ * no longer be structural — the first player's four hexes genuinely are in the
+ * store while the second places — so it is carried by the handoff blank and the
+ * viewer-keyed hooks instead. Against a CPU it still costs nothing to keep, so
+ * it is kept.
+ */
+function allSetups(): Record<PlayerId, PlayerSetup> {
+  const { seed, map, seats, placed } = matchStore.getState();
+
+  const setups: Record<PlayerId, PlayerSetup> = { p1: [], p2: [] };
+  for (const player of PLAYERS) {
+    setups[player] =
+      seats[player] === 'human'
+        ? placementSetup(placed[player])
+        : sandboxSetup(map, player, setupRng(seed, player));
+  }
+  return setups;
 }
 
 /**
@@ -383,10 +571,14 @@ function beginMatch(humanSetup: PlayerSetup): void {
 export function selectSlot(slotId: number): void {
   if (truth) return;
 
-  const slot = placementSlots(matchStore.getState().placed)[slotId];
+  const { activeSeat, placed, selectedSlot } = matchStore.getState();
+  const slot = placementSlots(placed[activeSeat])[slotId];
   if (!slot) return;
 
-  matchStore.setState({ selectedSlot: slotId, selected: slot.hex });
+  matchStore.setState({
+    selectedSlot: { ...selectedSlot, [activeSeat]: slotId },
+    selected: slot.hex,
+  });
 }
 
 /**
@@ -411,13 +603,22 @@ export function selectSlot(slotId: number): void {
 export function placeHex(hex: Hex): void {
   if (truth) return; // the match has started; placement is over
 
-  const { map, placed, selectedSlot } = matchStore.getState();
-  const next = withPlacementInSlot(map, SANDBOX_PLAYER, placed, selectedSlot, hex);
-  if (next === placed) return; // illegal — the same reference means nothing moved
+  const { map, activeSeat, placed, selectedSlot } = matchStore.getState();
+  const mine = placed[activeSeat];
+  const slot = selectedSlot[activeSeat];
+
+  // Validated for the ACTIVE SEAT, not for a fixed player: in hotseat the same
+  // click means "put P2's bunker here" on the second pass, and the home zone it
+  // is checked against is the far end of the board (§7).
+  const next = withPlacementInSlot(map, activeSeat, mine, slot, hex);
+  if (next === mine) return; // illegal — the same reference means nothing moved
 
   matchStore.setState({
-    placed: next,
-    selectedSlot: firstEmptySlot(next) ?? selectedSlot,
+    placed: { ...placed, [activeSeat]: next },
+    selectedSlot: {
+      ...selectedSlot,
+      [activeSeat]: firstEmptySlot(next) ?? slot,
+    },
     selected: hex,
   });
 }
@@ -426,19 +627,25 @@ export function placeHex(hex: Hex): void {
  *  started — a setup is secret and final the moment the board is built (§12). */
 export function clearSlot(slotId: number): void {
   if (truth) return;
-  const { placed } = matchStore.getState();
-  const next = withoutSlot(placed, slotId);
-  if (next === placed) return;
+  const { activeSeat, placed, selectedSlot } = matchStore.getState();
+  const next = withoutSlot(placed[activeSeat], slotId);
+  if (next === placed[activeSeat]) return;
 
-  matchStore.setState({ placed: next, selectedSlot: slotId, selected: null });
+  matchStore.setState({
+    placed: { ...placed, [activeSeat]: next },
+    selectedSlot: { ...selectedSlot, [activeSeat]: slotId },
+    selected: null,
+  });
 }
 
-/** Take everything back off the board and start the setup over. */
+/** Take everything back off the board and start the setup over. Clears only the
+ *  active seat's roster — in hotseat the other player's is not yours to reset. */
 export function clearPlacements(): void {
   if (truth) return;
+  const { activeSeat, placed, selectedSlot } = matchStore.getState();
   matchStore.setState({
-    placed: emptyPlacementDraft(),
-    selectedSlot: 0,
+    placed: { ...placed, [activeSeat]: emptyPlacementDraft() },
+    selectedSlot: { ...selectedSlot, [activeSeat]: 0 },
     selected: null,
   });
 }
@@ -452,9 +659,25 @@ export function clearPlacements(): void {
  */
 export function startPlacedMatch(): void {
   if (truth) return;
-  const { placed } = matchStore.getState();
-  if (!placementComplete(placed)) return;
-  beginMatch(placementSetup(placed));
+
+  const { seats, activeSeat, placed } = matchStore.getState();
+  if (!placementComplete(placed[activeSeat])) return;
+
+  // In hotseat, "Start" from the first player means "I am done placing" — the
+  // match cannot begin until the other human has hidden their assets too. The
+  // seat rotation is the same one the order phase uses, so a player who has
+  // already finished is skipped rather than asked twice.
+  const waiting = nextSeat(
+    seats,
+    activeSeat,
+    (player) => !placementComplete(placed[player]),
+  );
+  if (waiting) {
+    passTo(waiting);
+    return;
+  }
+
+  beginMatch(allSetups());
 }
 
 /**
@@ -467,8 +690,23 @@ export function startPlacedMatch(): void {
  */
 export function autoPlace(): void {
   if (truth) return;
-  const { seed, map } = matchStore.getState();
-  beginMatch(sandboxSetup(map, SANDBOX_PLAYER, setupRng(seed, SANDBOX_PLAYER)));
+
+  const { seed, map, seats, placed, selectedSlot } = matchStore.getState();
+
+  // Fill every *unfinished* human roster, then start. In hotseat that means one
+  // press can stand in for both players, which is what you want when you are
+  // testing something that is not placement — and it leaves an already-placed
+  // player's own choices alone.
+  const next = { ...placed };
+  const slots = { ...selectedSlot };
+  for (const player of humanSeats(seats)) {
+    if (placementComplete(next[player])) continue;
+    next[player] = placementDraftOf(sandboxSetup(map, player, setupRng(seed, player)));
+    slots[player] = 0;
+  }
+
+  matchStore.setState({ placed: next, selectedSlot: slots });
+  beginMatch(allSetups());
 }
 
 /**
@@ -505,32 +743,71 @@ export function resolveRound(): void {
   // was just played.
   const round = truth.round;
 
-  const { seed, difficulty, draft } = matchStore.getState();
-  const cpuView = filterForPlayer(truth, SANDBOX_DUMMY);
-  const cpuRng = makeRng(seed * 100000 + round);
+  const { seed, seats, difficulty, draft } = matchStore.getState();
 
-  const submitted: Record<PlayerId, readonly Order[]> = {
-    p1: [],
-    p2: [],
-  };
-  submitted[SANDBOX_PLAYER] = draftOrders(draft);
-  submitted[SANDBOX_DUMMY] = cpuOrders(cpuView, difficulty, SANDBOX_DUMMY, cpuRng);
+  // One question, asked of every seat: what are this player's orders? A human
+  // seat answers from its draft and a CPU seat decides on the spot — and the
+  // CPU is handed `filterForPlayer(truth, player)`, never `truth`, so the two
+  // kinds of seat are given exactly the same information about the board.
+  const submitted: Record<PlayerId, readonly Order[]> = { p1: [], p2: [] };
+  for (const player of PLAYERS) {
+    submitted[player] =
+      seats[player] === 'human'
+        ? draftOrders(draft[player])
+        : cpuOrders(
+            filterForPlayer(truth, player),
+            difficulty,
+            player,
+            makeRng(seed * 100000 + round),
+          );
+  }
 
   const result = resolve(truth, submitted.p1, submitted.p2, seed);
   truth = result.state;
 
-  // The draft belongs to the round that has just been played. Clearing it here
-  // rather than in the UI is what makes "orders are a one-round commitment"
-  // (§3) hold no matter which path resolved the round — the button, or a
-  // completed draft resolving itself.
+  // Both drafts belong to the round that has just been played. Clearing them
+  // here rather than in the UI is what makes "orders are a one-round
+  // commitment" (§3) hold no matter which path resolved the round — the button,
+  // or a completed draft resolving itself.
   matchStore.setState({
-    draft: EMPTY_DRAFT,
+    draft: { p1: EMPTY_DRAFT, p2: EMPTY_DRAFT },
     orderMode: null,
     selected: null,
     selectedUnitId: null,
     hovered: null,
   });
   publish(round, result.events);
+
+  // Open the next round on whoever has orders to give. A finished match passes
+  // to nobody: the result is public, so there is no reason to blank the screen
+  // and every reason to leave it up (spec §4).
+  if (truth.phase !== 'GAME_OVER') {
+    const opening = openingSeat(matchStore.getState().seats, hasOrdersToGive);
+    if (opening) passTo(opening);
+  }
+}
+
+/**
+ * **The player at the screen is finished for this round** (build-order 10c).
+ *
+ * The one action behind the HUD's main button, and behind a draft completing
+ * itself. In solo it resolves immediately, exactly as `resolveRound` always
+ * did. In hotseat it passes the screen, and only the *last* human seat's turn
+ * ending resolves the round — which is what keeps orders simultaneous (§3): a
+ * player who pressed the button early must not thereby submit an empty draft
+ * on their opponent's behalf.
+ *
+ * Resolving early is still legal and still available. Any unit the active
+ * player has not decided simply holds (§3).
+ */
+export function endTurn(): void {
+  if (!truth || truth.phase === 'GAME_OVER') return;
+
+  const { seats, activeSeat } = matchStore.getState();
+  const waiting = nextSeat(seats, activeSeat, hasOrdersToGive);
+
+  if (waiting) passTo(waiting);
+  else resolveRound();
 }
 
 // ---------------------------------------------------------------------------
@@ -552,21 +829,41 @@ export function resolveRound(): void {
  * being *offered*.
  */
 function orderingView(): VisibleGameState | null {
-  return matchStore.getState().views?.[SANDBOX_PLAYER] ?? null;
+  const { views, activeSeat } = matchStore.getState();
+  return views?.[activeSeat] ?? null;
+}
+
+/** The active seat's own draft — the one every action below reads and writes. */
+function activeDraft(): OrderDraft {
+  const { draft, activeSeat } = matchStore.getState();
+  return draft[activeSeat];
+}
+
+/** `draft` with the active seat's entry replaced, leaving the other player's
+ *  alone — in hotseat theirs is a secret this action has no business touching. */
+function withActiveDraft(next: OrderDraft): Record<PlayerId, OrderDraft> {
+  const { draft, activeSeat } = matchStore.getState();
+  return { ...draft, [activeSeat]: next };
 }
 
 /**
- * Resolve the round the moment every orderable unit has been decided.
+ * End the active seat's turn the moment every one of its orderable units has
+ * been decided.
  *
- * This is what makes the round fire on its own instead of waiting for a button.
- * It is called only from the two actions that *add* a decision, and it leans
- * entirely on `allDecided`'s empty-set guard — during the CPU's dead-hand round
- * the human has no orderable units, and "all zero of them are decided" would
- * otherwise be true forever (see the note in `./orders`).
+ * This is what makes a round advance on its own instead of waiting for a
+ * button. It is called only from the two actions that *add* a decision, and it
+ * leans entirely on `allDecided`'s empty-set guard — during the opponent's
+ * dead-hand round the active player has no orderable units, and "all zero of
+ * them are decided" would otherwise be true forever (see the note in
+ * `./orders`).
+ *
+ * Since 10c it calls `endTurn` rather than resolving directly, so in hotseat a
+ * completed draft passes the screen instead of submitting an empty draft for
+ * the player who has not had their turn yet.
  */
-function resolveIfComplete(): void {
+function advanceIfComplete(): void {
   const view = orderingView();
-  if (view && allDecided(view, matchStore.getState().draft)) resolveRound();
+  if (view && allDecided(view, activeDraft())) endTurn();
 }
 
 /**
@@ -581,9 +878,13 @@ export function setOrder(order: Order): void {
   const view = orderingView();
   if (!view) return;
 
-  const draft = withOrder(view, matchStore.getState().draft, order);
-  matchStore.setState({ draft, orderMode: null, hovered: null });
-  resolveIfComplete();
+  const next = withOrder(view, activeDraft(), order);
+  matchStore.setState({
+    draft: withActiveDraft(next),
+    orderMode: null,
+    hovered: null,
+  });
+  advanceIfComplete();
 }
 
 /**
@@ -599,23 +900,27 @@ export function holdUnit(unitId: UnitId): void {
   const unit = view?.units.find((u) => u.id === unitId);
   if (!view || !unit) return;
 
-  const draft = withHold(view, matchStore.getState().draft, unit);
-  matchStore.setState({ draft, orderMode: null, hovered: null });
-  resolveIfComplete();
+  const next = withHold(view, activeDraft(), unit);
+  matchStore.setState({
+    draft: withActiveDraft(next),
+    orderMode: null,
+    hovered: null,
+  });
+  advanceIfComplete();
 }
 
-/** Un-decide a unit. Never resolves the round — removing a decision cannot
- *  complete a draft, and a player undoing an order wants to keep ordering. */
+/** Un-decide a unit. Never ends the turn — removing a decision cannot complete
+ *  a draft, and a player undoing an order wants to keep ordering. */
 export function clearOrder(unitId: UnitId): void {
   matchStore.setState({
-    draft: withoutOrder(matchStore.getState().draft, unitId),
+    draft: withActiveDraft(withoutOrder(activeDraft(), unitId)),
     orderMode: null,
   });
 }
 
-/** Discard every queued decision for this round. */
+/** Discard the active seat's queued decisions for this round. */
 export function clearDraft(): void {
-  matchStore.setState({ draft: EMPTY_DRAFT, orderMode: null });
+  matchStore.setState({ draft: withActiveDraft(EMPTY_DRAFT), orderMode: null });
 }
 
 /** Enter or leave target-picking for the selected unit. */
@@ -646,19 +951,37 @@ export function resign(player: PlayerId): void {
 
   const outcome: Outcome = { type: 'CAPITULATION', winner: opponentOf(player) };
   truth = { ...truth, phase: 'GAME_OVER', outcome };
-  matchStore.setState({ draft: EMPTY_DRAFT, orderMode: null });
+  matchStore.setState({
+    draft: { p1: EMPTY_DRAFT, p2: EMPTY_DRAFT },
+    orderMode: null,
+    // The match is over and the outcome is public (§4), so the screen stops
+    // being anybody's secret — a pending handoff would blank a result both
+    // players are entitled to look at.
+    handoff: null,
+  });
   publish(truth.round, [{ type: 'GAME_OVER', outcome }]);
 }
 
 /**
- * Switch which player's redacted view is rendered (a sandbox control).
+ * Switch which player's redacted view is rendered (a **solo-mode debug
+ * control**).
  *
  * The selection is cleared because it means nothing on the other player's board;
  * the **draft is deliberately left alone**, so glancing at the CPU's picture and
  * coming back does not silently throw away the orders you had queued. Entry is
  * disabled while spectating instead (see `orderingView`).
+ *
+ * **Refused outright in hotseat** (build-order step 10c). Against a CPU,
+ * spectating the other side is a debug affordance with nobody to cheat; with a
+ * second human it is simply a button that shows you your opponent's hidden
+ * board. The handoff is the only thing that may move `viewer` there, and this
+ * guard is what makes that sentence true rather than merely intended — the HUD
+ * also hides the buttons, which is the second of two independent guards, the
+ * same pairing `orderingView` uses.
  */
 export function setViewer(viewer: PlayerId): void {
+  if (isHotseat(matchStore.getState().seats)) return;
+
   matchStore.setState({
     viewer,
     selected: null,

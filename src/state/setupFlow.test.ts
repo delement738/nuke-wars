@@ -44,20 +44,36 @@ beforeEach(() => {
   newMatch();
 });
 
-/** The hexes the human may legally use for the slot they have selected. */
+/**
+ * The active seat's own placement draft (build-order step 10c made these
+ * per-player). Every helper below goes through here, so the tests read as
+ * "what the player at the screen sees" no matter which seat that is.
+ */
+function mine() {
+  const { placed, activeSeat } = matchStore.getState();
+  return placed[activeSeat];
+}
+
+/** Which roster slot the player at the screen is positioning. */
+function activeSlot(): number {
+  const { selectedSlot, activeSeat } = matchStore.getState();
+  return selectedSlot[activeSeat];
+}
+
+/** The hexes the active player may legally use for the slot they have selected. */
 function targets() {
-  const { map, placed, selectedSlot } = matchStore.getState();
-  return placementTargets(map, SANDBOX_PLAYER, placed, selectedSlot);
+  const { map, activeSeat, selectedSlot } = matchStore.getState();
+  return placementTargets(map, activeSeat, mine(), selectedSlot[activeSeat]);
 }
 
 /** The player's roster, as the setup panel lists it. */
 function slots() {
-  return placementSlots(matchStore.getState().placed);
+  return placementSlots(mine());
 }
 
 /** How many assets are on the board. */
 function placedCount(): number {
-  return placementSetup(matchStore.getState().placed).length;
+  return placementSetup(mine()).length;
 }
 
 /** Place the whole roster by hand and start — the selection auto-advances, so
@@ -84,7 +100,7 @@ describe('newMatch', () => {
     // assets are placed, because the player picks which one they are positioning.
     expect(slots()).toHaveLength(ROSTER_SIZE);
     expect(slots().every((slot) => slot.hex === null)).toBe(true);
-    expect(matchStore.getState().selectedSlot).toBe(BUNKER);
+    expect(activeSlot()).toBe(BUNKER);
   });
 
   it('still has a board, because terrain is public (spec §11)', () => {
@@ -117,7 +133,8 @@ describe('placeHex', () => {
   it('pre-selects the roster in order, so four clicks fill it', () => {
     const kinds: string[] = [];
     for (let i = 0; i < ROSTER_SIZE; i++) {
-      kinds.push(slots()[matchStore.getState().selectedSlot].kind);
+      const { activeSeat, selectedSlot } = matchStore.getState();
+      kinds.push(slots()[selectedSlot[activeSeat]].kind);
       placeHex(targets()[0]);
     }
 
@@ -155,7 +172,7 @@ describe('placeHex', () => {
     placeHex(targets()[0]);
     // Bunker and decoy are still empty, so it goes back to the earliest gap
     // rather than marching on to base 2.
-    expect(matchStore.getState().selectedSlot).toBe(BUNKER);
+    expect(activeSlot()).toBe(BUNKER);
   });
 
   it('ignores an illegal hex — nothing is placed and the selection stays put', () => {
@@ -163,7 +180,7 @@ describe('placeHex', () => {
     placeHex(offsetToAxial({ col: 8, row: 1 }));
 
     expect(placedCount()).toBe(0);
-    expect(matchStore.getState().selectedSlot).toBe(BUNKER);
+    expect(activeSlot()).toBe(BUNKER);
     expect(matchStarted()).toBe(false);
   });
 
@@ -222,7 +239,7 @@ describe('placeHex', () => {
     placeAll();
 
     const own = viewFor(SANDBOX_PLAYER)!.units;
-    for (const placement of placementSetup(matchStore.getState().placed)) {
+    for (const placement of placementSetup(mine())) {
       const unit = own.find((u) => hexKey(u.position) === hexKey(placement.hex));
       expect(unit?.kind).toBe(placement.kind);
     }
@@ -256,7 +273,7 @@ function placeAllWithoutStarting(): void {
 describe('selectSlot', () => {
   it('selects an empty slot and clears the board selection', () => {
     selectSlot(BASE_2);
-    expect(matchStore.getState().selectedSlot).toBe(BASE_2);
+    expect(activeSlot()).toBe(BASE_2);
     expect(matchStore.getState().selected).toBeNull();
   });
 
@@ -271,7 +288,7 @@ describe('selectSlot', () => {
 
   it('ignores a slot id that is not on the roster', () => {
     selectSlot(ROSTER_SIZE);
-    expect(matchStore.getState().selectedSlot).toBe(BUNKER);
+    expect(activeSlot()).toBe(BUNKER);
   });
 });
 
@@ -289,7 +306,7 @@ describe('clearSlot / clearPlacements', () => {
   it('selects the slot it emptied, ready to re-place it', () => {
     placeAllWithoutStarting();
     clearSlot(BASE_2);
-    expect(matchStore.getState().selectedSlot).toBe(BASE_2);
+    expect(activeSlot()).toBe(BASE_2);
   });
 
   it('does nothing to an empty slot', () => {
@@ -303,7 +320,7 @@ describe('clearSlot / clearPlacements', () => {
     clearPlacements();
 
     expect(placedCount()).toBe(0);
-    expect(matchStore.getState().selectedSlot).toBe(BUNKER);
+    expect(activeSlot()).toBe(BUNKER);
   });
 
   it('cannot rewrite a setup once the match has started (§12 — secret and final)', () => {
@@ -331,9 +348,9 @@ describe('startPlacedMatch', () => {
 
     const { map, placed } = matchStore.getState();
     expect(matchStarted()).toBe(true);
-    expect(validateSetup(map, SANDBOX_PLAYER, placementSetup(placed))).toEqual({
-      legal: true,
-    });
+    expect(
+      validateSetup(map, SANDBOX_PLAYER, placementSetup(placed[SANDBOX_PLAYER])),
+    ).toEqual({ legal: true });
   });
 
   it('is a no-op when a match is already running', () => {
@@ -354,9 +371,9 @@ describe('autoPlace', () => {
 
     const { map, placed } = matchStore.getState();
     expect(matchStarted()).toBe(true);
-    expect(validateSetup(map, SANDBOX_PLAYER, placementSetup(placed))).toEqual({
-      legal: true,
-    });
+    expect(
+      validateSetup(map, SANDBOX_PLAYER, placementSetup(placed[SANDBOX_PLAYER])),
+    ).toEqual({ legal: true });
   });
 
   it('fills every roster slot, so the panel is not left half-empty', () => {
@@ -421,7 +438,7 @@ describe('the setup screen and the visibility filter', () => {
     expect(placedCount()).toBe(1);
 
     const zone = RULES.homeZoneRows[SANDBOX_PLAYER];
-    for (const { hex } of placementSetup(state.placed)) {
+    for (const { hex } of placementSetup(state.placed[SANDBOX_PLAYER])) {
       const { row } = axialToOffset(hex);
       expect(row).toBeGreaterThanOrEqual(zone.min);
       expect(row).toBeLessThanOrEqual(zone.max);
@@ -497,7 +514,7 @@ describe('match actions before the match starts', () => {
       unitId: `${SANDBOX_PLAYER}-launcher-1`,
       destination: offsetToAxial({ col: 2, row: 15 }),
     });
-    expect(matchStore.getState().draft).toEqual({});
+    expect(matchStore.getState().draft[SANDBOX_PLAYER]).toEqual({});
   });
 });
 

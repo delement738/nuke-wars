@@ -28,7 +28,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Application, Container } from 'pixi.js';
-import { hoverHex, pickHex, SANDBOX_PLAYER } from '../state/match';
+import { hoverHex, pickHex } from '../state/match';
 import { targetsFor } from '../state/orders';
 import {
   exclusionHexes,
@@ -36,6 +36,7 @@ import {
   placementTargets,
 } from '../state/placement';
 import {
+  useActiveSeat,
   useDraft,
   useHovered,
   useMap,
@@ -167,6 +168,7 @@ export default function GameCanvas() {
   // `VisibleGameState.map` is this same object by reference.
   const map = useMap();
   const view = useView();
+  const activeSeat = useActiveSeat();
   const placed = usePlaced();
   const selectedSlot = useSelectedSlot();
   const selected = useSelected();
@@ -194,13 +196,19 @@ export default function GameCanvas() {
   // asset go", and for an asset already on the board that means "where may it
   // move to". Memoised for the same reason as above — `placementTargets` scans
   // the whole home zone and this re-renders on hover.
+  //
+  // Keyed on the ACTIVE SEAT, not on a fixed player (build-order step 10c): in
+  // hotseat the second pass over this screen is P2 placing, and their legal
+  // ground is the far end of the board (§7). `placed` and `selectedSlot` come
+  // from viewer-keyed hooks, and while placing in hotseat the viewer and the
+  // active seat are always the same player — the handoff moves them together.
   const setupTargets = useMemo(
-    () => (view ? [] : placementTargets(map, SANDBOX_PLAYER, placed, selectedSlot)),
-    [view, map, placed, selectedSlot],
+    () => (view ? [] : placementTargets(map, activeSeat, placed, selectedSlot)),
+    [view, map, activeSeat, placed, selectedSlot],
   );
   const setupExclusion = useMemo(
-    () => (view ? [] : exclusionHexes(map, SANDBOX_PLAYER, placed, selectedSlot)),
-    [view, map, placed, selectedSlot],
+    () => (view ? [] : exclusionHexes(map, activeSeat, placed, selectedSlot)),
+    [view, map, activeSeat, placed, selectedSlot],
   );
   const setupSlots = useMemo(
     () => (view ? [] : placementSlots(placed)),

@@ -19,15 +19,15 @@
 // routes clicks during play — one place that decides what clicking a hex means.
 
 import { RULES, type PlaceableKind } from '../sim/defs';
+import { opponentOf } from '../sim/types';
 import {
   autoPlace,
   clearPlacements,
   clearSlot,
   newMatch,
   selectSlot,
+  setSeating,
   startPlacedMatch,
-  SANDBOX_DUMMY,
-  SANDBOX_PLAYER,
 } from '../state/match';
 import {
   ROSTER_SIZE,
@@ -35,7 +35,15 @@ import {
   placementSlots,
   type PlacementSlot,
 } from '../state/placement';
-import { usePlaced, useSeed, useSelectedSlot } from '../state/useMatch';
+import { HOTSEAT_SEATS, SOLO_SEATS } from '../state/seats';
+import {
+  useActiveSeat,
+  useAwaitingSetup,
+  useIsHotseat,
+  usePlaced,
+  useSeed,
+  useSelectedSlot,
+} from '../state/useMatch';
 import { hexLabel } from './eventText';
 
 /** What each asset is called on screen. */
@@ -72,6 +80,12 @@ export default function SetupPanel() {
   const placed = usePlaced();
   const selectedSlot = useSelectedSlot();
   const seed = useSeed();
+  // Who is placing right now. In hotseat this screen is visited twice, once per
+  // player, and everything on it — the roster, the highlight, the home-zone rows
+  // — belongs to whoever is currently at the keyboard (build-order step 10c).
+  const seat = useActiveSeat();
+  const hotseat = useIsHotseat();
+  const awaiting = useAwaitingSetup();
 
   const slots = placementSlots(placed);
   const active = slots[selectedSlot];
@@ -93,11 +107,11 @@ export default function SetupPanel() {
           </h2>
 
           <p className="muted">
-            You are {SANDBOX_PLAYER.toUpperCase()}, holding the south. Place your
-            four assets anywhere in your home zone — rows{' '}
-            {RULES.homeZoneRows[SANDBOX_PLAYER].min}–
-            {RULES.homeZoneRows[SANDBOX_PLAYER].max}, highlighted in gold. Plains
-            or mountain both work: nothing static is driven into position.
+            You are {seat.toUpperCase()}, holding the{' '}
+            {seat === 'p1' ? 'south' : 'north'}. Place your four assets anywhere
+            in your home zone — rows {RULES.homeZoneRows[seat].min}–
+            {RULES.homeZoneRows[seat].max}, highlighted in gold. Plains or
+            mountain both work: nothing static is driven into position.
           </p>
 
           <ul className="unit-list">
@@ -143,7 +157,11 @@ export default function SetupPanel() {
 
           <div className="buttons">
             <button type="button" onClick={() => startPlacedMatch()} disabled={!ready}>
-              {ready ? 'Start match' : `Place all ${ROSTER_SIZE} to start`}
+              {!ready
+                ? `Place all ${ROSTER_SIZE} to continue`
+                : awaiting
+                  ? `Done — pass to ${opponentOf(seat).toUpperCase()}`
+                  : 'Start match'}
             </button>
             <button
               type="button"
@@ -156,14 +174,36 @@ export default function SetupPanel() {
 
           <p className="footnote">
             Place them in any order, and move any of them as often as you like —
-            nothing is committed until you press Start. From then on your setup is
-            secret: {SANDBOX_DUMMY.toUpperCase()} places theirs at the same time,
-            and neither of you ever sees the other's.
+            nothing is committed until you press the button above. From then on
+            your setup is secret: {opponentOf(seat).toUpperCase()} hides theirs
+            without ever seeing yours, and neither of you sees the other's.
           </p>
         </section>
 
         <section className="panel">
-          <h2>Sandbox</h2>
+          <h2>Game</h2>
+
+          <div className="buttons">
+            <button
+              type="button"
+              onClick={() => setSeating(SOLO_SEATS)}
+              disabled={!hotseat}
+            >
+              One player vs CPU
+            </button>
+            <button
+              type="button"
+              onClick={() => setSeating(HOTSEAT_SEATS)}
+              disabled={hotseat}
+            >
+              Two players (hotseat)
+            </button>
+          </div>
+          <p className="footnote">
+            {hotseat
+              ? 'Two humans, one screen: you each hide your assets in turn, then each give orders in turn, with the screen blanked in between. Switching abandons this setup.'
+              : 'You against a CPU that plays from its own redacted view, exactly as a human in that seat would. Switching abandons this setup.'}
+          </p>
 
           <div className="buttons">
             <button type="button" onClick={() => autoPlace()}>
@@ -171,9 +211,9 @@ export default function SetupPanel() {
             </button>
           </div>
           <p className="footnote">
-            Places your four assets for you, using the same function that builds
-            the CPU's setup — handy when you are testing something that is not
-            placement.
+            Places {hotseat ? 'both players’ assets' : 'your four assets'} for
+            you, using the same function that builds the CPU's setup — handy when
+            you are testing something that is not placement.
           </p>
 
           <div className="buttons">

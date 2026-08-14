@@ -22,7 +22,8 @@ import type { MapData } from '../sim/map';
 import type { PlayerId, UnitId, VisibleGameState } from '../sim/types';
 import { matchStore, type LogEntry } from './match';
 import type { OrderDraft, OrderMode } from './orders';
-import type { PlacementDraft } from './placement';
+import { placementComplete, type PlacementDraft } from './placement';
+import { isHotseat, nextSeat } from './seats';
 
 /**
  * The board as the current viewer is allowed to see it (spec §6 layer 2) — or
@@ -53,15 +54,22 @@ export function useMap(): MapData {
   return useStore(matchStore, (state) => state.map);
 }
 
-/** The human's own placements, one entry per roster slot (spec §12). Pass it to
- *  `placementSlots` for the roster the setup panel lists. */
+/**
+ * The **viewer's own** placements, one entry per roster slot (spec §12). Pass it
+ * to `placementSlots` for the roster the setup panel lists.
+ *
+ * Keyed on `viewer` inside the hook, and that is load-bearing since 10c: in
+ * hotseat both players' secret setups are in the store at once, so a hook that
+ * took a `PlayerId` from its caller would be one mistyped argument away from
+ * showing a player their opponent's four hidden hexes (gotcha 36).
+ */
 export function usePlaced(): PlacementDraft {
-  return useStore(matchStore, (state) => state.placed);
+  return useStore(matchStore, (state) => state.placed[state.viewer]);
 }
 
-/** Which roster slot the setup screen is positioning (spec §12). */
+/** Which roster slot the viewer's setup screen is positioning (spec §12). */
 export function useSelectedSlot(): number {
-  return useStore(matchStore, (state) => state.selectedSlot);
+  return useStore(matchStore, (state) => state.selectedSlot[state.viewer]);
 }
 
 /** The current viewer's permanent event history (spec §11). */
@@ -72,6 +80,56 @@ export function useLog(): readonly LogEntry[] {
 /** Whose view is on screen. */
 export function useViewer(): PlayerId {
   return useStore(matchStore, (state) => state.viewer);
+}
+
+/**
+ * Whose turn it is to act (build-order step 10c).
+ *
+ * Equal to `useViewer()` in hotseat and while playing solo normally; the two
+ * come apart only when the solo debug viewer switch is used, which is exactly
+ * the case the order builder must refuse to serve (gotcha 41d).
+ */
+export function useActiveSeat(): PlayerId {
+  return useStore(matchStore, (state) => state.activeSeat);
+}
+
+/**
+ * The player the screen is waiting to be passed to, or null when someone is
+ * already at it (build-order step 10c).
+ *
+ * `App` renders the handoff prompt and nothing else while this is set — the
+ * blank that stands in for the structural secrecy solo play gets for free.
+ */
+export function useHandoff(): PlayerId | null {
+  return useStore(matchStore, (state) => state.handoff);
+}
+
+/** Whether two humans are sharing this screen (build-order step 10c). Returns a
+ *  boolean, which `useSyncExternalStore` compares by value, so deriving it here
+ *  costs no extra renders. */
+export function useIsHotseat(): boolean {
+  return useStore(matchStore, (state) => isHotseat(state.seats));
+}
+
+/**
+ * Whether committing this setup will hand the screen over rather than start the
+ * match — i.e. another human still has assets to hide (build-order step 10c).
+ *
+ * It answers only *whether* someone else is still placing, never *what* they
+ * have placed, so it is a fact about the procedure rather than about the board.
+ * The setup panel needs it to label its button honestly: pressing Start as the
+ * first player in a hotseat game does not start anything.
+ */
+export function useAwaitingSetup(): boolean {
+  return useStore(
+    matchStore,
+    (state) =>
+      nextSeat(
+        state.seats,
+        state.activeSeat,
+        (player) => !placementComplete(state.placed[player]),
+      ) !== null,
+  );
 }
 
 /** The selected hex, or null. */
@@ -94,9 +152,16 @@ export function useHovered(): Hex | null {
   return useStore(matchStore, (state) => state.hovered);
 }
 
-/** This round's queued decisions, keyed by unit (spec §9's budget, structural). */
+/**
+ * The **viewer's** queued decisions for this round, keyed by unit (spec §9's
+ * budget, structural).
+ *
+ * Keyed on `viewer` for the same reason as `usePlaced`: orders are simultaneous
+ * and hidden (§3), so in hotseat the other player's draft is exactly as secret
+ * as their placements.
+ */
 export function useDraft(): OrderDraft {
-  return useStore(matchStore, (state) => state.draft);
+  return useStore(matchStore, (state) => state.draft[state.viewer]);
 }
 
 /** The running match's map seed — shown in the HUD so a board can be re-rolled. */
