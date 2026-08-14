@@ -168,6 +168,20 @@ export default function OrderPanel() {
               and the launcher holds. That risk is what the drone is for.
             </p>
           )}
+          {orderMode === 'MARCH' && (
+            // The same §9 prediction caveat, plus the one rule a player will
+            // otherwise learn the hard way (CLAUDE.md gotcha 51): the reveal
+            // fires on the ATTEMPT. A march blocked by an unseen enemy pays the
+            // full price and buys nothing, which is what makes marching into
+            // unscouted ground a genuinely worse bet than walking into it.
+            <p className="footnote">
+              The red hex is what you are giving away: the enemy sees the hex you
+              left, for one round, and never where you arrived. They learn a
+              bearing, not a target. Be sure before you commit — if an enemy you
+              have not detected is standing on the destination the march fails
+              outright and is <em>still</em> heard.
+            </p>
+          )}
           <div className="buttons">
             <button type="button" onClick={() => setOrderMode(null)}>
               Cancel
