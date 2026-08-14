@@ -11,10 +11,17 @@
 // lets the UI call reachableHexes() to highlight legal destinations and be
 // guaranteed the highlight matches what the engine will actually accept.
 
-import { TERRAIN_DEFS, UNIT_DEFS } from './defs';
+import { RULES, TERRAIN_DEFS, UNIT_DEFS } from './defs';
 import { axialToOffset, hexKey, neighbors, type Hex } from './hex';
 import { tileAt } from './map';
-import type { GameState, MoveOrder, PlayerId, Unit } from './types';
+import type {
+  GameState,
+  GroundOrder,
+  MarchOrder,
+  MoveOrder,
+  PlayerId,
+  Unit,
+} from './types';
 
 export type MoveIllegalReason =
   | 'UNKNOWN_UNIT' // no unit in the game carries that id
@@ -85,6 +92,7 @@ function occupiedHexes(state: GameState, mover: Unit): Set<string> {
 export function reachableHexes(
   state: GameState,
   unit: Unit,
+  budget: number = UNIT_DEFS[unit.kind].movement,
 ): Map<string, ReachableHex> {
   const start: ReachableHex = { hex: unit.position, cost: 0 };
   const best = new Map<string, ReachableHex>([[hexKey(unit.position), start]]);
@@ -93,9 +101,12 @@ export function reachableHexes(
   // ground budget — it ignores terrain and units entirely (spec §11), so
   // running it through this flood fill would produce a confidently wrong
   // answer. Ground movement is launchers only (spec §9).
+  //
+  // This guard is also what makes the `budget` parameter safe: a caller passing
+  // a forced-march budget for a drone gets the drone's own hex back, not a
+  // 6-hex ground fill for a unit that has no ground budget at all.
   if (unit.kind !== 'launcher') return best;
 
-  const budget = UNIT_DEFS[unit.kind].movement;
   if (budget <= 0) return best;
 
   const blocked = occupiedHexes(state, unit);
@@ -140,12 +151,39 @@ export function reachableHexes(
 }
 
 /**
- * Whether `playerId` may issue this MOVE order against the *full* game state.
+ * The ground budget an order spends (spec §9).
+ *
+ * The ONE difference between walking and forced-marching, and it lives here so
+ * that the sim, the UI's target highlight and the CPU all read it from the same
+ * function rather than each remembering which constant goes with which order
+ * kind. A march that used the walking budget would silently offer three hexes
+ * and charge the player a public reveal for them.
+ *
+ * Non-launchers get their own `UNIT_DEFS` number, which is 0 for everything
+ * static and a flight range for the drone — neither reaches ground movement, and
+ * `reachableHexes` refuses both regardless.
+ */
+export function groundBudget(unit: Unit, orderType: GroundOrder['type']): number {
+  if (unit.kind !== 'launcher') return UNIT_DEFS[unit.kind].movement;
+  return orderType === 'MARCH'
+    ? RULES.forcedMarchMovement
+    : UNIT_DEFS.launcher.movement;
+}
+
+/**
+ * Whether `playerId` may issue this ground order against the *full* game state.
  *
  * Checks run most-specific-first so the reason is precise: a destination that
  * is off-map, a mountain, or occupied reports exactly that, rather than
  * collapsing into a vague OUT_OF_RANGE. Tests and UI messaging both depend on
  * that distinction.
+ *
+ * **MOVE and MARCH are validated by the same code on different budgets** (spec
+ * §9). A forced march is not a different kind of movement — same terrain, same
+ * occupancy rule, same standoff adjudication downstream — it is the same move
+ * with a bigger allowance and a public price, so the only thing that may branch
+ * on the order kind is `groundBudget`. Two separate validators would be two
+ * places for the mountain rule to drift apart.
  *
  * Note this validates against true state, not the visibility-filtered state. In
  * V1.5 the server calls it with full knowledge, so a player can legally *order*
@@ -153,10 +191,10 @@ export function reachableHexes(
  * order fails entirely at resolution — the unit holds position, no partial
  * advance. Applying that (and the same-hex standoff rule) belongs to resolve().
  */
-export function validateMove(
+function validateGround(
   state: GameState,
   playerId: PlayerId,
-  order: MoveOrder,
+  order: GroundOrder,
 ): MoveValidation {
   const unit = state.units.find((u) => u.id === order.unitId);
   if (!unit) return { legal: false, reason: 'UNKNOWN_UNIT' };
@@ -183,8 +221,41 @@ export function validateMove(
     return { legal: false, reason: 'TILE_OCCUPIED' };
   }
 
-  const reached = reachableHexes(state, unit).get(destination);
+  const reached = reachableHexes(
+    state,
+    unit,
+    groundBudget(unit, order.type),
+  ).get(destination);
   if (!reached) return { legal: false, reason: 'OUT_OF_RANGE' };
 
   return { legal: true, cost: reached.cost };
+}
+
+/** Whether `playerId` may issue this MOVE order (spec §9). */
+export function validateMove(
+  state: GameState,
+  playerId: PlayerId,
+  order: MoveOrder,
+): MoveValidation {
+  return validateGround(state, playerId, order);
+}
+
+/**
+ * Whether `playerId` may issue this MARCH order (spec §9, §11).
+ *
+ * Identical to `validateMove` except for the budget — see `validateGround`.
+ *
+ * **A march to a hex the launcher could have walked to is legal, deliberately.**
+ * Rejecting one would be a new rule that costs the player an option and buys
+ * nothing: paying a public reveal for a short move is exactly the feint this
+ * feature makes possible, since the enemy learns a hex you have already left and
+ * may spend a counter-battery volley on it. Whether that trade is worth it is
+ * the player's judgement, not the validator's.
+ */
+export function validateMarch(
+  state: GameState,
+  playerId: PlayerId,
+  order: MarchOrder,
+): MoveValidation {
+  return validateGround(state, playerId, order);
 }

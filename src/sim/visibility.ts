@@ -215,7 +215,12 @@ export function filterEventsForPlayer(
         break;
 
       // --- Both players ----------------------------------------------------
+      // MARCH_DETECTED and DRONE_DOWNED both carry an `owner` and are still
+      // public: the field names whose *unit* the event is about, not who may
+      // read it. Loud actions are heard by everybody (§11), and a drone's death
+      // hex is already known to the base owner who caused it (§6).
       case 'LAUNCH_DETECTED':
+      case 'MARCH_DETECTED':
       case 'MISSILE_INTERCEPTED':
       case 'IMPACT':
       case 'UNIT_DESTROYED':

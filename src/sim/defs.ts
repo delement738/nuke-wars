@@ -216,6 +216,36 @@ export const RULES = {
   missileRange: 6,
 
   /**
+   * Ground budget a launcher spends on a MARCH order instead of its normal
+   * `UNIT_DEFS.launcher.movement` (spec §9, §11 — added 2026-08-13).
+   *
+   * A forced march is the second **loud** action in the game: the launcher's
+   * origin hex is detected automatically and unsuppressably, exactly as a launch
+   * is. That is the whole price — there is no other penalty, and a marching
+   * launcher is subject to the same terrain, occupancy and standoff rules as one
+   * that walks.
+   *
+   * Tuning note, and it is the same shape of argument as `UNIT_DEFS.launcher.
+   * movement`: this number is meaningless in isolation and only matters against
+   * the 8-cost approach from a launcher spawn to a firing position (see
+   * `TERRAIN_GEN.maxApproachCost`). At 3 that approach takes 3 rounds; at 6 it
+   * takes 2. Set equal to `missileRange` deliberately, which makes the geometry
+   * learnable from one fact: **the disc the enemy must blind-fire into to catch
+   * a marcher is exactly the disc a single launcher can already cover.** Raising
+   * it further starts to outrun counter-battery entirely and turns the reveal
+   * into a formality; lowering it toward 4 makes the reveal cost more than the
+   * hexes are worth and the order stops being played at all.
+   *
+   * Why the price is deliberately soft: a launch contact cannot be stale, so it
+   * is a live target — a launcher that fired could not also move (§3, §11). A
+   * march contact is the opposite and is stale by construction, since the
+   * launcher has by definition just left. The enemy buys a bearing and an axis of
+   * advance, not a kill, which is the right exchange rate for a movement buff and
+   * is what makes marching *out* of a hex a usable feint.
+   */
+  forcedMarchMovement: 6,
+
+  /**
    * Hits a landing missile deals to whatever occupies its target hex (spec §3).
    *
    * Damage is hits-based with no variance, and hits STACK within a round: two

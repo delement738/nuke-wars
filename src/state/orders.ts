@@ -18,6 +18,7 @@
 // unit the player could not see. The highlight is a prediction, never a promise.
 
 import { RULES, UNIT_DEFS } from '../sim/defs';
+import { validateMarch } from '../sim/movement';
 import {
   axialToOffset,
   compareHex,
@@ -27,7 +28,7 @@ import {
 } from '../sim/hex';
 import { tileAt, type MapData } from '../sim/map';
 import { validateLaunch } from '../sim/missiles';
-import { reachableHexes, validateMove } from '../sim/movement';
+import { groundBudget, reachableHexes, validateMove } from '../sim/movement';
 import { validateFly } from '../sim/recon';
 import type { Order, Unit, UnitId, VisibleGameState } from '../sim/types';
 import { believedState, knownEnemyHexes } from './belief';
@@ -100,6 +101,15 @@ export const EMPTY_DRAFT: OrderDraft = {};
  *     (§3). Their opponent issues no orders at all that round, so every unit on
  *     that side returns an empty list — which is also what stops the round from
  *     auto-resolving forever on a vacuously-complete draft (see `allDecided`).
+ *
+ * **MARCH is deliberately absent from this list for now** (2026-08-13). The
+ * forced-march rule is complete and tested in `src/sim/`, but its UI — a third
+ * order button, a second movement overlay that has to read as "further, and
+ * loud", and the CPU tiers deciding when the reveal is worth paying — is its own
+ * session. This function is the single gate: `isLegalOrder` consults it before
+ * calling the validator, so until 'MARCH' is added here no draft, no click and
+ * no CPU can produce one, and the sim rule sits inert. Adding it is the first
+ * line of that session, not an oversight to fix in passing.
  */
 export function modesFor(view: VisibleGameState, unit: Unit): OrderMode[] {
   if (view.outcome !== null || view.phase === 'GAME_OVER') return [];
@@ -184,13 +194,41 @@ function straightLineTargets(map: MapData, from: Hex, range: number): Hex[] {
  * `MOVE_FAILED`). That risk is the reason flying the drone is worth a round.
  */
 export function moveTargets(view: VisibleGameState, unit: Unit): Hex[] {
-  if (!modesFor(view, unit).includes('MOVE')) return [];
+  return groundTargets(view, unit, 'MOVE');
+}
+
+/**
+ * Where this launcher may be sent on a forced march (spec §9, §11).
+ *
+ * The same function as `moveTargets` on a bigger budget — a march is a walk
+ * that goes further and is heard doing it, not a different kind of movement, so
+ * the terrain, the flood fill and the detected-enemy subtraction are all shared.
+ * The *cost* of picking one of these hexes is not visible in this list at all:
+ * it is the public `MARCH_DETECTED` on your origin, which the panel has to say
+ * in words because no highlight can show it.
+ */
+export function marchTargets(view: VisibleGameState, unit: Unit): Hex[] {
+  return groundTargets(view, unit, 'MARCH');
+}
+
+/**
+ * The shared body of `moveTargets` / `marchTargets` — the only difference
+ * between them is the budget, which comes from the sim's own `groundBudget` so
+ * the highlight cannot offer a hex the engine would then refuse.
+ */
+function groundTargets(
+  view: VisibleGameState,
+  unit: Unit,
+  mode: 'MOVE' | 'MARCH',
+): Hex[] {
+  if (!modesFor(view, unit).includes(mode)) return [];
 
   const known = knownEnemyHexes(view);
   const origin = hexKey(unit.position);
   const targets: Hex[] = [];
 
-  for (const { hex } of reachableHexes(believedState(view), unit).values()) {
+  const budget = groundBudget(unit, mode);
+  for (const { hex } of reachableHexes(believedState(view), unit, budget).values()) {
     const key = hexKey(hex);
     if (key === origin) continue; // SAME_HEX — ordering a unit where it stands
     if (known.has(key)) continue; // seen to be occupied (§9)
@@ -245,6 +283,8 @@ export function targetsFor(
   switch (mode) {
     case 'MOVE':
       return moveTargets(view, unit);
+    case 'MARCH':
+      return marchTargets(view, unit);
     case 'LAUNCH':
       return launchTargets(view, unit);
     case 'FLY':
@@ -257,6 +297,8 @@ export function orderFor(unit: Unit, mode: OrderMode, hex: Hex): Order {
   switch (mode) {
     case 'MOVE':
       return { type: 'MOVE', unitId: unit.id, destination: hex };
+    case 'MARCH':
+      return { type: 'MARCH', unitId: unit.id, destination: hex };
     case 'LAUNCH':
       return { type: 'LAUNCH', unitId: unit.id, target: hex };
     case 'FLY':
@@ -286,6 +328,8 @@ export function isLegalOrder(view: VisibleGameState, order: Order): boolean {
   switch (order.type) {
     case 'MOVE':
       return validateMove(believed, unit.owner, order).legal;
+    case 'MARCH':
+      return validateMarch(believed, unit.owner, order).legal;
     case 'LAUNCH':
       return validateLaunch(believed, unit.owner, order).legal;
     case 'FLY':
