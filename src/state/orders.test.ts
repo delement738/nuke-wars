@@ -17,7 +17,7 @@ import {
   type TileData,
 } from '../sim/map';
 import { validateLaunch } from '../sim/missiles';
-import { reachableHexes, validateMove } from '../sim/movement';
+import { reachableHexes, validateMarch, validateMove } from '../sim/movement';
 import { validateFly } from '../sim/recon';
 import { startMatch } from '../sim/setup';
 import type {
@@ -38,6 +38,7 @@ import {
   flyTargets,
   isLegalOrder,
   launchTargets,
+  marchTargets,
   modesFor,
   moveTargets,
   orderFor,
@@ -473,9 +474,12 @@ describe('OrderDraft', () => {
     let draft: OrderDraft = EMPTY_DRAFT;
     for (const unit of orderableUnits(view)) {
       for (const mode of modesFor(view, unit)) {
-        const target = { MOVE: moveTargets, LAUNCH: launchTargets, FLY: flyTargets }[
-          mode
-        ](view, unit)[0];
+        const target = {
+          MOVE: moveTargets,
+          MARCH: marchTargets,
+          LAUNCH: launchTargets,
+          FLY: flyTargets,
+        }[mode](view, unit)[0];
         draft = withOrder(view, draft, orderFor(unit, mode, target));
       }
     }
@@ -560,9 +564,12 @@ describe('on a real match board', () => {
     let checked = 0;
     for (const unit of orderableUnits(view)) {
       for (const mode of modesFor(view, unit)) {
-        const targets = { MOVE: moveTargets, LAUNCH: launchTargets, FLY: flyTargets }[
-          mode
-        ](view, unit);
+        const targets = {
+          MOVE: moveTargets,
+          MARCH: marchTargets,
+          LAUNCH: launchTargets,
+          FLY: flyTargets,
+        }[mode](view, unit);
         expect(targets.length).toBeGreaterThan(0);
 
         for (const hex of targets) {
@@ -570,9 +577,11 @@ describe('on a real match board', () => {
           const check =
             order.type === 'MOVE'
               ? validateMove(believed, unit.owner, order)
-              : order.type === 'LAUNCH'
-                ? validateLaunch(believed, unit.owner, order)
-                : validateFly(believed, unit.owner, order);
+              : order.type === 'MARCH'
+                ? validateMarch(believed, unit.owner, order)
+                : order.type === 'LAUNCH'
+                  ? validateLaunch(believed, unit.owner, order)
+                  : validateFly(believed, unit.owner, order);
 
           expect(check.legal).toBe(true);
           checked++;
@@ -588,9 +597,12 @@ describe('on a real match board', () => {
     let draft: OrderDraft = EMPTY_DRAFT;
     for (const unit of orderableUnits(view)) {
       const mode = modesFor(view, unit)[0];
-      const target = { MOVE: moveTargets, LAUNCH: launchTargets, FLY: flyTargets }[
-        mode
-      ](view, unit)[0];
+      const target = {
+        MOVE: moveTargets,
+        MARCH: marchTargets,
+        LAUNCH: launchTargets,
+        FLY: flyTargets,
+      }[mode](view, unit)[0];
       draft = withOrder(view, draft, orderFor(unit, mode, target));
     }
 

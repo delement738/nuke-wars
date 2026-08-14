@@ -62,6 +62,10 @@ const COLOR = {
   // ground you will never occupy, FLY dots airspace that ignores the ground
   // entirely.
   move: 0x4ad991,
+  // A forced march is still ground you may stand on, so it stays in the MOVE
+  // family rather than becoming a fourth unrelated hue — the hotter green says
+  // "same ground, further, and loud" (spec §9, §11).
+  march: 0x9ee34a,
   launch: 0xffa54a,
   fly: 0xb27dff,
   hold: 0x8496aa,
@@ -334,6 +338,15 @@ function targetMark(mode: OrderMode, hex: Hex): Graphics {
         .poly(hexCorners(x, y))
         .fill({ color: COLOR.move, alpha: 0.18 })
         .stroke({ width: 1, color: COLOR.move, alpha: 0.35 });
+
+    // Also ground you may stand on, so also filled — but harder-edged, because
+    // the extra reach is bought with a public reveal of the hex you leave. The
+    // overlay cannot draw that cost; `OrderPanel` states it in words.
+    case 'MARCH':
+      return new Graphics()
+        .poly(hexCorners(x, y))
+        .fill({ color: COLOR.march, alpha: 0.14 })
+        .stroke({ width: 2, color: COLOR.march, alpha: 0.55 });
 
     // Reach, not ground: the missile passes over these and lands on one. An
     // outline says "within range" without implying the launcher goes there.

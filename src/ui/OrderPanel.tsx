@@ -41,6 +41,7 @@ import { hexLabel } from './eventText';
  *  buttons never start with the same letter at a glance. */
 const MODE_LABEL: Record<OrderMode, string> = {
   MOVE: 'Move',
+  MARCH: 'March',
   LAUNCH: 'Fire',
   FLY: 'Fly',
 };
@@ -48,6 +49,9 @@ const MODE_LABEL: Record<OrderMode, string> = {
 /** What picking this mode is asking the player to click. */
 const MODE_HINT: Record<OrderMode, string> = {
   MOVE: 'Click a green hex to advance there.',
+  // States the cost, because no overlay can draw it: the hexes look like richer
+  // MOVE ground, and the price is a public event on the hex you are leaving.
+  MARCH: 'Click a bright green hex to force-march there — twice the distance, but the hex you leave is announced to the enemy for one round.',
   LAUNCH: 'Click any hex in the amber ring to fire on it — mountains included, and blind fire at empty ground is legal.',
   FLY: 'Hover a violet hex to preview the flight path and the corridor it photographs, then click to commit.',
 };
@@ -205,6 +209,8 @@ function decisionLabel(unit: Unit, entry: DraftEntry | undefined): string {
   switch (entry.type) {
     case 'MOVE':
       return `move to ${hexLabel(entry.destination as Hex)}`;
+    case 'MARCH':
+      return `MARCH to ${hexLabel(entry.destination as Hex)} (origin revealed)`;
     case 'LAUNCH':
       return `fire on ${hexLabel(entry.target as Hex)}`;
     case 'FLY':

@@ -113,6 +113,23 @@ export interface Unit {
 export type Order =
   | { type: 'MOVE'; unitId: UnitId; destination: Hex }
   /**
+   * A forced march: the same ground move on a bigger budget
+   * (`RULES.forcedMarchMovement`), paid for by going loud (spec §9, §11).
+   *
+   * The launcher's *origin* hex is detected automatically and unsuppressably,
+   * exactly like a launch — forced marching is the second loud action in the
+   * game. What the enemy gets is deliberately weaker than a launch contact
+   * though: a launcher that fired cannot also have moved, so a launch origin is
+   * a live target, while a march origin is a hex its owner has by definition
+   * just left. They learn your axis of advance, not your position.
+   *
+   * A distinct order type rather than `MOVE { forced: true }` because everything
+   * in this engine discriminates on `type`, and because the client's `OrderMode`
+   * is derived as `Order['type']` — a new variant flows through to the UI's mode
+   * union instead of hiding inside a boolean every switch has to re-test.
+   */
+  | { type: 'MARCH'; unitId: UnitId; destination: Hex }
+  /**
    * Blind fire is legal (spec §3): the target hex need not contain anything
    * the player can see. It must simply be on the map, within range 6, and not
    * the launcher's own hex.
@@ -123,6 +140,19 @@ export type Order =
 
 /** Narrowed to the MOVE variant — the input shape the movement engine takes. */
 export type MoveOrder = Extract<Order, { type: 'MOVE' }>;
+
+/** Narrowed to the MARCH variant (spec §9). */
+export type MarchOrder = Extract<Order, { type: 'MARCH' }>;
+
+/**
+ * The two orders resolved by phase 5 — one shape, two budgets.
+ *
+ * They are deliberately interchangeable everywhere except the budget and the
+ * reveal: a march is subject to the same terrain, the same occupancy rule and
+ * the same standoff adjudication as a walk (spec §9). Anything that treats them
+ * differently beyond those two things is adding a rule the spec does not have.
+ */
+export type GroundOrder = MoveOrder | MarchOrder;
 
 /** Narrowed to the FLY variant — the input shape the recon engine takes. */
 export type FlyOrder = Extract<Order, { type: 'FLY' }>;
@@ -188,12 +218,21 @@ export interface StaticReveal {
 export interface LauncherContact {
   hex: Hex;
   /**
-   * How it was spotted. RECON contacts may already be stale — recon flies in
-   * phase 1 and launchers move in phase 5 of the same round. LAUNCH contacts
-   * cannot be: a launcher that fired could not also move, and counter-battery
-   * missiles land in phase 3, before movement (spec §3, §11).
+   * How it was spotted, and with it how much the hex is worth (spec §11).
+   *
+   * - **RECON** — *may* already be stale. Recon flies in phase 1 and launchers
+   *   move in phase 5 of the same round, so the launcher photographed here may
+   *   have driven off before you ever issue an order. Shooting at one is a bet.
+   * - **LAUNCH** — cannot be stale. A launcher that fired could not also move,
+   *   and counter-battery missiles land in phase 3, before movement (§3). A live
+   *   target for exactly one round, which is what makes firing a commitment.
+   * - **MARCH** — is stale *by construction*, and is the only source that says so
+   *   outright. The launcher announced a forced march and left; it is somewhere
+   *   within `RULES.forcedMarchMovement` of this hex and certainly not on it. A
+   *   bearing, not a target — and a hex its owner may have vacated deliberately
+   *   to draw a counter-battery volley into empty ground.
    */
-  source: 'RECON' | 'LAUNCH';
+  source: 'RECON' | 'LAUNCH' | 'MARCH';
 }
 
 /** One player's picture of the enemy. */
@@ -326,6 +365,31 @@ export type GameEvent =
    * gets a place and no trackable identity.
    */
   | { type: 'LAUNCH_DETECTED'; missileId: MissileId; origin: Hex; target: Hex }
+  /**
+   * A forced march was heard leaving `origin` (spec §9, §11). The second loud
+   * action in the game, and detected on exactly the same terms as a launch:
+   * automatic, universal, unsuppressable.
+   *
+   * **Carries the origin and NOT the destination**, which is the entire feature.
+   * Publishing where the launcher arrived would hand over its current position —
+   * the one thing paying the reveal is supposed to keep. What the enemy gets is
+   * a hex the launcher has provably left, plus the public knowledge that it is
+   * now within `RULES.forcedMarchMovement` of it.
+   *
+   * **Emitted in ascending origin-hex order, never in `GameState.units` order**
+   * — this is a public event, so units order would publish an ordering of the
+   * marching launchers' unit ids and let the enemy track a specific launcher
+   * across rounds. That is the cross-round identity §11 keys all intel by hex to
+   * withhold, and it is the same reason `canonicalOrder` sorts missiles by origin
+   * rather than by the firing launcher's id (§10). The owner-only movement events
+   * beside it keep units order, because there is no audience to leak to.
+   *
+   * `owner` is present even though `LAUNCH_DETECTED` has no such field, and it is
+   * not a leak: both recipients can already derive it, since each knows whether
+   * the march was one of their own. It saves the client from inferring whose
+   * march it was by matching hexes against its own units.
+   */
+  | { type: 'MARCH_DETECTED'; owner: PlayerId; origin: Hex }
   /**
    * Public, so firing cheap probes to map defense lanes is legitimate strategy
    * (spec §10). Names no interceptor base: the defender knows which of theirs

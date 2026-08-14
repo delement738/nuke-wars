@@ -129,6 +129,15 @@ export function describeEvent(
     case 'LAUNCH_DETECTED':
       return `Launch detected — ${hexLabel(event.origin)} → ${hexLabel(event.target)}.`;
 
+    case 'MARCH_DETECTED':
+      // Deliberately says where it *left*, never where it went — the event has
+      // no destination to report (§11). The wording leans on that: a march
+      // contact is a bearing, and the enemy's own copy of this line should read
+      // as a lead to chase rather than a target to shoot.
+      return event.owner === viewer
+        ? `Your launcher forced-marched from ${hexLabel(event.origin)} — the enemy heard it leave.`
+        : `Forced march detected leaving ${hexLabel(event.origin)} — that launcher is gone from there.`;
+
     case 'MISSILE_INTERCEPTED':
       return `Missile intercepted over ${hexLabel(event.hex)} — a base covers that hex.`;
 

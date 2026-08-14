@@ -35,7 +35,7 @@
 // emission, and iterating the two players — is pinned below.
 
 import { RULES, SPAWNS, UNIT_DEFS } from './defs';
-import { hexKey, offsetToAxial, type Hex } from './hex';
+import { compareHex, hexKey, offsetToAxial, type Hex } from './hex';
 import {
   canonicalOrder,
   createMissile,
@@ -44,7 +44,7 @@ import {
   validateLaunch,
   type Missile,
 } from './missiles';
-import { validateMove, type MoveIllegalReason } from './movement';
+import { validateMarch, validateMove, type MoveIllegalReason } from './movement';
 import { adjudicate, type Adjudication } from './outcomes';
 import { flyDrone, reconSwath, validateFly, type DroneFlight } from './recon';
 import {
@@ -556,8 +556,21 @@ interface AdmittedMove {
   destination: Hex;
 }
 
-/** Units whose MOVE order produced no movement — one `MOVE_FAILED` each. */
+/** Units whose ground order produced no movement — one `MOVE_FAILED` each. */
 type FailedMovers = Set<UnitId>;
+
+/**
+ * A forced march that was heard, and the hex it was heard leaving (spec §11).
+ *
+ * Carries the *origin*, captured from the start-of-phase board before anything
+ * moves — publishing the destination would hand over the launcher's new position
+ * and delete the entire point of the order. No unit id: the enemy gets a place,
+ * never a trackable identity (§11).
+ */
+interface MarchReveal {
+  owner: PlayerId;
+  origin: Hex;
+}
 
 interface MovementOutcome {
   /** New position per unit that actually moved. */
@@ -599,43 +612,70 @@ function ordersByUnit(orders: readonly Order[]): Map<UnitId, Order> {
 }
 
 /**
- * Validate one player's MOVE orders against the start-of-phase board.
+ * Validate one player's ground orders — MOVE and MARCH alike — against the
+ * start-of-phase board.
  *
  * `state` here is the snapshot every move is judged against — spec §9's
  * foundational rule. No move may see another move's result, which is what keeps
  * resolution order-independent and therefore deterministic (§6).
+ *
+ * **A forced march is admitted exactly like a walk** (§9). It differs in the
+ * budget, which `validateMarch` applies, and in being heard, which is collected
+ * here — nothing else about it is special, and adding a second rule for it
+ * anywhere downstream would be inventing one the spec does not have.
+ *
+ * **The reveal fires on the ATTEMPT, not on arrival** (§11, decided
+ * 2026-08-13). A march that is blocked by an unseen enemy, or that loses a
+ * standoff, was still ordered and still heard: the launcher revved up whether or
+ * not it got anywhere. The precise boundary is "any march that had an effect on
+ * the round" — one that moved, or one that earned a `MOVE_FAILED`. Marches
+ * dropped for reasons the ordering player could already see (a mountain
+ * destination, a dead unit, an enemy's unit id) are client bugs rather than
+ * gameplay, are dropped in silence exactly as the equivalent MOVE is, and are
+ * heard by nobody.
  */
 function admitMoves(
   state: GameState,
   unitsById: ReadonlyMap<UnitId, Unit>,
   playerId: PlayerId,
   orders: ReadonlyMap<UnitId, Order>,
-): { admitted: AdmittedMove[]; failed: UnitId[] } {
+): { admitted: AdmittedMove[]; failed: UnitId[]; marched: MarchReveal[] } {
   const admitted: AdmittedMove[] = [];
   const failed: UnitId[] = [];
+  const marched: MarchReveal[] = [];
 
   for (const order of orders.values()) {
-    // FLY was consumed by phase 1; LAUNCH is build-order step 6. Both are
-    // counted by ordersByUnit (so the one-order-per-unit rule is already
-    // correct) but neither is acted on here.
-    if (order.type !== 'MOVE') continue;
+    // FLY was consumed by phase 1 and LAUNCH by phase 2. Both are counted by
+    // ordersByUnit (so the one-order-per-unit rule is already correct) but
+    // neither is acted on here.
+    if (order.type !== 'MOVE' && order.type !== 'MARCH') continue;
 
-    const check = validateMove(state, playerId, order);
-    if (!check.legal) {
-      if (CONTACT_REASONS.has(check.reason)) failed.push(order.unitId);
-      continue;
+    const check =
+      order.type === 'MARCH'
+        ? validateMarch(state, playerId, order)
+        : validateMove(state, playerId, order);
+
+    // Looked up before the legality branch, because a *blocked* forced march is
+    // still a heard one and the reveal needs the launcher's start-of-phase hex.
+    const unit = unitsById.get(order.unitId);
+
+    // Unreachable when `check.legal` — a legal verdict already proves the unit
+    // exists and is this player's — and unreachable for a contact reason too,
+    // since both are raised after the lookup inside the validator. Narrowing
+    // rather than asserting keeps the impossible case from becoming a crash if
+    // the validator's contract ever changes.
+    if (!unit) continue;
+    if (!check.legal && !CONTACT_REASONS.has(check.reason)) continue;
+
+    if (order.type === 'MARCH') {
+      marched.push({ owner: playerId, origin: unit.position });
     }
 
-    const unit = unitsById.get(order.unitId);
-    // Unreachable: a legal verdict already proves the unit exists and is this
-    // player's. Narrowing rather than asserting keeps the impossible case from
-    // becoming a crash if validateMove's contract ever changes.
-    if (!unit) continue;
-
-    admitted.push({ unit, destination: order.destination });
+    if (check.legal) admitted.push({ unit, destination: order.destination });
+    else failed.push(order.unitId);
   }
 
-  return { admitted, failed };
+  return { admitted, failed, marched };
 }
 
 /**
@@ -675,13 +715,26 @@ function settleStandoffs(admitted: readonly AdmittedMove[]): MovementOutcome {
  * Resolution phase 5 — ground movement (spec §3, §9). Launchers only; the drone
  * moves by FLY along a `hexLine` and is never fed to ground movement (§11).
  *
- * Returns the new unit array and this phase's events rather than a whole state,
- * so the phase stays a pure function of the board it was handed.
+ * Returns the new unit array, the updated intel and this phase's events rather
+ * than a whole state, so the phase stays a pure function of the board it was
+ * handed. Intel joined the return when forced marching landed: phase 5 is now
+ * the third place a launcher contact can be filed, after recon (phase 1) and
+ * launch detection (phase 2).
+ *
+ * **Two different emission orders live in this function, and the difference is
+ * load-bearing** (spec §6, §9, §11). `UNIT_MOVED` and `MOVE_FAILED` are
+ * owner-only, so they are emitted in `GameState.units` order — canonical, and
+ * with no audience to leak an ordering to. `MARCH_DETECTED` is **public**, so it
+ * is emitted in ascending origin-hex order instead: units order would publish
+ * the relative unit ids of the marching launchers and hand the enemy a way to
+ * track a specific launcher from round to round, which is exactly the identity
+ * §11 keys every pile of intel by hex to withhold. Same reasoning, and the same
+ * `compareHex`, as the simultaneous-missile tiebreak in §10.
  */
 function runGroundMovement(
   state: GameState,
   orders: OrderBook,
-): { units: Unit[]; events: GameEvent[] } {
+): { units: Unit[]; intel: Record<PlayerId, PlayerIntel>; events: GameEvent[] } {
   const unitsById = new Map(state.units.map((unit) => [unit.id, unit]));
 
   const p1 = admitMoves(state, unitsById, 'p1', orders.p1);
@@ -694,12 +747,29 @@ function runGroundMovement(
     ...settled.failed,
   ]);
 
+  const intel = copyIntel(state.intel);
+  const events: GameEvent[] = [];
+
+  // The forced marches are heard first, because that is when they happened: the
+  // engines start, the enemy takes the bearing, and only then does the column
+  // actually go anywhere. Sorted by origin hex — see the note above.
+  const marched = [...p1.marched, ...p2.marched].sort((a, b) =>
+    compareHex(a.origin, b.origin),
+  );
+  for (const { owner, origin } of marched) {
+    events.push({ type: 'MARCH_DETECTED', owner, origin });
+    // `opponentOf(owner)`, because intel is keyed by the VIEWER: `intel.p1` is
+    // what p1 knows about p2 (CLAUDE.md gotcha 21b). Filing this against the
+    // marcher would give each player a map of their own marches and hide the
+    // enemy's — and would look perfectly reasonable in a diff.
+    recordContact(intel[opponentOf(owner)], origin, 'MARCH');
+  }
+
   // Emission order is pinned to `state.units`, NOT to the order arrays. Both
   // are deterministic, but this one is canonical: the same physical outcome
   // produces the same log no matter how either client happened to sort its
   // submission, so a replay can't diverge over presentation order (spec §6).
   const units: Unit[] = [];
-  const events: GameEvent[] = [];
 
   for (const unit of state.units) {
     const to = settled.moved.get(unit.id);
@@ -721,7 +791,7 @@ function runGroundMovement(
     }
   }
 
-  return { units, events };
+  return { units, intel, events };
 }
 
 // ---------------------------------------------------------------------------
@@ -934,9 +1004,12 @@ export function resolve(
   const verdict = adjudicate(working);
   if (verdict.type !== 'CONTINUE') return endRound(working, events, verdict);
 
-  // --- Phase 5: ground movement (spec §9) --------------------------------------
+  // --- Phase 5: ground movement (spec §9, §11) ---------------------------------
+  // Files MARCH-sourced launcher contacts on top of whatever phases 1 and 2 left,
+  // so a launcher that was photographed *and* then forced-marched out of the same
+  // hex is one entry, not two (§11 — intel is keyed by hex, first source wins).
   const movement = runGroundMovement(working, orders);
-  working = { ...working, units: movement.units };
+  working = { ...working, units: movement.units, intel: movement.intel };
   events.push(...movement.events);
 
   // --- Entering the next order phase: drone respawn tick (spec §11) ------------

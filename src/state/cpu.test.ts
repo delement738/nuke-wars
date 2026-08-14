@@ -10,7 +10,7 @@ import {
 } from '../sim/hex';
 import { generateMap, makeRng, type MapData, type TileData } from '../sim/map';
 import { validateLaunch as validateLaunchOrder } from '../sim/missiles';
-import { reachableHexes, validateMove } from '../sim/movement';
+import { reachableHexes, validateMarch, validateMove } from '../sim/movement';
 import { reconSwath, validateFly } from '../sim/recon';
 import { startMatch, type PlayerSetup } from '../sim/setup';
 import {
@@ -162,6 +162,13 @@ describe('cpuOrders — invariants that hold for every difficulty', () => {
           for (const order of cpuOrders(view, difficulty, player, makeRng(seed))) {
             if (order.type === 'MOVE') {
               expect(validateMove(truth, player, order)).toMatchObject({ legal: true });
+            } else if (order.type === 'MARCH') {
+              // Unreachable today — `modesFor` does not offer MARCH yet, so the
+              // CPU cannot produce one (see the note in `src/state/orders.ts`).
+              // Written out rather than folded into the FLY branch so that the
+              // session which teaches the CPU to march finds this assertion
+              // already checking it against TRUE state, not a mis-typed cast.
+              expect(validateMarch(truth, player, order)).toMatchObject({ legal: true });
             } else if (order.type === 'LAUNCH') {
               expect(validateLaunchOrder(truth, player, order)).toMatchObject({ legal: true });
             } else {
