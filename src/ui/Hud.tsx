@@ -23,17 +23,24 @@
 // player's picture — different units, different intel, a different log out of
 // one shared truth. Step 10 replaces it with a proper pass-the-screen sequence.
 
+import { opponentOf } from '../sim/types';
 import type { CpuDifficulty } from '../state/cpu';
 import {
+  endTurn,
   newMatch,
   resign,
-  resolveRound,
   setDifficulty,
   setViewer,
   SANDBOX_DUMMY,
   SANDBOX_PLAYER,
 } from '../state/match';
-import { useDifficulty, useSeed, useView, useViewer } from '../state/useMatch';
+import {
+  useDifficulty,
+  useIsHotseat,
+  useSeed,
+  useView,
+  useViewer,
+} from '../state/useMatch';
 import EventLog from './EventLog';
 import OrderPanel from './OrderPanel';
 import SelectionPanel from './SelectionPanel';
@@ -47,6 +54,7 @@ export default function Hud() {
   const viewer = useViewer();
   const seed = useSeed();
   const difficulty = useDifficulty();
+  const hotseat = useIsHotseat();
 
   // `App` only mounts this once a match exists, so a null view is unreachable —
   // but `useView()` is nullable because the setup screen legitimately has no
@@ -87,8 +95,15 @@ export default function Hud() {
           </p>
 
           <div className="buttons">
-            <button type="button" onClick={() => resolveRound()} disabled={over}>
-              {deadHand ? 'Resolve final volley' : 'Resolve round'}
+            <button type="button" onClick={() => endTurn()} disabled={over}>
+              {/* In hotseat this ends YOUR turn and passes the screen; only the
+                  second player's turn ending resolves the round, which is what
+                  keeps orders simultaneous (§3). */}
+              {hotseat
+                ? `Done — pass to ${opponentOf(viewer).toUpperCase()}`
+                : deadHand
+                  ? 'Resolve final volley'
+                  : 'Resolve round'}
             </button>
             <button type="button" onClick={() => resign(viewer)} disabled={over}>
               Resign
@@ -96,7 +111,7 @@ export default function Hud() {
           </div>
 
           <p className="footnote">
-            Resolving early is legal: any unit you have not decided holds, and a
+            Finishing early is legal: any unit you have not decided holds, and a
             drone with no order hovers and watches its own corridor (§3).
           </p>
         </section>
@@ -106,42 +121,59 @@ export default function Hud() {
         <SelectionPanel />
 
         <section className="panel">
-          <h2>Sandbox</h2>
-          <p className="muted">
-            You are {SANDBOX_PLAYER.toUpperCase()}; {SANDBOX_DUMMY.toUpperCase()} is
-            a CPU opponent that plays from its own redacted view, same as a human
-            in that seat would.
-          </p>
+          <h2>{hotseat ? 'Match' : 'Sandbox'}</h2>
 
-          <div className="buttons">
-            <button
-              type="button"
-              onClick={() => setViewer('p1')}
-              disabled={viewer === 'p1'}
-            >
-              View as P1
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewer('p2')}
-              disabled={viewer === 'p2'}
-            >
-              View as P2
-            </button>
-          </div>
+          {/* The viewer switch and the difficulty tiers are SOLO controls and
+              are not rendered in hotseat — a button that draws your opponent's
+              hidden board is a debug affordance when the opponent is a CPU and
+              simply a cheat when they are the person beside you. `setViewer`
+              refuses in hotseat too, so hiding the buttons is the second of two
+              independent guards rather than the only one. */}
+          {hotseat ? (
+            <p className="muted">
+              Two players, one screen. You are {viewer.toUpperCase()}; the screen
+              blanks between turns so neither of you sees the other's board,
+              orders or hidden assets.
+            </p>
+          ) : (
+            <>
+              <p className="muted">
+                You are {SANDBOX_PLAYER.toUpperCase()};{' '}
+                {SANDBOX_DUMMY.toUpperCase()} is a CPU opponent that plays from
+                its own redacted view, same as a human in that seat would.
+              </p>
 
-          <div className="buttons">
-            {DIFFICULTIES.map((level) => (
-              <button
-                key={level}
-                type="button"
-                onClick={() => setDifficulty(level)}
-                disabled={difficulty === level}
-              >
-                {level[0].toUpperCase() + level.slice(1)}
-              </button>
-            ))}
-          </div>
+              <div className="buttons">
+                <button
+                  type="button"
+                  onClick={() => setViewer('p1')}
+                  disabled={viewer === 'p1'}
+                >
+                  View as P1
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewer('p2')}
+                  disabled={viewer === 'p2'}
+                >
+                  View as P2
+                </button>
+              </div>
+
+              <div className="buttons">
+                {DIFFICULTIES.map((level) => (
+                  <button
+                    key={level}
+                    type="button"
+                    onClick={() => setDifficulty(level)}
+                    disabled={difficulty === level}
+                  >
+                    {level[0].toUpperCase() + level.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
           <div className="buttons">
             <button type="button" onClick={() => newMatch(Date.now() % 100000)}>
@@ -153,8 +185,9 @@ export default function Hud() {
           </div>
 
           <p className="footnote">
-            Map seed {seed}. Same seed, same board. CPU difficulty: {difficulty}.
-            Either button abandons this match and returns to secret placement.
+            Map seed {seed}. Same seed, same board.
+            {hotseat ? '' : ` CPU difficulty: ${difficulty}.`} Either button
+            abandons this match and returns to secret placement.
           </p>
         </section>
 

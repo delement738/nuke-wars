@@ -68,6 +68,46 @@
   letter-spacing: 0.06em;
 }
 
+/* The pass-the-screen handoff (build-order step 10c).
+   Opaque, edge to edge, and centred — this is a blindfold, so it must cover
+   everything rather than float above it. `App` unmounts the canvas while it is
+   up (see `HandoffScreen`), so the flat background is the whole page, not a
+   panel with a board behind it. */
+.handoff {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #070b11;
+
+  color: #d7e2ee;
+  font: 13px/1.45 ui-sans-serif, system-ui, sans-serif;
+}
+
+.handoff-card {
+  width: 380px;
+  max-width: 100%;
+  text-align: center;
+}
+
+.handoff-to {
+  margin: 10px 0 14px;
+  font-size: 40px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #5aa9ff;
+}
+
+.handoff .buttons {
+  justify-content: center;
+}
+
+.handoff .buttons button {
+  padding: 8px 14px;
+}
+
 .muted { color: #8496aa; }
 .own { color: #5aa9ff; }
 .enemy { color: #ff8371; }
