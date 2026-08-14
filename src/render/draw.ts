@@ -366,6 +366,28 @@ function targetMark(mode: OrderMode, hex: Hex): Graphics {
 }
 
 /**
+ * The hex a forced march announces to the enemy: the one the launcher LEAVES
+ * (spec §9, §11, CLAUDE.md gotcha 51).
+ *
+ * Drawn in the enemy's own red, which is the one deliberate inversion on this
+ * map. Red means "detection" everywhere else — *what you have seen of them* —
+ * and here it means *what they are about to see of you*. That is the same fact
+ * pointed the other way, and it is the only honest colour for it: the whole
+ * price of a march is that this hex changes hands as information.
+ *
+ * It is drawn on the ORIGIN and never on the destination, because publishing
+ * where the launcher arrived is exactly what the price is paid to withhold —
+ * `MARCH_DETECTED` carries no destination field and must never grow one.
+ */
+function announcedMark(hex: Hex): Graphics {
+  const { x, y } = centerOf(hex);
+  return new Graphics()
+    .poly(hexCorners(x, y))
+    .fill({ color: COLOR.enemy, alpha: 0.16 })
+    .stroke({ width: 2.5, color: COLOR.enemy, alpha: 0.9 });
+}
+
+/**
  * What the hovered target would actually do, drawn before it is committed.
  *
  * The flight preview is the one that earns its keep: the drone's value is the
@@ -373,6 +395,13 @@ function targetMark(mode: OrderMode, hex: Hex): Graphics {
  * sweep line without seeing that corridor. **Both previews call `hexLine`** and
  * never re-derive a path (CLAUDE.md gotcha 12) — the pinned epsilon nudge is
  * what guarantees the line drawn here is the line the sim flies.
+ *
+ * **A `switch` rather than a chain of `if`s, deliberately.** This was an
+ * if/if/fallthrough where the last branch was FLY, so widening `Order` with
+ * MARCH silently routed marches into the drone's preview — a launcher hover drew
+ * a flight path and a recon corridor. Nothing failed: the fallthrough was not a
+ * case the compiler could see was missing. An exhaustive switch makes the next
+ * order kind a build error instead of a wrong picture.
  */
 function drawPreview(
   layer: Container,
@@ -383,49 +412,68 @@ function drawPreview(
 ): void {
   const { x, y } = centerOf(target);
 
-  if (mode === 'MOVE') {
-    layer.addChild(
-      new Graphics()
-        .poly(hexCorners(x, y))
-        .fill({ color: COLOR.move, alpha: 0.4 })
-        .stroke({ width: 2.5, color: COLOR.move }),
-    );
-    return;
-  }
+  switch (mode) {
+    case 'MOVE':
+      layer.addChild(
+        new Graphics()
+          .poly(hexCorners(x, y))
+          .fill({ color: COLOR.move, alpha: 0.4 })
+          .stroke({ width: 2.5, color: COLOR.move }),
+      );
+      return;
 
-  if (mode === 'LAUNCH') {
-    const a = centerOf(unit.position);
-    layer.addChild(
-      new Graphics()
-        .moveTo(a.x, a.y)
-        .lineTo(x, y)
-        .stroke({ width: 2, color: COLOR.launch, alpha: 0.7 }),
-      crosshair(target, COLOR.launch),
-    );
-    return;
-  }
+    // The destination reads like a MOVE in the march's hotter green — but the
+    // origin is marked too, and that second mark is the point. The two washes
+    // are deliberately the same colour family (both are ground you may stand
+    // on), so on a dim screen the *shape* of the preview, not its hue, is what
+    // tells a player they are about to go loud.
+    case 'MARCH':
+      layer.addChild(
+        new Graphics()
+          .poly(hexCorners(x, y))
+          .fill({ color: COLOR.march, alpha: 0.4 })
+          .stroke({ width: 2.5, color: COLOR.march }),
+        announcedMark(unit.position),
+      );
+      return;
 
-  // FLY — the path, then the corridor it would photograph.
-  const path = hexLine(unit.position, target);
+    case 'LAUNCH': {
+      const a = centerOf(unit.position);
+      layer.addChild(
+        new Graphics()
+          .moveTo(a.x, a.y)
+          .lineTo(x, y)
+          .stroke({ width: 2, color: COLOR.launch, alpha: 0.7 }),
+        crosshair(target, COLOR.launch),
+      );
+      return;
+    }
 
-  for (const hex of swathHexes(path)) {
-    if (!onBoard(view.map, hex)) continue;
-    const c = centerOf(hex);
-    layer.addChild(
-      new Graphics()
-        .poly(hexCorners(c.x, c.y))
-        .fill({ color: COLOR.fly, alpha: 0.13 }),
-    );
-  }
+    // FLY — the path, then the corridor it would photograph.
+    case 'FLY': {
+      const path = hexLine(unit.position, target);
 
-  for (const hex of path) {
-    if (!onBoard(view.map, hex)) continue;
-    const c = centerOf(hex);
-    layer.addChild(
-      new Graphics()
-        .poly(hexCorners(c.x, c.y, HEX * 0.55))
-        .stroke({ width: 2, color: COLOR.fly, alpha: 0.85 }),
-    );
+      for (const hex of swathHexes(path)) {
+        if (!onBoard(view.map, hex)) continue;
+        const c = centerOf(hex);
+        layer.addChild(
+          new Graphics()
+            .poly(hexCorners(c.x, c.y))
+            .fill({ color: COLOR.fly, alpha: 0.13 }),
+        );
+      }
+
+      for (const hex of path) {
+        if (!onBoard(view.map, hex)) continue;
+        const c = centerOf(hex);
+        layer.addChild(
+          new Graphics()
+            .poly(hexCorners(c.x, c.y, HEX * 0.55))
+            .stroke({ width: 2, color: COLOR.fly, alpha: 0.85 }),
+        );
+      }
+      return;
+    }
   }
 }
 
@@ -439,6 +487,18 @@ function drawMarker(
   switch (entry.type) {
     case 'MOVE':
       layer.addChild(arrow(unit.position, entry.destination, COLOR.move));
+      return;
+
+    // Same arrow as a MOVE, in the march's green, plus the origin marked as
+    // announced. Without that second mark a queued march and a queued move are
+    // distinguishable only by hue, and the one thing a player must be able to
+    // read off a finished draft is which of their launchers are about to give
+    // their positions away.
+    case 'MARCH':
+      layer.addChild(
+        announcedMark(unit.position),
+        arrow(unit.position, entry.destination, COLOR.march),
+      );
       return;
 
     case 'LAUNCH': {

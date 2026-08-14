@@ -34,14 +34,16 @@
 //     chance of a random legal move, blind shot, or flight, otherwise nothing.
 //   - MEDIUM advances toward the enemy's home zone and fires at whichever
 //     known target — contact or site — is nearest, in range, kind-blind.
-//   - HARD plays for the decapitation instead, with three concrete refinements:
+//   - HARD plays for the decapitation instead, with four concrete refinements:
 //     once recon has found a bunker/decoy site it drives its launchers into
-//     range of *that hex* rather than pushing at the front generically; it then
-//     shoots the site in preference to a launcher contact that is also in range
-//     (see `knownTargets` — this ordering is the opposite of the obvious one and
-//     the comment there explains why, with the measurement that settled it); and
-//     it prefers a reachable hex outside a known enemy launcher's range over one
-//     further forward but exposed.
+//     range of *that hex* rather than pushing at the front generically; it
+//     **force-marches during that drive** and goes quiet once in position (see
+//     `groundAdvanceOrder` — it is the only tier that ever pays a public reveal);
+//     it then shoots the site in preference to a launcher contact that is also
+//     in range (see `knownTargets` — this ordering is the opposite of the obvious
+//     one and the comment there explains why, with the measurement that settled
+//     it); and it prefers a reachable hex outside a known enemy launcher's range
+//     over one further forward but exposed.
 //
 // MEDIUM and HARD share one recon behaviour, because searching the enemy home
 // zone is not a difficulty setting — a drone that does not search is simply
@@ -59,7 +61,12 @@ import {
 } from '../sim/hex';
 import { tileAt } from '../sim/map';
 import { validateLaunch } from '../sim/missiles';
-import { reachableHexes, validateMove } from '../sim/movement';
+import {
+  groundBudget,
+  reachableHexes,
+  validateMarch,
+  validateMove,
+} from '../sim/movement';
 import { validateFly } from '../sim/recon';
 import {
   opponentOf,
@@ -342,6 +349,12 @@ function advanceScore(hex: Hex, goal: AdvanceGoal): number {
  * reach"), but refusing to advance at all over a one-hex risk would make HARD
  * more passive than MEDIUM, not smarter. If the best hex is itself safe, or no
  * safe alternative is close enough, it is simply taken.
+ *
+ * `mode` selects the ground budget through the sim's own `groundBudget`, so the
+ * march's longer reach comes from the same function the validator uses rather
+ * than from a second constant here (spec §9). Everything else — the goal, the
+ * avoid set, the safety preference — is identical for a walk and a march,
+ * because a march IS a walk on a bigger allowance.
  */
 export function pickAdvanceDestination(
   believed: GameState,
@@ -349,11 +362,14 @@ export function pickAdvanceDestination(
   goal: AdvanceGoal,
   avoid: ReadonlySet<string>,
   danger: ReadonlySet<string> | null,
+  mode: 'MOVE' | 'MARCH' = 'MOVE',
 ): Hex | null {
   let best: { hex: Hex; score: number; safe: boolean } | null = null;
   let bestSafe: { hex: Hex; score: number } | null = null;
 
-  for (const { hex } of reachableHexes(believed, launcher).values()) {
+  const budget = groundBudget(launcher, mode);
+
+  for (const { hex } of reachableHexes(believed, launcher, budget).values()) {
     const key = hexKey(hex);
     if (key === hexKey(launcher.position)) continue; // SAME_HEX is illegal
     if (avoid.has(key)) continue;
@@ -371,13 +387,88 @@ export function pickAdvanceDestination(
 }
 
 /**
+ * The ground order a launcher gives when it is not firing: a MOVE, or a MARCH
+ * when HARD judges the reveal worth paying (spec §9, §11).
+ *
+ * **When HARD marches: only to prosecute a known site, and only while the extra
+ * budget actually buys progress.** Both halves of that rule matter.
+ *
+ *   - *Only toward a site.* A march trades position for tempo, and tempo is only
+ *     worth buying when there is something to arrive at. Pushing at the front
+ *     generically (MEDIUM's `row` goal) has no deadline, so paying a public
+ *     reveal to get there a round sooner is a cost with no matching benefit —
+ *     the launcher would be announcing its approach axis to buy nothing. Once
+ *     recon has found a bunker/decoy site, the calculation inverts: there is a
+ *     clock (`RULES.roundCap`), the site marker is permanent while the range to
+ *     shoot it from is not, and ~41% of HARD mirror matches were still timing out
+ *     in Armistice before this existed.
+ *
+ *   - *Only while it buys progress.* The test is simply whether the march
+ *     destination scores better than the walk destination against the SAME goal.
+ *     That one comparison gives the behaviour its shape for free, without a
+ *     distance threshold to tune: `advanceScore` for a site goal is
+ *     `max(0, distance - missileRange)`, so during the long approach a march
+ *     gains real ground and is taken, and the moment the launcher is close
+ *     enough that a walk already reaches firing range both score 0, the
+ *     comparison fails, and it goes quiet. **HARD is loud while closing and
+ *     silent once in position** — which is the tactically right shape, and it is
+ *     emergent rather than written down.
+ *
+ * Returns the MOVE whenever the march is refused, so this never costs a round.
+ *
+ * **The site-only restriction was measured against the obvious alternative, and
+ * kept for a reason the headline number argues against** (`npm run soak`, 100
+ * matches per pairing, 2026-08-14). Letting HARD march toward the `row` goal as
+ * well looks far stronger on tier separation — hard vs medium goes 61–52 to
+ * 114–25 — but it is an artifact worth not shipping. The tell is that the gain
+ * appears ONLY against MEDIUM: the hard MIRROR gets slightly worse (Armistice
+ * 36 -> 41, mean rounds 13.3 -> 13.8), which is not what a genuinely better
+ * policy does. What actually happens is that marching every round floods the
+ * enemy with contacts on hexes the launcher has already left, and MEDIUM —
+ * which has no `dangerHexes` and picks targets by distance alone, kind-blind —
+ * spends its volleys on that empty ground. It measures as skill and is really
+ * an opponent's blind spot. It also makes marching unconditional (200/200 sides
+ * marched, 6.2 per side), which deletes the decision the rule exists to pose.
+ *
+ * Site-only, by contrast, improves the numbers this harness was built to watch:
+ * Armistice 41 -> 36, mean rounds 14.2 -> 13.3, decapitations 45 -> 46, with
+ * marching staying a judgement call (42/200 sides, 0.25 per side). Revisit if the
+ * CPU ever learns that a march contact is a bearing rather than a target.
+ */
+function groundAdvanceOrder(
+  believed: GameState,
+  player: PlayerId,
+  launcher: Unit,
+  goal: AdvanceGoal,
+  avoid: ReadonlySet<string>,
+  danger: ReadonlySet<string> | null,
+  mayMarch: boolean,
+): Order | null {
+  const walk = pickAdvanceDestination(believed, launcher, goal, avoid, danger, 'MOVE');
+
+  if (mayMarch && goal.kind === 'site') {
+    const march = pickAdvanceDestination(believed, launcher, goal, avoid, danger, 'MARCH');
+    if (march && (!walk || advanceScore(march, goal) < advanceScore(walk, goal))) {
+      const order: Order = { type: 'MARCH', unitId: launcher.id, destination: march };
+      if (validateMarch(believed, player, order).legal) return order;
+    }
+  }
+
+  if (!walk) return null;
+  const order: Order = { type: 'MOVE', unitId: launcher.id, destination: walk };
+  return validateMove(believed, player, order).legal ? order : null;
+}
+
+/**
  * One launcher's order for MEDIUM/HARD: fire on anything in range (ranked only
  * for HARD), otherwise advance toward `goal`.
  *
  * Firing is always preferred to moving, and unconditionally so — munitions are
  * unlimited (spec §2), so the only cost of a launch is the contact it files on
  * the defender's map (§11), and a shot that might kill something beats a hex of
- * progress that certainly does not.
+ * progress that certainly does not. That ordering is also what keeps the march
+ * policy honest: a launcher only ever marches on a round it had nothing to shoot
+ * at, so going loud never costs a shot.
  */
 function reactiveLauncherOrder(
   believed: GameState,
@@ -398,10 +489,10 @@ function reactiveLauncherOrder(
     if (validateLaunch(believed, player, order).legal) return order;
   }
 
-  const destination = pickAdvanceDestination(believed, launcher, goal, avoid, danger);
-  if (!destination) return null;
-  const order: Order = { type: 'MOVE', unitId: launcher.id, destination };
-  return validateMove(believed, player, order).legal ? order : null;
+  // `ranked` IS the HARD flag (see `selectTarget`), and marching is a HARD-only
+  // tool for the same reason ranking is: it is the tier that plays for the
+  // decapitation, and the march exists to get there before the clock does.
+  return groundAdvanceOrder(believed, player, launcher, goal, avoid, danger, ranked);
 }
 
 /**

@@ -10,7 +10,12 @@ import {
 } from '../sim/hex';
 import { generateMap, makeRng, type MapData, type TileData } from '../sim/map';
 import { validateLaunch as validateLaunchOrder } from '../sim/missiles';
-import { reachableHexes, validateMarch, validateMove } from '../sim/movement';
+import {
+  groundBudget,
+  reachableHexes,
+  validateMarch,
+  validateMove,
+} from '../sim/movement';
 import { reconSwath, validateFly } from '../sim/recon';
 import { startMatch, type PlayerSetup } from '../sim/setup';
 import {
@@ -615,15 +620,21 @@ describe('site-seeking movement', () => {
   const site = offsetToAxial({ col: 1, row: 2 });
   const start = offsetToAxial({ col: 14, row: 12 });
 
-  function moveOf(difficulty: CpuDifficulty): Hex {
-    const launcher = makeUnit('L1', player, 'launcher', start);
+  /** The ground order a tier gives from `from`, whichever kind it chose. */
+  function advanceFrom(
+    difficulty: CpuDifficulty,
+    from: Hex = start,
+  ): Extract<Order, { type: 'MOVE' | 'MARCH' }> {
+    const launcher = makeUnit('L1', player, 'launcher', from);
     const view = makeView(map, [launcher], { staticReveals: [staticReveal(site)] });
-    const order = cpuOrders(view, difficulty, player, makeRng(1)).find((o) => o.type === 'MOVE');
+    const order = cpuOrders(view, difficulty, player, makeRng(1)).find(
+      (o) => o.type === 'MOVE' || o.type === 'MARCH',
+    );
     expect(order).toBeDefined();
-    return (order as Extract<Order, { type: 'MOVE' }>).destination;
+    return order as Extract<Order, { type: 'MOVE' | 'MARCH' }>;
   }
 
-  it('HARD closes on a known site that is out of missile range', () => {
+  it('HARD closes on a known site that is out of missile range, and MARCHES to do it', () => {
     // Asserted against the best hex actually available, not merely "closer than
     // where it started" — a plain row advance also shortens the gap to a site
     // that happens to sit up the board, so the weaker form passes even with
@@ -631,20 +642,68 @@ describe('site-seeking movement', () => {
     const launcher = makeUnit('L1', player, 'launcher', start);
     const believed = believedStateFor(map, [launcher]);
     const best = Math.min(
-      ...[...reachableHexes(believed, launcher).values()]
+      ...[...reachableHexes(believed, launcher, groundBudget(launcher, 'MARCH')).values()]
         .map((r) => r.hex)
         .filter((hex) => hexKey(hex) !== hexKey(start))
         .map((hex) => Math.max(0, distance(hex, site) - RULES.missileRange)),
     );
 
-    expect(Math.max(0, distance(moveOf('hard'), site) - RULES.missileRange)).toBe(best);
-    expect(distance(moveOf('hard'), site)).toBeLessThan(distance(start, site));
+    const order = advanceFrom('hard');
+    // Spec §9, §11: the reveal is worth paying while there is a site to reach
+    // and ground still to cover. MUTATION GUARD — drop the march branch in
+    // `groundAdvanceOrder` and this becomes a MOVE that cannot reach `best`.
+    expect(order.type).toBe('MARCH');
+    expect(Math.max(0, distance(order.destination, site) - RULES.missileRange)).toBe(best);
+    expect(distance(order.destination, site)).toBeLessThan(distance(start, site));
   });
 
-  it('MEDIUM ignores the site and pushes up the board instead', () => {
+  it('MEDIUM ignores the site, pushes up the board, and never goes loud', () => {
     // The tier distinction, asserted as a real behavioural difference rather
     // than trusted to a flag: MEDIUM fights the front, HARD hunts the bunker.
-    expect(distance(moveOf('medium'), site)).toBeGreaterThan(distance(moveOf('hard'), site));
+    const medium = advanceFrom('medium');
+    expect(distance(medium.destination, site)).toBeGreaterThan(
+      distance(advanceFrom('hard').destination, site),
+    );
+
+    // Marching is HARD's alone. MEDIUM has no deadline to buy tempo against, so
+    // a public reveal would be a cost it gets nothing for.
+    expect(medium.type).toBe('MOVE');
+  });
+
+  it('HARD does NOT march when it has no site to prosecute', () => {
+    // The other half of the policy, and the half with a measurement behind it
+    // (see `groundAdvanceOrder`): marching toward the generic front scores far
+    // better head-to-head and is an artifact of MEDIUM chasing stale contacts,
+    // not a better policy. MUTATION GUARD — relax the gate to `if (mayMarch)`
+    // and this flips to MARCH, with nothing else in the suite objecting.
+    const launcher = makeUnit('L1', player, 'launcher', start);
+    const noIntel = makeView(map, [launcher]); // no staticReveals at all
+    const order = cpuOrders(noIntel, 'hard', player, makeRng(1)).find(
+      (o) => o.type === 'MOVE' || o.type === 'MARCH',
+    );
+
+    expect(order).toBeDefined();
+    expect(order!.type).toBe('MOVE');
+  });
+
+  it('HARD stops marching once a plain walk already reaches firing range', () => {
+    // The self-limiting half of the policy, and the reason it needs no tuned
+    // threshold: `advanceScore` floors at 0 inside missile range, so when a walk
+    // can already close the gap the march scores no better and is refused. HARD
+    // is loud while closing and quiet once in position.
+    const closeEnough = map.tiles
+      .map((tile) => offsetToAxial({ col: tile.col, row: tile.row }))
+      .find((hex) => {
+        const gap = distance(hex, site) - RULES.missileRange;
+        // Out of range now (or it would simply fire), but within one walk of
+        // being in range.
+        return gap > 0 && gap <= UNIT_DEFS.launcher.movement;
+      });
+    expect(closeEnough).toBeDefined();
+
+    const order = advanceFrom('hard', closeEnough!);
+    expect(order.type).toBe('MOVE');
+    expect(distance(order.destination, site)).toBeLessThanOrEqual(RULES.missileRange);
   });
 
   it('HARD fires rather than closing once the site is within missile range', () => {

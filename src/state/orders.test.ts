@@ -132,7 +132,7 @@ const CENTER = offsetToAxial({ col: 8, row: 9 });
 // ---------------------------------------------------------------------------
 
 describe('modesFor / orderableUnits', () => {
-  it('offers MOVE and LAUNCH to a launcher and FLY to the drone, and nothing to a structure', () => {
+  it('offers both ground orders and LAUNCH to a launcher, FLY to the drone, nothing to a structure', () => {
     const launcher = makeUnit('p1-launcher-1', 'p1', 'launcher', CENTER);
     const drone = makeUnit('p1-drone', 'p1', 'drone', offsetToAxial({ col: 8, row: 12 }));
     const bunker = makeUnit('p1-bunker', 'p1', 'bunker', offsetToAxial({ col: 4, row: 16 }));
@@ -140,7 +140,9 @@ describe('modesFor / orderableUnits', () => {
     const base = makeUnit('p1-interceptor-1', 'p1', 'interceptor', offsetToAxial({ col: 9, row: 15 }));
     const view = makeView(plainsMap(), [launcher, drone, bunker, decoy, base]);
 
-    expect(modesFor(view, launcher)).toEqual(['MOVE', 'LAUNCH']);
+    // MARCH sits next to MOVE, not after LAUNCH: they are the same order on
+    // different budgets (spec §9), and the panel renders this list in order.
+    expect(modesFor(view, launcher)).toEqual(['MOVE', 'MARCH', 'LAUNCH']);
     expect(modesFor(view, drone)).toEqual(['FLY']);
 
     // Spec §3: bunkers, decoys and bases are permanently static and act
@@ -262,6 +264,83 @@ describe('moveTargets', () => {
     const drone = makeUnit('p1-drone', 'p1', 'drone', CENTER);
     const view = makeView(plainsMap(), [drone]);
     expect(moveTargets(view, drone)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// March targets (2026-08-14 — the session that opened the gate)
+// ---------------------------------------------------------------------------
+
+describe('marchTargets', () => {
+  const launcher = makeUnit('p1-launcher-1', 'p1', 'launcher', CENTER);
+
+  it('is a STRICT superset of moveTargets — the same rules on a bigger budget', () => {
+    const view = makeView(plainsMap(), [launcher]);
+    const walk = keysOf(moveTargets(view, launcher));
+    const march = keysOf(marchTargets(view, launcher));
+
+    // Everything you may walk to, you may also march to. A march is not a
+    // different kind of movement (spec §9) — it is the same one, further.
+    for (const key of walk) expect(march.has(key)).toBe(true);
+
+    // MUTATION GUARD: make `groundBudget` return the walk budget for MARCH and
+    // the two sets become equal, so the player pays a public reveal for hexes
+    // they could have reached quietly.
+    expect(march.size).toBeGreaterThan(walk.size);
+  });
+
+  it('is bounded by forcedMarchMovement, not by the walking budget', () => {
+    const view = makeView(plainsMap(), [launcher]);
+    const reach = marchTargets(view, launcher).map((hex) =>
+      distance(launcher.position, hex),
+    );
+
+    expect(Math.max(...reach)).toBe(RULES.forcedMarchMovement);
+    // The number that makes the feature worth having, asserted against the two
+    // real constants rather than against 6 and 3.
+    expect(RULES.forcedMarchMovement).toBeGreaterThan(UNIT_DEFS.launcher.movement);
+  });
+
+  it('inherits the terrain and detected-enemy rules from the shared flood fill', () => {
+    // Both are `moveTargets` behaviours, asserted here too so that splitting the
+    // two functions apart later cannot quietly drop one of them from the march.
+    const blocked = offsetToAxial({ col: 8, row: 8 });
+    const mountains = makeView(mapWithMountainAt(axialToOffset(blocked)), [launcher]);
+    expect(keysOf(marchTargets(mountains, launcher)).has(hexKey(blocked))).toBe(false);
+
+    const seen = offsetToAxial({ col: 8, row: 7 });
+    const spotted = makeView(plainsMap(), [launcher], { contacts: [contact(seen)] });
+    expect(keysOf(marchTargets(spotted, launcher)).has(hexKey(seen))).toBe(false);
+  });
+
+  it('offers nothing in a dead-hand round — that round has no movement phase', () => {
+    // Spec §3: phases 2->3 only. A MARCH there would emit a public
+    // `MARCH_DETECTED` announcing a relocation the round can never perform.
+    const deadHand = makeView(plainsMap(), [launcher], {}, {
+      phase: 'DEAD_HAND_PHASE',
+      deadHandFor: 'p1',
+    });
+    expect(marchTargets(deadHand, launcher)).toEqual([]);
+    expect(modesFor(deadHand, launcher)).not.toContain('MARCH');
+  });
+
+  it('offers nothing for a drone — a march is a launcher order', () => {
+    const drone = makeUnit('p1-drone', 'p1', 'drone', CENTER);
+    const view = makeView(plainsMap(), [drone]);
+    expect(marchTargets(view, drone)).toEqual([]);
+  });
+
+  it('turns a far hex into a legal MARCH that would be an illegal MOVE', () => {
+    // The end-to-end proof that the client's two ground orders really do reach
+    // different distances: one hex, two verdicts, both from the real validators.
+    const view = makeView(plainsMap(), [launcher]);
+    const far = marchTargets(view, launcher).find(
+      (hex) => distance(launcher.position, hex) > UNIT_DEFS.launcher.movement,
+    );
+    expect(far).toBeDefined();
+
+    expect(isLegalOrder(view, orderFor(launcher, 'MARCH', far!))).toBe(true);
+    expect(isLegalOrder(view, orderFor(launcher, 'MOVE', far!))).toBe(false);
   });
 });
 

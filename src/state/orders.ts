@@ -102,14 +102,17 @@ export const EMPTY_DRAFT: OrderDraft = {};
  *     that side returns an empty list — which is also what stops the round from
  *     auto-resolving forever on a vacuously-complete draft (see `allDecided`).
  *
- * **MARCH is deliberately absent from this list for now** (2026-08-13). The
- * forced-march rule is complete and tested in `src/sim/`, but its UI — a third
- * order button, a second movement overlay that has to read as "further, and
- * loud", and the CPU tiers deciding when the reveal is worth paying — is its own
- * session. This function is the single gate: `isLegalOrder` consults it before
- * calling the validator, so until 'MARCH' is added here no draft, no click and
- * no CPU can produce one, and the sim rule sits inert. Adding it is the first
- * line of that session, not an oversight to fix in passing.
+ * **MARCH sits beside MOVE, and is absent from the dead-hand list** (2026-08-14,
+ * the session that turned the finished sim rule on). The two ground orders are
+ * adjacent because they are the same order on different budgets — the panel
+ * should read "walk / run / fire", not "walk / fire / run". Dead hand excludes it
+ * for the same reason it excludes MOVE: that round has no movement phase at all
+ * (§3), so a MARCH there would be a public `MARCH_DETECTED` announcing a
+ * relocation that the round can never perform.
+ *
+ * This function remains the single gate — `isLegalOrder` consults it before
+ * calling any validator — so it is still the one place that decides which orders
+ * exist for a player at all.
  */
 export function modesFor(view: VisibleGameState, unit: Unit): OrderMode[] {
   if (view.outcome !== null || view.phase === 'GAME_OVER') return [];
@@ -122,7 +125,7 @@ export function modesFor(view: VisibleGameState, unit: Unit): OrderMode[] {
     return unit.kind === 'launcher' ? ['LAUNCH'] : [];
   }
 
-  if (unit.kind === 'launcher') return ['MOVE', 'LAUNCH'];
+  if (unit.kind === 'launcher') return ['MOVE', 'MARCH', 'LAUNCH'];
   if (unit.kind === 'drone') return ['FLY'];
   return [];
 }

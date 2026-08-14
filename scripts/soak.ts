@@ -87,6 +87,17 @@ interface PlayerStats {
    * completely different defects with completely different fixes.
    */
   missilesAtSites: number;
+  /**
+   * Forced marches this player ordered that had an effect on the round (§9,
+   * §11) — counted from the public `MARCH_DETECTED`, which is exactly the set
+   * of marches that cost their owner a reveal.
+   *
+   * The number this feature lives or dies by. Both failure modes of
+   * `RULES.forcedMarchMovement` show up here: too low and no tier ever judges
+   * the reveal worth paying, so the rule is dead weight; too high and marching
+   * becomes the default ground order and walking stops being a decision.
+   */
+  marches: number;
   /** Hits landed on the enemy's REAL bunker (§12: the decoy never emits one). */
   bunkerHits: number;
   decoysKilled: number;
@@ -110,6 +121,7 @@ function emptyStats(): PlayerStats {
     missilesFired: 0,
     missilesIntercepted: 0,
     missilesAtSites: 0,
+    marches: 0,
     bunkerHits: 0,
     decoysKilled: 0,
     launchersKilled: 0,
@@ -270,6 +282,13 @@ function tally(
         stats[event.owner].droneDeaths += 1;
         break;
 
+      // Unlike `LAUNCH_DETECTED`, this one names its owner (§6) — both sides can
+      // already derive it, so withholding it would buy nothing — which makes the
+      // origin-hex attribution the launch path needs unnecessary here.
+      case 'MARCH_DETECTED':
+        stats[event.owner].marches += 1;
+        break;
+
       case 'LAUNCH_DETECTED': {
         const firer = launcherAt.get(hexKey(event.origin));
         if (!firer) break; // unreachable: something fired from an empty hex
@@ -333,6 +352,7 @@ function report(difficulty: CpuDifficulty, matches: readonly MatchStats[]): stri
   // so per-player stats are pooled rather than averaged per match.
   const sides = matches.flatMap((m) => PLAYERS.map((p) => m.players[p]));
   const sawSite = sides.filter((s) => s.firstSiteRound !== null);
+  const marched = sides.filter((s) => s.marches > 0);
 
   const lines = [
     ``,
@@ -354,6 +374,10 @@ function report(difficulty: CpuDifficulty, matches: readonly MatchStats[]): stri
     `    decoys killed                  ${mean(sides.map((s) => s.decoysKilled)).toFixed(2)}`,
     `    launchers killed               ${mean(sides.map((s) => s.launchersKilled)).toFixed(2)}`,
     `    bases killed                   ${mean(sides.map((s) => s.basesKilled)).toFixed(2)}`,
+    ``,
+    `  MANEUVER (per side, per match)`,
+    `    forced marches ordered         ${mean(sides.map((s) => s.marches)).toFixed(2)}`,
+    `    sides that ever marched        ${marched.length}/${sides.length}`,
   ];
 
   return lines.join('\n');
