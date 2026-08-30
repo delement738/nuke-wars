@@ -1,4 +1,5 @@
 import GameCanvas from './render/GameCanvas';
+import BattleReport from './ui/BattleReport';
 import Hud from './ui/Hud';
 import HandoffScreen from './ui/HandoffScreen';
 import SetupPanel from './ui/SetupPanel';
@@ -34,6 +35,12 @@ export default function App() {
     <div className="stage">
       <GameCanvas />
       {started ? <Hud /> : <SetupPanel />}
+      {/* Inside this branch on purpose (V1.1 step 1). A battle report is the
+          viewer's private news, so it must be unreachable while the screen is
+          blanked for a handoff — mounting it here rather than above the `if`
+          makes that structural, exactly as the handoff swap does for the board
+          itself. See the header of `BattleReport.tsx`. */}
+      <BattleReport />
     </div>
   );
 }

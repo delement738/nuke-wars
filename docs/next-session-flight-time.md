@@ -1,9 +1,14 @@
-# Next session: missile flight time (V1.1 Step 1)
+# Session brief: missile flight time (V1.1 Step 3)
 
 > Session brief, following the `next-session-10a.md` precedent — **the
 > implementing session deletes this file on merge.** Context and the full case
-> for the change: `docs/v1.1-design-consultation.md` §5 Step 1. Direction
-> (deterministic, incremental, this step first) was decided 2026-08-30.
+> for the change: `docs/v1.1-design-consultation.md` §5 Step 3. Direction
+> (deterministic, incremental) was decided 2026-08-30; two designer additions —
+> battle reports and the single public base — were inserted ahead of it the same
+> day, so this is now the **third** session, not the first. Nothing in the rule
+> below changed; note only that the inbound-strike warning it creates should be
+> surfaced through the battle-report layer built in Step 1, and that the soak
+> baseline to compare against is the one taken after Step 2, not the §1 figures.
 
 ## Session goal and boundary
 

@@ -36,6 +36,7 @@ import {
   type Order,
   type Outcome,
   type PlayerId,
+  type Unit,
   type UnitId,
   type VisibleEvent,
   type VisibleGameState,
@@ -67,6 +68,7 @@ import {
   withPlacementInSlot,
   withoutSlot,
 } from './placement';
+import { battleReports, type BattleReport } from './reports';
 import { sandboxSetup } from './sandbox';
 import {
   humanSeats,
@@ -243,6 +245,19 @@ export interface MatchState {
   views: Record<PlayerId, VisibleGameState> | null;
   /** Both players' permanent event histories, filtered on the way in. */
   logs: Record<PlayerId, LogEntry[]>;
+  /**
+   * Undismissed battle-report banners, per player (V1.1 step 1).
+   *
+   * Both players' queues are filled by the same `publish` that appends to
+   * `logs`, because in hotseat a resolution produces news for two people at once
+   * and the second one is not at the screen yet — their banners wait for them.
+   * `dismissReport` pops the *viewer's* head, so a player can only ever clear
+   * their own (gotcha 36); the queue for the other seat is untouched.
+   *
+   * Unlike `logs`, this is transient: it holds what has not been read yet, not
+   * a history. The permanent record is `logs`, always.
+   */
+  reports: Record<PlayerId, BattleReport[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -342,6 +357,7 @@ export const matchStore = createStore<MatchState>()(() => ({
   // until the human has placed their bunker, decoy and two bases (§12).
   views: null,
   logs: { p1: [], p2: [] },
+  reports: { p1: [], p2: [] },
 }));
 
 /**
@@ -355,15 +371,48 @@ export const matchStore = createStore<MatchState>()(() => ({
  */
 function publish(round: number, events: readonly GameEvent[]): void {
   if (!truth) return; // no match — nothing to project and nothing to log
-  const { logs } = matchStore.getState();
+  const { logs, reports } = matchStore.getState();
+
+  const views = viewsOf(truth);
+  const seen = {
+    p1: filterEventsForPlayer(events, 'p1'),
+    p2: filterEventsForPlayer(events, 'p2'),
+  };
 
   matchStore.setState({
-    views: viewsOf(truth),
+    views,
     logs: {
-      p1: appendLog(logs.p1, round, filterEventsForPlayer(events, 'p1')),
-      p2: appendLog(logs.p2, round, filterEventsForPlayer(events, 'p2')),
+      p1: appendLog(logs.p1, round, seen.p1),
+      p2: appendLog(logs.p2, round, seen.p2),
+    },
+    // Banners are derived from the same filtered slice the log gets, and from
+    // the player's own roster — never from `truth` (V1.1 step 1; see
+    // `reports.ts`). Queued rather than shown: the other seat may be mid-walk
+    // to the machine.
+    reports: {
+      p1: queueReports(reports.p1, seen.p1, 'p1', views.p1.units, round),
+      p2: queueReports(reports.p2, seen.p2, 'p2', views.p2.units, round),
     },
   });
+}
+
+/**
+ * Append this round's banners to a player's pending queue.
+ *
+ * Returns the *same array* when a round produced none, for the same reason
+ * `appendLog` does: most rounds produce none at all, and an unchanged reference
+ * keeps a subscribed component from re-rendering for news that did not happen.
+ */
+function queueReports(
+  pending: BattleReport[],
+  events: readonly VisibleEvent[],
+  player: PlayerId,
+  ownUnits: readonly Unit[],
+  round: number,
+): BattleReport[] {
+  const fresh = battleReports(events, player, ownUnits, round);
+  if (fresh.length === 0) return pending;
+  return [...pending, ...fresh];
 }
 
 /**
@@ -418,6 +467,7 @@ export function newMatch(seed: number = DEFAULT_SEED): void {
     orderMode: null,
     views: null,
     logs: { p1: [], p2: [] },
+    reports: { p1: [], p2: [] },
   });
 }
 
@@ -1094,4 +1144,30 @@ export function matchStarted(): boolean {
 /** `player`'s permanent history — every event they were allowed to see (§11). */
 export function logFor(player: PlayerId): readonly LogEntry[] {
   return matchStore.getState().logs[player];
+}
+
+/** `player`'s undismissed battle-report banners (V1.1 step 1). */
+export function reportsFor(player: PlayerId): readonly BattleReport[] {
+  return matchStore.getState().reports[player];
+}
+
+/**
+ * Clear the banner at the head of the **viewer's** queue (V1.1 step 1).
+ *
+ * Keyed on `viewer` rather than taking a `PlayerId`, for gotcha 36's reason: a
+ * dismiss that could name a player would be a way for whoever is at the machine
+ * to clear their opponent's unread news — and in hotseat the opponent's banners
+ * are queued precisely because they are not here yet to read them.
+ *
+ * One at a time, because a round can produce several (three launcher kills and a
+ * `GAME_OVER` is a legal round) and they are worth reading individually.
+ */
+export function dismissReport(): void {
+  const { reports, viewer } = matchStore.getState();
+  const queue = reports[viewer];
+  if (queue.length === 0) return;
+
+  matchStore.setState({
+    reports: { ...reports, [viewer]: queue.slice(1) },
+  });
 }

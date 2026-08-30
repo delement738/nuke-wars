@@ -23,6 +23,7 @@ import type { PlayerId, UnitId, VisibleGameState } from '../sim/types';
 import { matchStore, type LogEntry } from './match';
 import type { OrderDraft, OrderMode } from './orders';
 import { placementComplete, type PlacementDraft } from './placement';
+import type { BattleReport } from './reports';
 import { isHotseat, nextSeat } from './seats';
 
 /**
@@ -75,6 +76,18 @@ export function useSelectedSlot(): number {
 /** The current viewer's permanent event history (spec §11). */
 export function useLog(): readonly LogEntry[] {
   return useStore(matchStore, (state) => state.logs[state.viewer]);
+}
+
+/**
+ * The banner the current viewer has not read yet, or null (V1.1 step 1).
+ *
+ * Returns only the head of the queue, so the UI shows one at a time and
+ * `dismissReport` advances it. Keyed on `viewer` inside the hook like every
+ * other selector here — in hotseat the other seat's queue is waiting for a
+ * player who has not sat down yet, and no component may reach it (gotcha 36).
+ */
+export function useReport(): BattleReport | null {
+  return useStore(matchStore, (state) => state.reports[state.viewer][0] ?? null);
 }
 
 /** Whose view is on screen. */
