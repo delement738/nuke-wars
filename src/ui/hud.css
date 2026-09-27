@@ -238,3 +238,87 @@
 
 .unit.active .decision { color: #d6e2ee; }
 
+
+/* --- battle report banner (V1.1 step 1) -----------------------------------
+ *
+ * Mounted only inside App's board branch, never over the handoff screen —
+ * see the header of `BattleReport.tsx` for why that placement is a secrecy
+ * rule rather than a layout preference.
+ *
+ * The tone colours reuse the HUD's existing language rather than inventing a
+ * palette: `.own` blue for a kill you scored, `.enemy` red for a loss you took,
+ * `.alert` amber for an outcome. A player already reads those three colours as
+ * "mine / theirs / pay attention" everywhere else on the screen. */
+.report-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(7, 11, 17, 0.72);
+  cursor: pointer;
+}
+
+.report {
+  width: 460px;
+  max-width: 100%;
+  padding: 26px 28px 22px;
+  text-align: center;
+  cursor: default;
+  background: #0d1521;
+  border: 1px solid #24303f;
+  border-top: 3px solid #8496aa;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  animation: report-in 140ms ease-out;
+}
+
+.report-kill { border-top-color: #5aa9ff; }
+.report-loss { border-top-color: #ff8371; }
+.report-victory { border-top-color: #ffd54a; }
+.report-defeat { border-top-color: #ff8371; }
+.report-draw { border-top-color: #8496aa; }
+
+.report-headline {
+  margin: 0 0 8px;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #d7e2ee;
+}
+
+.report-kill .report-headline { color: #5aa9ff; }
+.report-loss .report-headline,
+.report-defeat .report-headline { color: #ff8371; }
+.report-victory .report-headline { color: #ffd54a; }
+
+.report-detail {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #a8b8c8;
+}
+
+.report-dismiss {
+  padding: 7px 20px;
+  font: inherit;
+  color: #d7e2ee;
+  background: #16202d;
+  border: 1px solid #2d3a4a;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.report-dismiss:hover { background: #1e2a39; }
+.report-dismiss:focus-visible { outline: 2px solid #5aa9ff; outline-offset: 2px; }
+
+@keyframes report-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .report { animation: none; }
+}
