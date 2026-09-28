@@ -36,7 +36,9 @@ import {
 import { filterForPlayer } from '../sim/visibility';
 import {
   cpuOrders,
+  doomedLaunchers,
   droneDangerHexes,
+  hardFiringSolution,
   nextSweepWaypoint,
   pickAdvanceDestination,
   SAFETY_DETOUR_TOLERANCE,
@@ -981,5 +983,133 @@ describe('drone memory — the sweep flies around a known death', () => {
         cpuOrders(view, 'easy', player, makeRng(seed)),
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Flight time (2026-09-27) — HARD shoots where the missile will still find
+// something, and a launcher that cannot escape an inbound missile fires
+// ---------------------------------------------------------------------------
+
+describe('hardFiringSolution — flight time', () => {
+  const player: PlayerId = 'p1';
+  const map = plainsMap();
+  const from = offsetToAxial({ col: 8, row: 10 });
+  // Straight up one column, so distance is just the row gap.
+  const at = (row: number): Hex => offsetToAxial({ col: 8, row });
+  const seen = (hex: Hex, source: LauncherContact['source']): LauncherContact => ({
+    hex,
+    source,
+  });
+  const solve = (contacts: LauncherContact[], sites: VisibleStaticReveal[] = []) =>
+    hardFiringSolution(
+      makeView(map, [makeUnit('L1', player, 'launcher', from)], {
+        contacts,
+        staticReveals: sites,
+      }),
+      from,
+    );
+
+  it('the fixtures mean what they claim', () => {
+    expect(distance(from, at(6))).toBe(RULES.missileSpeed);
+    expect(distance(from, at(4))).toBe(RULES.missileRange);
+  });
+
+  it('never fires at a march contact — the launcher has provably left that hex', () => {
+    expect(solve([seen(at(8), 'MARCH')])).toBeUndefined();
+  });
+
+  it('fires at a recon contact inside missileSpeed, where the shot lands before it moves', () => {
+    expect(solve([seen(at(6), 'RECON')])).toEqual(at(6));
+  });
+
+  it('does not fire at a recon contact at 5–6, which moves before the missile lands', () => {
+    expect(solve([seen(at(5), 'RECON')])).toBeUndefined();
+    expect(solve([seen(at(4), 'RECON')])).toBeUndefined();
+  });
+
+  it('fires at a launch contact at full range — it is still firing, so still there', () => {
+    expect(solve([seen(at(4), 'LAUNCH')])).toEqual(at(4));
+  });
+
+  it('still puts a site first, at any range', () => {
+    expect(solve([seen(at(8), 'LAUNCH')], [staticReveal(at(4))])).toEqual(at(4));
+  });
+});
+
+describe('a launcher under an inbound missile gets its last shot (HARD)', () => {
+  const player: PlayerId = 'p1';
+  const map = plainsMap();
+  const doomedAt = offsetToAxial({ col: 8, row: 10 });
+  const safeAt = offsetToAxial({ col: 3, row: 14 });
+  const inbound = {
+    id: 'r1@x',
+    owner: 'p2' as const,
+    origin: offsetToAxial({ col: 8, row: 4 }),
+    target: doomedAt,
+    launchRound: 1,
+    traveled: RULES.missileSpeed,
+  };
+  const units = [
+    makeUnit('L1', player, 'launcher', doomedAt),
+    makeUnit('L2', player, 'launcher', safeAt),
+  ];
+  const view = (intel: Partial<VisiblePlayerIntel> = {}) =>
+    makeView(map, units, intel, { round: 2, missiles: [inbound] });
+
+  it('only the launcher standing on the target hex is doomed', () => {
+    expect([...doomedLaunchers(view())]).toEqual(['L1']);
+  });
+
+  it('fires rather than moves — a move resolves after the impact (§3)', () => {
+    const orders = cpuOrders(view(), 'hard', player, makeRng(1));
+    const order = orders.find((o) => o.unitId === 'L1');
+    expect(order?.type).toBe('LAUNCH');
+    if (order?.type !== 'LAUNCH') return;
+    const { row } = axialToOffset(order.target);
+    const zone = RULES.homeZoneRows[opponentOf(player)];
+    expect(row).toBeGreaterThanOrEqual(zone.min);
+    expect(row).toBeLessThanOrEqual(zone.max);
+    expect(validateLaunchOrder(believedStateFor(map, units), player, order).legal).toBe(true);
+  });
+
+  it('aims its blind shot at ground our drone has not already photographed', () => {
+    const zone = RULES.homeZoneRows[opponentOf(player)];
+    // Photograph every in-range zone hex but one; the last shot must find it.
+    const inRangeZone = hexesInRange(doomedAt, RULES.missileRange).filter((hex) => {
+      const { col, row } = axialToOffset(hex);
+      return row >= zone.min && row <= zone.max && col >= 0 && col < map.width;
+    });
+    const unseen = inRangeZone[0];
+    const path = inRangeZone.filter(
+      (hex) => distance(hex, unseen) > RULES.reconSwathRadius,
+    );
+    const history: VisibleEvent[] = [
+      { type: 'DRONE_MOVED', unitId: 'p1-drone', owner: player, from: path[0], to: path[0], path },
+    ];
+    for (const seed of [1, 2, 3]) {
+      const orders = cpuOrders(view(), 'hard', player, makeRng(seed), history);
+      const order = orders.find((o) => o.unitId === 'L1');
+      expect(order?.type).toBe('LAUNCH');
+      if (order?.type !== 'LAUNCH') return;
+      expect(path.some((hex) => distance(hex, order.target) <= RULES.reconSwathRadius)).toBe(
+        false,
+      );
+    }
+  });
+
+  it('takes a real target over a blind shot', () => {
+    const site = staticReveal(offsetToAxial({ col: 8, row: 5 }));
+    const orders = cpuOrders(view({ staticReveals: [site] }), 'hard', player, makeRng(1));
+    expect(orders.find((o) => o.unitId === 'L1')).toEqual<Order>({
+      type: 'LAUNCH',
+      unitId: 'L1',
+      target: site.hex,
+    });
+  });
+
+  it('is a HARD behaviour: MEDIUM still walks the doomed launcher forward', () => {
+    const orders = cpuOrders(view(), 'medium', player, makeRng(1));
+    expect(orders.find((o) => o.unitId === 'L1')?.type).not.toBe('LAUNCH');
   });
 });
