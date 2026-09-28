@@ -92,6 +92,7 @@ import {
   type VisibleGameState,
 } from '../sim/types';
 import { believedState, knownEnemyHexes } from './belief';
+import { enemyBaseCandidates, knownEnemyBases } from './inference';
 
 export type CpuDifficulty = 'easy' | 'medium' | 'hard';
 
@@ -207,7 +208,8 @@ export function nextSweepWaypoint(from: Hex, lanes: readonly Hex[]): Hex {
  * history and its own intel — never anything a human in the seat could not see.
  *
  * The question is "where could the enemy's base be?", answered the way a human
- * would, and then "which hexes could a base there cover?":
+ * would (`enemyBaseCandidates` in `./inference`, shared with the board's intel
+ * overlay), and then "which hexes could a base there cover?":
  *
  *   - **A base we can see** (a static reveal of kind `interceptor`). Since the
  *     2026-09-27 redesign a base goes public the first time it intercepts one of
@@ -238,64 +240,12 @@ export function droneDangerHexes(
   player: PlayerId,
 ): Set<string> {
   const R = RULES.interceptorCoverageRadius;
-  const zone = RULES.homeZoneRows[opponentOf(player)];
-
-  const deaths: Hex[] = [];
-  const deadBases: Hex[] = [];
-  const transmitted = new Set<string>();
-  for (const event of history) {
-    if (event.type === 'DRONE_DOWNED' && event.owner === player) deaths.push(event.hex);
-    if (event.type === 'DRONE_MOVED' && event.owner === player) {
-      for (const hex of event.path) transmitted.add(hexKey(hex));
-    }
-    if (
-      event.type === 'UNIT_DESTROYED' &&
-      event.kind === 'interceptor' &&
-      !view.units.some((u) => u.id === event.unitId)
-    ) {
-      deadBases.push(event.hex);
-    }
-  }
-
-  const knownBases = view.intel.staticReveals
-    .filter((reveal) => reveal.kind === 'interceptor')
-    .map((reveal) => reveal.hex);
+  // The inference itself lives in `./inference`, shared with the board's intel
+  // overlay, so the region a human sees shaded is exactly the one HARD avoids.
+  const bases = [...knownEnemyBases(view), ...enemyBaseCandidates(view, history, player)];
 
   const danger = new Set<string>();
-  for (const base of knownBases) {
-    for (const hex of hexesInRange(base, R)) danger.add(hexKey(hex));
-  }
-
-  const explained = [...knownBases, ...deadBases];
-  const clues = deaths.filter((death) => !explained.some((b) => distance(b, death) <= R));
-  if (clues.length === 0) return danger;
-
-  const couldHoldBase = (hex: Hex): boolean => {
-    if (!onMap(view.map, hex)) return false;
-    const { row } = axialToOffset(hex);
-    if (row < zone.min || row > zone.max) return false;
-    return !hexesInRange(hex, R).some((near) => transmitted.has(hexKey(near)));
-  };
-  const candidateSets = clues.map((clue) => {
-    const disc = hexesInRange(clue, R);
-    const pruned = disc.filter(couldHoldBase);
-    // Cannot be empty if every rule above is right; a disc is the safe answer
-    // if one of them is ever wrong.
-    return new Map((pruned.length > 0 ? pruned : disc).map((h) => [hexKey(h), h]));
-  });
-
-  let candidates = [...candidateSets[0].values()];
-  if (RULES.placementCounts.interceptor === 1) {
-    const shared = candidates.filter((h) =>
-      candidateSets.every((set) => set.has(hexKey(h))),
-    );
-    if (shared.length > 0) candidates = shared;
-    else candidates = candidateSets.flatMap((set) => [...set.values()]);
-  } else {
-    candidates = candidateSets.flatMap((set) => [...set.values()]);
-  }
-
-  for (const base of candidates) {
+  for (const base of bases) {
     for (const hex of hexesInRange(base, R)) danger.add(hexKey(hex));
   }
   return danger;

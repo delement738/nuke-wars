@@ -23,6 +23,7 @@
 // editorialise about whose a wreck is.
 
 import { axialToOffset, type Hex } from '../sim/hex';
+import { downedOnFirstStep } from '../state/inference';
 import type {
   Outcome,
   PlayerId,
@@ -86,6 +87,10 @@ export function describeOutcome(outcome: Outcome, viewer: PlayerId): string {
 /**
  * One log line for one event, as `viewer` reads it.
  *
+ * `roundEvents` is the rest of the same round's log, for the one line that
+ * depends on a neighbour (`downedOnFirstStep`). Optional: without it a one-hex
+ * flight reads as a hover.
+ *
  * `ownUnits` is the viewer's own roster from their `VisibleGameState` — it can
  * never contain an enemy unit, which is precisely why looking a unit id up in it
  * is safe for the owner-only events and impossible for anything else.
@@ -98,6 +103,7 @@ export function describeEvent(
   event: VisibleEvent,
   viewer: PlayerId,
   ownUnits: readonly Unit[],
+  roundEvents: readonly VisibleEvent[] = [],
 ): string {
   switch (event.type) {
     case 'UNIT_MOVED':
@@ -113,6 +119,9 @@ export function describeEvent(
       return `Your bunker took a hit at ${hexLabel(event.hex)} — ${event.hpRemaining} left.`;
 
     case 'DRONE_MOVED':
+      if (downedOnFirstStep(event, roundEvents)) {
+        return `Drone took off from ${hexLabel(event.from)} and was shot down on its first hex out.`;
+      }
       return event.path.length <= 1
         ? `Drone held station at ${hexLabel(event.to)}, watching its own corridor.`
         : `Drone flew ${hexLabel(event.from)} → ${hexLabel(event.to)}, transmitting from ${event.path.length} hexes.`;

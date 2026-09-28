@@ -73,6 +73,17 @@ describe('describeEvent', () => {
     expect(describeEvent(EVERY_EVENT[3], 'p1', OWN)).toContain('flew');
   });
 
+  it('does not call a flight shot down on its first hex a hover', () => {
+    const takeoff = EVERY_EVENT[4];
+    const downed: VisibleEvent = { type: 'DRONE_DOWNED', unitId: 'p1-drone', owner: 'p1', hex: hex(8, 16) };
+    const line = describeEvent(takeoff, 'p1', OWN, [takeoff, downed]);
+    expect(line).not.toContain('held station');
+    expect(line).toContain('shot down on its first hex');
+    // The enemy's drone going down the same round is not our drone.
+    const theirs: VisibleEvent = { ...downed, unitId: 'p2-drone', owner: 'p2' };
+    expect(describeEvent(takeoff, 'p1', OWN, [takeoff, theirs])).toContain('held station');
+  });
+
   it('phrases owner-tagged public events from the reader’s side', () => {
     const [mine, theirs] = [EVERY_EVENT[13], EVERY_EVENT[14]];
     expect(describeEvent(mine, 'p1', OWN)).toContain('Your drone');

@@ -224,6 +224,8 @@ export default function Hud() {
           <p className="muted">Order overlay: green fill — ground a launcher can reach. Amber outline — hexes it can fire on. Violet dots — where the drone can fly, with the corridor it would photograph shown on hover.</p>
           <p className="enemy">Red — what you have detected. Solid ring: a site or base, permanent. Circle: a launcher, this round only — bright if it fired, faint if recon saw it (it may have moved).</p>
           <p className="muted">Faint blue wash: ground your own interceptor bases cover.</p>
+          <p className="muted">Lighter ground: your drone has photographed it, so any bunker site there is already marked.</p>
+          <p className="enemy">Red wash with a border: where the enemy base could be, worked out from where your drone was shot down.</p>
         </section>
       </div>
 

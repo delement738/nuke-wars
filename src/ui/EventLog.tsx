@@ -46,7 +46,12 @@ export default function EventLog() {
               <ul>
                 {entries.map((entry, i) => (
                   <li key={i}>
-                    {describeEvent(entry.event, viewer, view?.units ?? [])}
+                    {describeEvent(
+                      entry.event,
+                      viewer,
+                      view?.units ?? [],
+                      entries.map((e) => e.event),
+                    )}
                   </li>
                 ))}
               </ul>
