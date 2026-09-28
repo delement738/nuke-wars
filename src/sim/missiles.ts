@@ -13,6 +13,8 @@
 //     target hex included — `hexLine(...).slice(1)` (§10). Keeping the origin in
 //     would let a launcher be shot down by a base covering its own hex, which
 //     is the launcher's own side of the board.
+//   - a missile advances `RULES.missileSpeed` hexes per round (§10), so a long
+//     shot spends a round in flight and is carried in `GameState.missiles`.
 //   - each base destroys at most `RULES.interceptsPerRound` missiles per round
 //     (§10). That cap is the stalemate-breaker for the whole design: without it
 //     a base is unkillable, because any missile aimed at one must cross its
@@ -32,6 +34,7 @@ import { tileAt } from './map';
 import type {
   GameState,
   LaunchOrder,
+  Missile,
   MissileId,
   PlayerId,
   Unit,
@@ -64,33 +67,6 @@ export type LaunchValidation =
   | { legal: true; distance: number }
   | { legal: false; reason: LaunchIllegalReason };
 
-/**
- * One missile, in flight for one round.
- *
- * Missiles are never stored in `GameState`: they are created in phase 2, fly,
- * and either die to interception or land in phase 3, all inside a single
- * `resolve()` call. Nothing about them survives the round, which is why they are
- * a plain value here rather than a `Unit`.
- */
-export interface Missile {
-  /** See `missileIdFor` — derived from public data only (§6). */
-  id: MissileId;
-  owner: PlayerId;
-  /**
-   * The firing launcher. Kept so phase 3 can attribute nothing to it and phase 2
-   * can leave it out of every event — it is deliberately NOT part of `id`, and
-   * no event ever carries it. It exists for the engine's own bookkeeping.
-   */
-  launcherId: UnitId;
-  origin: Hex;
-  target: Hex;
-  /**
-   * Every hex after the origin, with the target hex last (`hexLine.slice(1)`,
-   * §10). This is the interception check list, in flight order.
-   */
-  path: Hex[];
-}
-
 /** A missile destroyed in flight, the hex it was destroyed over, and by whom. */
 export interface Interception {
   missile: Missile;
@@ -104,8 +80,16 @@ export interface Interception {
 }
 
 export interface MissileFlights {
-  /** Missiles that reached their target hex, in canonical order. */
-  survivors: Missile[];
+  /**
+   * Missiles that reached their target hex this round, in canonical order —
+   * phase 3's input. `traveled === path.length` on every one.
+   */
+  arrived: Missile[];
+  /**
+   * Missiles still short of their target after this round's advance, in
+   * canonical order, with `traveled` updated — the next `GameState.missiles`.
+   */
+  inFlight: Missile[];
   /**
    * Missiles shot down, in the order it happened: by flight step first, then by
    * canonical order within a step. Chronological, so a client can animate
@@ -191,12 +175,19 @@ export function createMissile(round: number, launcher: Unit, target: Hex): Missi
     origin: launcher.position,
     target,
     path: hexLine(launcher.position, target).slice(1),
+    launchRound: round,
+    traveled: 0,
   };
 }
 
 /**
- * The order simultaneous missiles are adjudicated and logged in: by origin hex,
- * `q` then `r` (spec §10, amended 2026-08-11).
+ * The order simultaneous missiles are adjudicated and logged in: oldest launch
+ * round first, then by origin hex, `q` then `r` (spec §10, amended 2026-08-11;
+ * the launch-round key added with flight time, 2026-09-27).
+ *
+ * Both keys are public — the missile id publishes them — so the ordering a
+ * player can observe in the log tells them nothing they were not handed. Two
+ * missiles never tie on both: a hex fires at most once per round.
  *
  * Some fixed sequence is unavoidable — when two missiles enter one base's
  * coverage on the same step, exactly one can be engaged — and it has to come
@@ -218,24 +209,37 @@ export function createMissile(round: number, launcher: Unit, target: Hex): Missi
  * the defender, no event names one, and they cannot move.
  */
 export function canonicalOrder(missiles: readonly Missile[]): Missile[] {
-  return [...missiles].sort((a, b) => compareHex(a.origin, b.origin));
+  return [...missiles].sort(
+    (a, b) => a.launchRound - b.launchRound || compareHex(a.origin, b.origin),
+  );
 }
 
 /**
- * Fly every missile simultaneously and adjudicate interception (spec §10).
+ * Advance every missile in the air by up to `RULES.missileSpeed` hexes,
+ * simultaneously, and adjudicate interception (spec §10).
+ *
+ * `missiles` is everything aloft this round: the ones fired in phase 2 and the
+ * ones carried over in `GameState.missiles`, together. They are all one volley
+ * as far as the defence is concerned.
  *
  * The missiles advance **step by step together**, not one flight at a time, and
  * the difference is a real rule rather than an implementation detail: a base
  * with one intercept left engages whichever missile reaches it *first*, so a
  * missile two hexes out cannot be saved by another missile that would only have
  * arrived later. Resolving flight-by-flight would silently award the intercept
- * to whichever missile the array happened to list first.
+ * to whichever missile the array happened to list first. A carried missile
+ * simply starts its steps from `traveled` rather than from its origin.
+ *
+ * Each path hex is checked **once, on entry, over the missile's whole life**.
+ * A missile that ends a round parked inside a bubble is not re-engaged over the
+ * hex it is sitting on; it meets the base again only on the next hex it enters.
  *
  * Capacity is spent per base and lasts the round (`RULES.interceptsPerRound`).
  * A missile crossing several bubbles is engaged by whichever base still has
  * capacity when it enters — which is what makes a saturating volley through one
  * lane the counter to interceptor geometry, and why the cap must not be
- * removed casually.
+ * removed casually. Because capacity resets each round while a long flight
+ * spans two, saturation also has a time axis: a bubble can be walked through.
  *
  * Drone kills are NOT adjudicated here and never consume capacity (§2, §10);
  * they are settled in phase 1 by `flyDrone`, using the same coverage module.
@@ -255,18 +259,19 @@ export function flyMissiles(
   // safe to sort on (see canonicalOrder).
   const capacity = new Map<UnitId, number>();
   const downed = new Set<MissileId>();
+  const traveled = new Map(ordered.map((m) => [m.id, m.traveled]));
   const interceptions: Interception[] = [];
 
-  const longest = ordered.reduce((max, m) => Math.max(max, m.path.length), 0);
-
-  for (let step = 0; step < longest; step++) {
+  for (let step = 0; step < RULES.missileSpeed; step++) {
     for (const missile of ordered) {
       if (downed.has(missile.id)) continue;
 
-      // Short flights simply have no hex at this step — they have already
-      // arrived, and arrival is phase 3's business.
-      const hex = missile.path[step];
+      // A missile that has already reached its target has no hex at this step —
+      // arrival is phase 3's business.
+      const done = traveled.get(missile.id) ?? missile.traveled;
+      const hex = missile.path[done];
       if (!hex) continue;
+      traveled.set(missile.id, done + 1);
 
       for (const base of basesCovering(units, hex, missile.owner)) {
         const left = capacity.get(base.id) ?? RULES.interceptsPerRound;
@@ -280,10 +285,15 @@ export function flyMissiles(
     }
   }
 
-  return {
-    survivors: ordered.filter((missile) => !downed.has(missile.id)),
-    interceptions,
-  };
+  const arrived: Missile[] = [];
+  const inFlight: Missile[] = [];
+  for (const missile of ordered) {
+    if (downed.has(missile.id)) continue;
+    const advanced = { ...missile, traveled: traveled.get(missile.id) ?? missile.traveled };
+    (advanced.traveled >= advanced.path.length ? arrived : inFlight).push(advanced);
+  }
+
+  return { arrived, inFlight, interceptions };
 }
 
 /**
@@ -298,9 +308,9 @@ export function flyMissiles(
  * Damage is per HEX, not per target, because a missile is aimed at ground and
  * hits whatever is standing there — friendly, enemy, or nothing at all.
  */
-export function damageByHex(survivors: readonly Missile[]): Map<string, number> {
+export function damageByHex(arrived: readonly Missile[]): Map<string, number> {
   const totals = new Map<string, number>();
-  for (const missile of survivors) {
+  for (const missile of arrived) {
     const key = hexKey(missile.target);
     totals.set(key, (totals.get(key) ?? 0) + RULES.missileDamage);
   }

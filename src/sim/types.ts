@@ -84,6 +84,71 @@ export type MaskedStaticKind = 'interceptor' | 'bunker';
 export type MissileId = string;
 
 /**
+ * A missile that has been launched and has not yet landed or been intercepted
+ * (spec §10). Created in phase 2 by `createMissile` (missiles.ts), advanced
+ * `RULES.missileSpeed` hexes per resolution, and carried between rounds in
+ * `GameState.missiles` when its path is longer than that — a shot at range 5–6
+ * spends one whole round visibly in flight before it lands.
+ *
+ * It owns everything it needs to finish its flight, which is what makes it
+ * fire-and-forget: the launcher dying does not touch it (§10).
+ */
+export interface Missile {
+  /** See `missileIdFor` — derived from public data only (§6). */
+  id: MissileId;
+  owner: PlayerId;
+  /**
+   * The firing launcher. Engine bookkeeping only: it is deliberately NOT part of
+   * `id`, no event ever carries it, and `VisibleMissile` has no field for it —
+   * a launcher identity the enemy could track across rounds is exactly the leak
+   * §11 keys intel by hex to prevent.
+   */
+  launcherId: UnitId;
+  origin: Hex;
+  target: Hex;
+  /**
+   * Every hex after the origin, with the target hex last (`hexLine.slice(1)`,
+   * §10). The interception check list, in flight order. Its length equals the
+   * distance flown, so a path no longer than `RULES.missileSpeed` lands the
+   * round it is fired.
+   */
+  path: Hex[];
+  /**
+   * The round it was fired in — public, since `LAUNCH_DETECTED` announced it,
+   * and the first key of the cross-round tiebreak (§10: oldest first). Stored as
+   * a number rather than parsed back out of `id`.
+   */
+  launchRound: number;
+  /**
+   * How many `path` hexes it has entered so far: `path[traveled - 1]` is where
+   * it is now (0 = still over its origin). Each hex is intercept-checked once,
+   * on entry, over the missile's whole life. `traveled === path.length` means it
+   * has arrived.
+   */
+  traveled: number;
+}
+
+/**
+ * A missile in flight as either player sees it (spec §6, §10). Everything here
+ * is public — origin, target and launch round were published by
+ * `LAUNCH_DETECTED`, and progress follows from the public speed rule.
+ *
+ * `launcherId` and `path` are structurally absent. The first would hand the
+ * enemy a trackable launcher identity (§11); the second is derivable
+ * (`hexLine(origin, target).slice(1)`) and leaving it out keeps this a pure
+ * projection of public facts. Same design as `VisibleGameState` dropping enemy
+ * units: the field a leak would need does not exist.
+ */
+export interface VisibleMissile {
+  id: MissileId;
+  owner: PlayerId;
+  origin: Hex;
+  target: Hex;
+  launchRound: number;
+  traveled: number;
+}
+
+/**
  * A single piece on the board. Deliberately one generic shape rather than a
  * subtype per kind — per-kind stats live in UNIT_DEFS keyed by `kind`
  * (CLAUDE.md's data-table rule), never as fields here.
@@ -263,6 +328,13 @@ export interface GameState {
   droneRespawnIn: Record<PlayerId, number>;
   /** Whose final retaliation round is running, when phase is DEAD_HAND_PHASE. */
   deadHandFor: PlayerId | null;
+  /**
+   * Missiles still in the air between rounds, both players' (spec §10). Kept in
+   * canonical order — launch round ascending, then origin hex. Empty whenever
+   * every shot this round was at range ≤ `RULES.missileSpeed`. A match that ends
+   * with missiles aloft keeps them here, frozen: they never land (§3).
+   */
+  missiles: Missile[];
   outcome: Outcome | null;
 }
 
@@ -519,6 +591,8 @@ export interface VisibleGameState {
   intel: VisiblePlayerIntel;
   droneRespawnIn: number;
   deadHandFor: PlayerId | null;
+  /** BOTH players' missiles in flight — flights are public (§6, §10). */
+  missiles: VisibleMissile[];
   outcome: Outcome | null;
 }
 

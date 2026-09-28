@@ -216,6 +216,21 @@ export const RULES = {
   missileRange: 6,
 
   /**
+   * Hexes a missile advances per resolution, along its path (spec §10 — added
+   * 2026-09-27, V1.1 Step 3). A shot at distance ≤ this lands in the round it is
+   * fired, exactly as before flight time existed; a longer one spends a round in
+   * flight and lands in the next round's phase 3.
+   *
+   * Tuning note: this number only matters against `missileRange`. The gap
+   * between them — shots at 5–6 — is exactly the band that gets telegraphed,
+   * because `LAUNCH_DETECTED` already publishes origin and target to both
+   * players. Raise this to `missileRange` and flight time disappears; lower it
+   * and more of every launcher's reach becomes a warned, dodgeable shot. The two
+   * numbers tune the warning together.
+   */
+  missileSpeed: 4,
+
+  /**
    * Ground budget a launcher spends on a MARCH order instead of its normal
    * `UNIT_DEFS.launcher.movement` (spec §9, §11 — added 2026-08-13).
    *

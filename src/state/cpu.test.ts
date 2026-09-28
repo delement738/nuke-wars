@@ -83,6 +83,7 @@ function makeView(
     intel: { staticReveals: [], contacts: [], ...intel },
     droneRespawnIn: 0,
     deadHandFor: null,
+    missiles: [],
     outcome: null,
     ...overrides,
   };
@@ -106,6 +107,7 @@ function believedStateFor(map: MapData, units: readonly Unit[]): GameState {
     },
     droneRespawnIn: { p1: 0, p2: 0 },
     deadHandFor: null,
+    missiles: [],
     outcome: null,
   };
 }
@@ -357,6 +359,7 @@ describe('pickAdvanceDestination', () => {
     intel: { p1: { staticReveals: [], contacts: [] }, p2: { staticReveals: [], contacts: [] } },
     droneRespawnIn: { p1: 0, p2: 0 },
     deadHandFor: null,
+    missiles: [],
     outcome: null,
   };
   const targetRow = 5; // matches RULES.homeZoneRows.p2.max, p1's advance target
@@ -504,6 +507,7 @@ describe('edge cases', () => {
             intel: { p1: { staticReveals: [], contacts: [] }, p2: { staticReveals: [], contacts: [] } },
             droneRespawnIn: { p1: 0, p2: 0 },
             deadHandFor: null,
+            missiles: [],
             outcome: null,
           };
           expect(validateMove(believed, player, order)).toMatchObject({ legal: true });

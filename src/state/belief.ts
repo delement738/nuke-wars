@@ -58,6 +58,7 @@ export function believedState(view: VisibleGameState): GameState {
     intel: { p1: EMPTY_INTEL, p2: EMPTY_INTEL },
     droneRespawnIn: { p1: 0, p2: 0 },
     deadHandFor: view.deadHandFor,
+    missiles: [],
     outcome: view.outcome,
   };
 }

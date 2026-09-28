@@ -62,6 +62,7 @@ function makeState(units: Unit[]): GameState {
     },
     droneRespawnIn: { p1: 0, p2: 0 },
     deadHandFor: null,
+    missiles: [],
     outcome: null,
   };
 }
@@ -172,9 +173,11 @@ describe('interceptor bases — exposure on intercept (spec §10)', () => {
   it('a base broken by a saturating volley is exposed, then forgotten as it dies', () => {
     // Two missiles down the same lane: the first spends the base's one
     // intercept (and exposes it), the second lands on it (§10's saturation).
+    // Both gunners within RULES.missileSpeed of the base, so the whole volley
+    // lands this round (a range-6 shot from GUNNER would still be in flight).
     const state = makeState([
-      makeUnit('a', 'p1', 'launcher', GUNNER),
-      makeUnit('b', 'p1', 'launcher', at(10, 13)),
+      makeUnit('a', 'p1', 'launcher', at(10, 12)),
+      makeUnit('b', 'p1', 'launcher', at(10, 11)),
       makeUnit('base', 'p2', 'interceptor', BASE),
     ]);
 

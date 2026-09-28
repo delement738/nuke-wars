@@ -19,9 +19,9 @@ import {
   flyMissiles,
   missileIdFor,
   validateLaunch,
-  type Missile,
+  type MissileFlights,
 } from './missiles';
-import type { GameState, LaunchOrder, PlayerId, Unit, UnitKind } from './types';
+import type { GameState, Missile, LaunchOrder, PlayerId, Unit, UnitKind } from './types';
 
 // --- fixtures ---------------------------------------------------------------
 //
@@ -67,6 +67,7 @@ function makeState(map: MapData, units: Unit[]): GameState {
     },
     droneRespawnIn: { p1: 0, p2: 0 },
     deadHandFor: null,
+    missiles: [],
     outcome: null,
   };
 }
@@ -280,6 +281,17 @@ describe('flyMissiles()', () => {
   }
 
   /**
+   * Ids of every missile NOT shot down, landed or still in flight. The
+   * interception tests below care only whether a missile survived the defence,
+   * and several use range-6 shots that (at `RULES.missileSpeed` 4) are still
+   * aloft at the end of the round — the flight-time tests further down pin
+   * which of the two lists a survivor lands in.
+   */
+  function survivorIds(flights: MissileFlights): string[] {
+    return [...flights.arrived, ...flights.inFlight].map((m) => m.id);
+  }
+
+  /**
    * The flight step at which a missile first enters `base`'s bubble, or -1.
    * Used to guard the fixtures below: several of these tests only mean what they
    * claim if two missiles arrive on the same step (a genuine tie) or on
@@ -296,7 +308,7 @@ describe('flyMissiles()', () => {
 
     const flights = flyMissiles([], [missile]);
 
-    expect(flights.survivors).toEqual([missile]);
+    expect(survivorIds(flights)).toEqual([missile.id]);
     expect(flights.interceptions).toEqual([]);
   });
 
@@ -309,7 +321,7 @@ describe('flyMissiles()', () => {
 
     // The bubble starts R hexes before the base, and the interception names the
     // base that spent its intercept (engine bookkeeping for BASE_EXPOSED).
-    expect(flights.survivors).toEqual([]);
+    expect(survivorIds(flights)).toEqual([]);
     expect(flights.interceptions).toEqual([{ missile, hex: north(CENTER, 2), base }]);
   });
 
@@ -329,7 +341,7 @@ describe('flyMissiles()', () => {
     expect(distance(base.position, CENTER)).toBeLessThanOrEqual(
       RULES.interceptorCoverageRadius,
     );
-    expect(flyMissiles([base], [missile]).survivors).toEqual([missile]);
+    expect(survivorIds(flyMissiles([base], [missile]))).toEqual([missile.id]);
   });
 
   it('spends a base’s capacity — the second missile through the lane lands', () => {
@@ -344,7 +356,7 @@ describe('flyMissiles()', () => {
     const flights = flyMissiles([base], volley);
 
     expect(flights.interceptions).toHaveLength(1);
-    expect(flights.survivors).toHaveLength(1);
+    expect(survivorIds(flights)).toHaveLength(1);
   });
 
   it('two bases covering one lane can stop two missiles', () => {
@@ -356,7 +368,7 @@ describe('flyMissiles()', () => {
 
     const flights = flyMissiles(bases, [shot(RANGE), shot(RANGE, west)]);
 
-    expect(flights.survivors).toEqual([]);
+    expect(survivorIds(flights)).toEqual([]);
     expect(flights.interceptions).toHaveLength(2);
   });
 
@@ -364,7 +376,7 @@ describe('flyMissiles()', () => {
     const friendly = makeUnit('base', 'p1', 'interceptor', north(CENTER, 3));
     const missile = shot(RANGE);
 
-    expect(flyMissiles([friendly], [missile]).survivors).toEqual([missile]);
+    expect(survivorIds(flyMissiles([friendly], [missile]))).toEqual([missile.id]);
   });
 
   it('a destroyed base leaves no bubble behind', () => {
@@ -372,7 +384,7 @@ describe('flyMissiles()', () => {
     base.destroyed = true;
     const missile = shot(RANGE);
 
-    expect(flyMissiles([base], [missile]).survivors).toEqual([missile]);
+    expect(survivorIds(flyMissiles([base], [missile]))).toEqual([missile.id]);
   });
 
   it('breaks a same-step tie by ORIGIN HEX, never by launcher id (§10)', () => {
@@ -395,7 +407,7 @@ describe('flyMissiles()', () => {
     const flights = flyMissiles([base], [second, first]);
 
     expect(flights.interceptions.map((i) => i.missile.id)).toEqual([first.id]);
-    expect(flights.survivors.map((m) => m.id)).toEqual([second.id]);
+    expect(survivorIds(flights)).toEqual([second.id]);
   });
 
   it('engages the nearer missile first, whatever order it was handed', () => {
@@ -418,13 +430,55 @@ describe('flyMissiles()', () => {
     expect(flights.interceptions.map((i) => i.missile.id)).toEqual([near.id]);
   });
 
-  it('returns survivors in canonical order regardless of input order', () => {
+  it('breaks a cross-round tie by OLDEST LAUNCH first, before origin hex (§10)', () => {
+    // Same geometry as the origin-hex tie above, but the missile from the
+    // east — which LOSES on origin hex — was launched a round earlier. Launch
+    // round is the first key, so it is engaged first. Both keys are public.
+    const base = makeUnit('base', 'p2', 'interceptor', north(CENTER, 4));
+    const westHex = offsetToAxial({ col: 9, row: 10 });
+    const eastHex = offsetToAxial({ col: 11, row: 10 });
+    const newer = createMissile(2, makeUnit('w', 'p1', 'launcher', westHex), north(westHex, RANGE));
+    const older = createMissile(1, makeUnit('e', 'p1', 'launcher', eastHex), north(eastHex, RANGE));
+    expect(compareHex(newer.origin, older.origin)).toBeLessThan(0);
+    expect(entryStep(newer, base)).toBe(entryStep(older, base));
+
+    const flights = flyMissiles([base], [newer, older]);
+
+    expect(flights.interceptions.map((i) => i.missile.id)).toEqual([older.id]);
+    expect(canonicalOrder([newer, older]).map((m) => m.id)).toEqual([older.id, newer.id]);
+  });
+
+  it('advances RULES.missileSpeed hexes a round: a range-6 shot is still in flight', () => {
+    expect(RULES.missileSpeed).toBeLessThan(RANGE);
+    const missile = shot(RANGE);
+
+    const first = flyMissiles([], [missile]);
+
+    expect(first.arrived).toEqual([]);
+    expect(first.inFlight).toEqual([{ ...missile, traveled: RULES.missileSpeed }]);
+
+    // Carried into the next round, it finishes the path and arrives.
+    const second = flyMissiles([], first.inFlight);
+    expect(second.arrived).toEqual([{ ...missile, traveled: RANGE }]);
+    expect(second.inFlight).toEqual([]);
+  });
+
+  it('a shot of exactly RULES.missileSpeed arrives the round it is fired', () => {
+    const missile = shot(RULES.missileSpeed);
+
+    const flights = flyMissiles([], [missile]);
+
+    expect(flights.arrived).toEqual([{ ...missile, traveled: RULES.missileSpeed }]);
+    expect(flights.inFlight).toEqual([]);
+  });
+
+  it('returns arrivals in canonical order regardless of input order', () => {
     const west = offsetToAxial({ col: 8, row: 10 });
     const east = offsetToAxial({ col: 12, row: 10 });
     const a = shot(3, west);
     const b = shot(3, east);
 
-    expect(flyMissiles([], [b, a]).survivors.map((m) => m.id)).toEqual(
+    expect(flyMissiles([], [b, a]).arrived.map((m) => m.id)).toEqual(
       canonicalOrder([a, b]).map((m) => m.id),
     );
   });
