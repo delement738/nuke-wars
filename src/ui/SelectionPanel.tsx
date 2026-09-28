@@ -97,10 +97,10 @@ export default function SelectionPanel() {
 }
 
 function terrainLine(terrain: Terrain): string {
-  // Not "impassable": mountains block *movement* only. A bunker, decoy or
-  // interceptor base may be built on one, and missiles and drones cross it
-  // freely (spec §2, §12 — CLAUDE.md gotcha 7b).
+  // Not "impassable": a bunker, decoy or interceptor base may be built on one,
+  // and drones fly over it. Since 2026-09-28 it also blocks line of fire —
+  // across it, never onto it (spec §2, §10, §12 — CLAUDE.md gotcha 7b).
   return terrain === 'mountain'
-    ? 'Mountain — no ground unit may enter. Structures may be built here.'
+    ? 'Mountain — launchers cannot enter, and missiles cannot be fired across it (it can still be the target). Structures may be built here.'
     : 'Plains — open ground.';
 }

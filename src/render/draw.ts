@@ -121,6 +121,15 @@ export const INTEL_STYLE = new TextStyle({
   fill: COLOR.enemy,
 });
 
+/** "I?" on a hex where the enemy base could be — smaller and fainter than a
+ *  sighting's letter, because it is a deduction, not a sighting. */
+const CANDIDATE_STYLE = new TextStyle({
+  fontFamily: 'monospace',
+  fontSize: 12,
+  fontWeight: 'bold',
+  fill: COLOR.enemy,
+});
+
 /** Empty a layer, destroying what was in it. */
 function clear(layer: Container): void {
   for (const child of layer.removeChildren()) child.destroy({ children: true });
@@ -245,8 +254,11 @@ export function drawCoverage(layer: Container, view: VisibleGameState): void {
  *     move, so ground under it holds no bunker or decoy that is not already on
  *     the map; it says nothing about launchers.
  *   - **Where the enemy base could be**, a red wash with a red border round the
- *     region. Red because it is intel about them; a wash and not a ring because
- *     it is a *possibility*, where a solid ring (`drawIntel`) is a sighting.
+ *     region and a faint "I?" in each hex. Red because it is intel about them; a
+ *     wash and not a ring because it is a *possibility*, where a solid ring
+ *     (`drawIntel`) is a sighting. The "I?" was added on 2026-09-28 (Session 4)
+ *     because a region narrowed to ONE hex is just a red outline, and a
+ *     playtester could not tell what it meant.
  *
  * The two never overlap in practice: a candidate is more than
  * `interceptorCoverageRadius` from every hex the drone transmitted from, and
@@ -276,6 +288,13 @@ export function drawIntelOverlay(layer: Container, overlay: IntelOverlay | null)
   }
   g.stroke({ width: 2, color: COLOR.enemy, alpha: 0.85 });
   layer.addChild(g);
+
+  for (const hex of overlay.candidates) {
+    const { x, y } = centerOf(hex);
+    const label = glyphAt('I?', x, y, CANDIDATE_STYLE);
+    label.alpha = 0.8;
+    layer.addChild(label);
+  }
 }
 
 /** The two corners of `hex` on the edge it shares with its neighbour `next`:

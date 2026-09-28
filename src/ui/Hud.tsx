@@ -16,8 +16,6 @@
 // Auto-place. `App` mounts this component only once that has happened, which is
 // why the board it reads is never null in practice.
 //
-// Still to come: the real hotseat handoff (session 10c).
-//
 // The viewer switch is a **sandbox control**, not the handoff. It exists to make
 // the visibility filter visible: flip it and the board redraws as the other
 // player's picture — different units, different intel, a different log out of
@@ -44,6 +42,7 @@ import {
   useViewer,
 } from '../state/useMatch';
 import EventLog from './EventLog';
+import { LEGEND } from './legend';
 import OrderPanel from './OrderPanel';
 import SelectionPanel from './SelectionPanel';
 import { describeOutcome } from './eventText';
@@ -51,7 +50,12 @@ import './hud.css';
 
 const DIFFICULTIES: readonly CpuDifficulty[] = ['easy', 'medium', 'hard'];
 
-export default function Hud() {
+interface Props {
+  /** Opens the how-to-play window, which `App` owns (presentation Session 4). */
+  onHelp: () => void;
+}
+
+export default function Hud({ onHelp }: Props) {
   const view = useView();
   const viewer = useViewer();
   const seed = useSeed();
@@ -135,9 +139,15 @@ export default function Hud() {
             </button>
           </div>
 
+          <div className="buttons">
+            <button type="button" onClick={onHelp}>
+              How to play (?)
+            </button>
+          </div>
+
           <p className="footnote">
             Finishing early is legal: any unit you have not decided holds, and a
-            drone with no order hovers and watches its own corridor (§3).
+            drone with no order hovers and watches its own corridor.
           </p>
         </section>
 
@@ -220,12 +230,12 @@ export default function Hud() {
 
         <section className="panel legend">
           <h2>Legend</h2>
-          <p className="own">Blue — your units: L launcher, I interceptor base, D drone, B bunker, X decoy.</p>
-          <p className="muted">Order overlay: green fill — ground a launcher can reach. Amber outline — hexes it can fire on. Violet dots — where the drone can fly, with the corridor it would photograph shown on hover.</p>
-          <p className="enemy">Red — what you have detected. Solid ring: a site or base, permanent. Circle: a launcher, this round only — bright if it fired, faint if recon saw it (it may have moved).</p>
-          <p className="muted">Faint blue wash: ground your own interceptor bases cover.</p>
-          <p className="muted">Lighter ground: your drone has photographed it, so any bunker site there is already marked.</p>
-          <p className="enemy">Red wash with a border: where the enemy base could be, worked out from where your drone was shot down.</p>
+          {/* One list, shared with the how-to-play screen (`./legend`). */}
+          {LEGEND.map((entry) => (
+            <p key={entry.text} className={entry.tone}>
+              {entry.text}
+            </p>
+          ))}
         </section>
       </div>
 

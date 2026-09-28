@@ -18,7 +18,7 @@
 // and a click on it is routed by `pickHex` in the store, which is also what
 // routes clicks during play — one place that decides what clicking a hex means.
 
-import { RULES, type PlaceableKind } from '../sim/defs';
+import { RULES, UNIT_DEFS, type PlaceableKind } from '../sim/defs';
 import { opponentOf } from '../sim/types';
 import {
   autoPlace,
@@ -63,11 +63,11 @@ const KIND_LABEL: Record<PlaceableKind, string> = {
  */
 const KIND_BLURB: Record<PlaceableKind, string> = {
   bunker:
-    'Two hits kill it and you lose. Hide it — you cannot defend it directly, and your interceptor bases are forbidden from sitting on top of it.',
+    `${UNIT_DEFS.bunker.hp} hits kill it and you lose. Hide it — you cannot defend it directly, and your interceptor base is forbidden from sitting near it.`,
   decoy:
-    'Empty concrete, identical to your bunker in every way the enemy can observe. Put it somewhere they will believe, and far from the real one: a single drone pass photographs a 3-hex corridor, so two sites side by side are found together.',
+    `Empty concrete, identical to your bunker in every way the enemy can observe, but it dies to ${UNIT_DEFS.decoy.hp} hit. Put it somewhere they will believe, and far from the real one: a single drone pass photographs a strip ${2 * RULES.reconSwathRadius + 1} hexes wide, so two sites side by side are found together.`,
   interceptor:
-    'Shoots down one missile per round anywhere within 2 hexes of it, and kills enemy drones that fly in. Stopping a missile gives its position away to the enemy for good. It must sit at least 3 hexes from BOTH of your sites, so it can only defend an approach lane, never the bunker itself.',
+    `Shoots down at most ${RULES.interceptsPerRound} enemy missile per round anywhere within ${RULES.interceptorCoverageRadius} hexes of it, and kills enemy drones that fly in. Stopping a missile gives its position away to the enemy for good. It must sit at least ${RULES.bunkerExclusionRadius} hexes from BOTH of your sites, so it can only defend an approach, never the bunker itself.`,
 };
 
 /** "Interceptor base 2" — a kind with several slots is numbered, a single one is not. */
@@ -76,7 +76,12 @@ function slotLabel(slot: PlacementSlot): string {
   return slot.ofKind > 1 ? `${name} ${slot.index}` : name;
 }
 
-export default function SetupPanel() {
+interface Props {
+  /** Opens the how-to-play window, which `App` owns (presentation Session 4). */
+  onHelp: () => void;
+}
+
+export default function SetupPanel({ onHelp }: Props) {
   const placed = usePlaced();
   const selectedSlot = useSelectedSlot();
   const seed = useSeed();
@@ -98,6 +103,18 @@ export default function SetupPanel() {
   return (
     <div className="hud">
       <div className="column left">
+        <section className="panel">
+          <h2>Nuke Wars</h2>
+          <p className="muted">
+            New here? The rules take about three minutes to read.
+          </p>
+          <div className="buttons">
+            <button type="button" onClick={onHelp}>
+              How to play (?)
+            </button>
+          </div>
+        </section>
+
         <section className="panel setup">
           <h2>
             Secret placement
