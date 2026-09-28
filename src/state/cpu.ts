@@ -43,7 +43,10 @@
 //     it then shoots the site in preference to a launcher contact that is also
 //     in range (see `knownTargets` — this ordering is the opposite of the obvious
 //     one and the comment there explains why, with the measurement that settled
-//     it); and it prefers a reachable hex outside a known enemy launcher's range
+//     it); it reads flight time (§10) — only shoots a launcher where the missile
+//     will still find it, and gives a launcher that cannot escape an inbound
+//     missile its last shot (see `hardFiringSolution`, `doomedLaunchers`); and it
+//     prefers a reachable hex outside a known enemy launcher's undodgeable reach
 //     over one further forward but exposed.
 //
 // MEDIUM and HARD share one recon behaviour, because searching the enemy home
@@ -312,7 +315,9 @@ export interface Target {
  * Everything this player currently has intel on, ranked for a HARD-tier
  * attacker: **a bunker/decoy site outranks a launcher contact.** MEDIUM ignores
  * the ranking entirely (see `selectTarget`) and fires at whichever is nearest,
- * contact or site alike.
+ * contact or site alike. Since flight time HARD fires through
+ * `hardFiringSolution`, which keeps this site-first rule and adds range tiers
+ * for contacts; the reasoning below is still why sites come first.
  *
  * This ordering was REVERSED on 2026-08-13, and the reasoning is worth keeping
  * because the old way is the more obvious one. A contact is the better *shot*:
@@ -422,15 +427,129 @@ export function selectTarget(
   })[0];
 }
 
-/** Hexes within missile range of a known enemy launcher contact — HARD's
+// ---------------------------------------------------------------------------
+// Flight time (hard) — spec §3, §10
+// ---------------------------------------------------------------------------
+
+/**
+ * HARD's firing solution for one launcher, or none. Replaces `selectTarget`'s
+ * ranking for HARD since a shot at range 5–6 lands a round late (§10), which
+ * made the question "will the target still be there?" part of every shot:
+ *
+ *   1. **A site, at any range.** Bunkers and decoys cannot move, so flight time
+ *      costs a site shot nothing, and the 2026-08-13 site-first ranking stands.
+ *   2. **A RECON or LAUNCH contact at range ≤ `missileSpeed`.** It lands in
+ *      phase 3, before the target's move (§3), so it cannot be dodged.
+ *   3. **A LAUNCH contact at 5–6.** A launcher that fired last round is likely
+ *      still firing, and so still there.
+ *
+ * Two shots are deliberately never taken. A **march contact** is the hex the
+ * launcher left (§11), so it is empty by construction. A **recon contact at 5–6**
+ * has a launcher that is moving now and will move again before impact. Every
+ * launch files a contact on the enemy's map, so a speculative shot is not free:
+ * it anchors the firer for counter-battery.
+ *
+ * **Leading the target was tried and REJECTED** (2026-09-27,
+ * `SOAK_MATCHES=60`, hard vs medium, seeds 3/7/11). Aiming one forced march
+ * ahead of a moving contact, toward the enemy's goal row, took seed 3 from
+ * 50–38 to 36–55. Led shots at march contacts were the costly part (−15 wins
+ * on every seed): marches are frequent, so HARD fired constantly, stopped
+ * advancing, and lost the counter-battery war (HARD launchers lost per match
+ * 1.0 → 2.5). Led shots at recon contacts alone changed nothing, because the
+ * led hex almost never lands in the 5–6 band. The tiers above gave
+ * 50→53, 49→54, 48→53 on the same three seeds.
+ *
+ * Nearest wins within a tier.
+ */
+export function hardFiringSolution(view: VisibleGameState, from: Hex): Hex | undefined {
+  const reach = (hex: Hex) => distance(from, hex);
+  const sites = knownSites(view).filter((hex) => reach(hex) <= RULES.missileRange);
+  const short: Hex[] = [];
+  const long: Hex[] = [];
+  for (const contact of view.intel.contacts) {
+    const d = reach(contact.hex);
+    if (contact.source === 'MARCH' || d === 0 || d > RULES.missileRange) continue;
+    if (d <= RULES.missileSpeed) short.push(contact.hex);
+    else if (contact.source === 'LAUNCH') long.push(contact.hex);
+  }
+  for (const tier of [sites, short, long]) {
+    if (tier.length > 0) return nearestTo(tier, from);
+  }
+  return undefined;
+}
+
+/**
+ * Own launchers standing on the target hex of a missile already in the air.
+ *
+ * **They cannot dodge it, and that is why this exists.** Every missile in
+ * `view.missiles` has already flown `missileSpeed` hexes and lands in phase 3 of
+ * the round being ordered now — before phase 5, where any move would happen
+ * (§3). A move is wasted; so is the round's order, unless it is a launch: the
+ * launcher fires in phase 2 before the impact, and the missile flies on after it
+ * dies (§10, fire-and-forget). So a doomed launcher's only useful act is its last
+ * shot. The dodge that does work is the blind one, in the round the enemy fires,
+ * which no warning can inform.
+ */
+export function doomedLaunchers(view: VisibleGameState): Set<string> {
+  const targets = new Set(view.missiles.map((m) => hexKey(m.target)));
+  return new Set(
+    view.units
+      .filter((u) => u.kind === 'launcher' && !u.destroyed && targets.has(hexKey(u.position)))
+      .map((u) => u.id),
+  );
+}
+
+/**
+ * A doomed launcher's last shot: its normal firing solution if it has one, or
+ * else a blind shot into the enemy home zone, at a hex no drone of ours has
+ * photographed (a bunker or decoy there would already be a site). Firing costs
+ * nothing — the launch contact it files is on a hex about to be empty.
+ */
+function lastShot(
+  believed: GameState,
+  view: VisibleGameState,
+  player: PlayerId,
+  launcher: Unit,
+  history: readonly VisibleEvent[],
+  rng: Rng,
+): Order | null {
+  let target = hardFiringSolution(view, launcher.position);
+  if (!target) {
+    const seen = new Set<string>();
+    for (const event of history) {
+      if (event.type !== 'DRONE_MOVED' || event.owner !== player) continue;
+      for (const hex of event.path) {
+        for (const near of hexesInRange(hex, RULES.reconSwathRadius)) seen.add(hexKey(near));
+      }
+    }
+    const zone = RULES.homeZoneRows[opponentOf(player)];
+    const candidates = hexesInRange(launcher.position, RULES.missileRange).filter((hex) => {
+      if (!onMap(believed.map, hex) || seen.has(hexKey(hex))) return false;
+      const { row } = axialToOffset(hex);
+      return row >= zone.min && row <= zone.max;
+    });
+    target = pickRandom(candidates, rng);
+  }
+  if (!target) return null;
+  const order: Order = { type: 'LAUNCH', unitId: launcher.id, target };
+  return validateLaunch(believed, player, order).legal ? order : null;
+}
+
+/** Hexes within `missileSpeed` of a known enemy launcher contact — HARD's
  * movement avoids ending a move here when an equally good alternative exists.
- * Both contact sources are treated as live risk; a RECON contact may already
+ * Every contact source is treated as live risk; a RECON contact may already
  * be one round stale (§11), but that is a reason to be less SURE the danger
- * is real, not a reason a heuristic this simple should ignore it. */
+ * is real, not a reason a heuristic this simple should ignore it.
+ *
+ * The radius was `missileRange` until flight time (§10). A shot from 5–6 lands
+ * after the target's next move, and a HARD launcher that is not firing is
+ * always moving, so only the ≤ 4 band is a threat it cannot walk out of.
+ * Measured with `hardFiringSolution`, hard vs medium, seeds 3/7/11: 53→54,
+ * 54→55, 53→54. */
 function dangerHexes(view: VisibleGameState): Set<string> {
   const danger = new Set<string>();
   for (const contact of view.intel.contacts) {
-    for (const hex of hexesInRange(contact.hex, RULES.missileRange)) {
+    for (const hex of hexesInRange(contact.hex, RULES.missileSpeed)) {
       danger.add(hexKey(hex));
     }
   }
@@ -614,13 +733,17 @@ function reactiveLauncherOrder(
   avoid: ReadonlySet<string>,
   danger: ReadonlySet<string> | null,
   ranked: boolean,
+  view: VisibleGameState,
 ): Order | null {
-  const inRange = targets.filter(
-    (t) => distance(launcher.position, t.hex) <= RULES.missileRange,
-  );
-  const target = selectTarget(inRange, launcher.position, ranked);
-  if (target) {
-    const order: Order = { type: 'LAUNCH', unitId: launcher.id, target: target.hex };
+  const aim = ranked
+    ? hardFiringSolution(view, launcher.position)
+    : selectTarget(
+        targets.filter((t) => distance(launcher.position, t.hex) <= RULES.missileRange),
+        launcher.position,
+        false,
+      )?.hex;
+  if (aim) {
+    const order: Order = { type: 'LAUNCH', unitId: launcher.id, target: aim };
     if (validateLaunch(believed, player, order).legal) return order;
   }
 
@@ -841,8 +964,15 @@ export function cpuOrders(
     const sites = difficulty === 'hard' ? knownSites(view) : [];
 
     const volley = difficulty === 'easy' ? new Map<string, Hex>() : baseVolley(view, launchers);
+    const doomed = difficulty === 'hard' ? doomedLaunchers(view) : new Set<string>();
 
     for (const launcher of launchers) {
+      if (doomed.has(launcher.id) && !volley.has(launcher.id)) {
+        const order = lastShot(believed, view, player, launcher, history, rng);
+        if (order) orders.push(order);
+        continue;
+      }
+
       const volleyTarget = volley.get(launcher.id);
       if (volleyTarget) {
         const order: Order = { type: 'LAUNCH', unitId: launcher.id, target: volleyTarget };
@@ -869,6 +999,7 @@ export function cpuOrders(
               avoid,
               danger,
               difficulty === 'hard',
+              view,
             );
       if (order) orders.push(order);
     }
