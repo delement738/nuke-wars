@@ -171,11 +171,8 @@ describe('cpuOrders — invariants that hold for every difficulty', () => {
             if (order.type === 'MOVE') {
               expect(validateMove(truth, player, order)).toMatchObject({ legal: true });
             } else if (order.type === 'MARCH') {
-              // Unreachable today — `modesFor` does not offer MARCH yet, so the
-              // CPU cannot produce one (see the note in `src/state/orders.ts`).
-              // Written out rather than folded into the FLY branch so that the
-              // session which teaches the CPU to march finds this assertion
-              // already checking it against TRUE state, not a mis-typed cast.
+              // MEDIUM and HARD march on the opening advance, so this branch is
+              // live from round 1 — checked against TRUE state like the others.
               expect(validateMarch(truth, player, order)).toMatchObject({ legal: true });
             } else if (order.type === 'LAUNCH') {
               expect(validateLaunchOrder(truth, player, order)).toMatchObject({ legal: true });
@@ -720,33 +717,43 @@ describe('site-seeking movement', () => {
     expect(distance(order.destination, site)).toBeLessThan(distance(start, site));
   });
 
-  it('MEDIUM ignores the site, pushes up the board, and never goes loud', () => {
+  it('MEDIUM ignores the site and pushes up the board instead', () => {
     // The tier distinction, asserted as a real behavioural difference rather
     // than trusted to a flag: MEDIUM fights the front, HARD hunts the bunker.
     const medium = advanceFrom('medium');
     expect(distance(medium.destination, site)).toBeGreaterThan(
       distance(advanceFrom('hard').destination, site),
     );
-
-    // Marching is HARD's alone. MEDIUM has no deadline to buy tempo against, so
-    // a public reveal would be a cost it gets nothing for.
-    expect(medium.type).toBe('MOVE');
   });
 
-  it('HARD does NOT march when it has no site to prosecute', () => {
-    // The other half of the policy, and the half with a measurement behind it
-    // (see `groundAdvanceOrder`): marching toward the generic front scores far
-    // better head-to-head and is an artifact of MEDIUM chasing stale contacts,
-    // not a better policy. MUTATION GUARD — relax the gate to `if (mayMarch)`
-    // and this flips to MARCH, with nothing else in the suite objecting.
-    const launcher = makeUnit('L1', player, 'launcher', start);
-    const noIntel = makeView(map, [launcher]); // no staticReveals at all
-    const order = cpuOrders(noIntel, 'hard', player, makeRng(1)).find(
+  it.each(['medium', 'hard'] as const)(
+    '%s force-marches toward the front at the opening, with no intel at all',
+    (difficulty) => {
+      // The aggressive opening (2026-09-27, see `groundAdvanceOrder`): far from
+      // the front, a march makes more progress than a walk, so it is taken.
+      // MUTATION GUARD — restore the old `goal.kind === 'site'` gate and this
+      // becomes a MOVE.
+      const launcher = makeUnit('L1', player, 'launcher', start);
+      const noIntel = makeView(map, [launcher]); // no staticReveals at all
+      const order = cpuOrders(noIntel, difficulty, player, makeRng(1)).find(
+        (o) => o.type === 'MOVE' || o.type === 'MARCH',
+      );
+
+      expect(order).toBeDefined();
+      expect(order!.type).toBe('MARCH');
+      expect(distance(order!.destination, start)).toBeGreaterThan(UNIT_DEFS.launcher.movement);
+    },
+  );
+
+  it('stops marching once it stands at the front', () => {
+    // Loud on the approach, quiet in position: at the `row` goal every
+    // destination a march could add scores no better than a walk.
+    const atFront = offsetToAxial({ col: 8, row: RULES.homeZoneRows.p2.max });
+    const launcher = makeUnit('L1', player, 'launcher', atFront);
+    const order = cpuOrders(makeView(map, [launcher]), 'hard', player, makeRng(1)).find(
       (o) => o.type === 'MOVE' || o.type === 'MARCH',
     );
-
-    expect(order).toBeDefined();
-    expect(order!.type).toBe('MOVE');
+    expect(order?.type).not.toBe('MARCH');
   });
 
   it('HARD stops marching once a plain walk already reaches firing range', () => {
