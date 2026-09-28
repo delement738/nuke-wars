@@ -9,6 +9,7 @@ import { axialToOffset, hexKey, offsetToAxial } from '../sim/hex';
 import { validateSetup } from '../sim/setup';
 import { PLAYERS, type PlayerId } from '../sim/types';
 import {
+  DEFAULT_DIFFICULTY,
   DEFAULT_SEED,
   SANDBOX_DUMMY,
   SANDBOX_PLAYER,
@@ -23,6 +24,7 @@ import {
   resign,
   resolveRound,
   selectSlot,
+  setDifficulty,
   setOrder,
   startPlacedMatch,
   viewFor,
@@ -399,6 +401,31 @@ describe('autoPlace', () => {
     newMatch();
     placeAll();
     expect(enemySites()).toEqual(auto);
+  });
+
+  /**
+   * A HARD CPU places its base deliberately (`cpuSetup`), and that must stay a
+   * CPU decision: the human's Auto-place is the plain fixture at every
+   * difficulty. Difficulty survives `newMatch`, so it is reset afterwards.
+   */
+  it('gives a HARD CPU its own placer and leaves Auto-place alone', () => {
+    const boards = (difficulty: 'medium' | 'hard') => {
+      setDifficulty(difficulty);
+      return [1, 2, 3, 4, 5].map((seed) => {
+        newMatch(seed);
+        autoPlace();
+        const human = placementSetup(matchStore.getState().placed[SANDBOX_PLAYER]);
+        return { human, cpu: enemySites() };
+      });
+    };
+    try {
+      const medium = boards('medium');
+      const hard = boards('hard');
+      expect(hard.map((b) => b.human)).toEqual(medium.map((b) => b.human));
+      expect(hard.map((b) => b.cpu)).not.toEqual(medium.map((b) => b.cpu));
+    } finally {
+      setDifficulty(DEFAULT_DIFFICULTY);
+    }
   });
 });
 

@@ -69,6 +69,7 @@ import {
   withoutSlot,
 } from './placement';
 import { battleReports, type BattleReport } from './reports';
+import { cpuSetup } from './cpuSetup';
 import { sandboxSetup } from './sandbox';
 import {
   humanSeats,
@@ -598,14 +599,16 @@ function beginMatch(setups: Record<PlayerId, PlayerSetup>): void {
  * it is kept.
  */
 function allSetups(): Record<PlayerId, PlayerSetup> {
-  const { seed, map, seats, placed } = matchStore.getState();
+  const { seed, map, seats, placed, difficulty } = matchStore.getState();
 
   const setups: Record<PlayerId, PlayerSetup> = { p1: [], p2: [] };
   for (const player of PLAYERS) {
+    // `cpuSetup`, not `sandboxSetup`: HARD places its base deliberately. The
+    // human's Auto-place stays on the plain fixture (see `autoPlace`).
     setups[player] =
       seats[player] === 'human'
         ? placementSetup(placed[player])
-        : sandboxSetup(map, player, setupRng(seed, player));
+        : cpuSetup(map, player, difficulty, setupRng(seed, player));
   }
   return setups;
 }
