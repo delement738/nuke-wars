@@ -126,7 +126,7 @@ function countOf(placed: PlayerSetup, kind: PlaceableKind): number {
  *
  * **A suggestion, not a requirement** — placement order is free (see
  * `validatePlacement`), so this is what the setup UI *pre-selects* after each
- * placement so a player who just wants to click four times never has to choose.
+ * placement so a player who just wants to click through the roster never has to choose.
  * It is also what `sandboxSetup` walks.
  *
  * It lives here rather than in the UI because it is made of `PLACEMENT_ORDER`
@@ -213,7 +213,7 @@ export function validatePlacement(
   // base was what forced a placement order: a base put down first had no site to
   // measure against and passed vacuously. Asking it of whichever asset arrives
   // second removes that need without changing the set of legal boards by a
-  // single hex, and it is what lets the setup UI offer the four assets in any
+  // single hex, and it is what lets the setup UI offer the three assets in any
   // order.
   //
   // The reason code deliberately does not say *which* asset was too close, and

@@ -144,7 +144,7 @@ export function placementComplete(draft: PlacementDraft): boolean {
 
 /**
  * The first empty slot, or null when the roster is full — what the UI
- * pre-selects so a player who just wants to click four times never has to
+ * pre-selects so a player who just wants to click through the roster never has to
  * choose one.
  *
  * A convenience, not a rule: any slot may be selected at any time (§12, since

@@ -118,7 +118,7 @@ describe('validatePlacement() — roster and order', () => {
   });
 
   /**
-   * There is no placement order (changed 2026-08-13). Each of the four assets
+   * There is no placement order (changed 2026-08-13). Each of the three assets
    * may be the first one down — the old OUT_OF_ORDER rejection existed only
    * because the ≥3 exclusion rule was checked from the base's side alone, and it
    * is now checked symmetrically instead.
@@ -625,7 +625,7 @@ describe('nextPlacementKind', () => {
 describe('startMatch() — unit order is a function of the setup, not of the clicks', () => {
   /**
    * §9 emits unit-naming events in `GameState.units` order, so that order has to
-   * be canonical. Once the setup UI let a player place their four assets in any
+   * be canonical. Once the setup UI let a player place their three assets in any
    * sequence, "canonical" stopped being free: two players who built the SAME
    * board in different orders would otherwise produce differently-ordered logs
    * from an identical position. `startingUnits` sorts by PLACEMENT_ORDER to fix

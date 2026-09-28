@@ -194,7 +194,7 @@ export interface MatchState {
    * The human's secret placements, one entry per roster slot (spec §12).
    *
    * Populated on the setup screen and left in place once the match starts, where
-   * each is simply a record of where that player put their own four assets —
+   * each is simply a record of where that player put their own three assets —
    * their own knowledge, which they are always allowed to see (§11 rule 1).
    *
    * **One per player since 10c, and gotcha 36's discipline now applies**: in
@@ -373,7 +373,7 @@ export const matchStore = createStore<MatchState>()(() => ({
   seed: DEFAULT_SEED,
   map: freshMap(DEFAULT_SEED),
   // The client opens in solo, so the default experience is unchanged by 10c:
-  // one human placing four assets against a CPU. Hotseat is opted into.
+  // one human placing three assets against a CPU. Hotseat is opted into.
   seats: SOLO_SEATS,
   activeSeat: SANDBOX_PLAYER,
   handoff: null,
@@ -669,7 +669,7 @@ function allSetups(): Record<PlayerId, PlayerSetup> {
 }
 
 /**
- * Choose which of your four assets you are positioning (spec §12).
+ * Choose which of your three assets you are positioning (spec §12).
  *
  * Any slot, at any time — placement order is free, so this is the whole input
  * the setup screen needs beyond the board itself. Selecting a slot that is
@@ -698,13 +698,13 @@ export function selectSlot(slotId: number): void {
  * setup containing one.
  *
  * Selection then advances to the first still-empty slot, which is what lets a
- * player who does not care about order simply click four times. When none is
+ * player who does not care about order simply click through the roster. When none is
  * empty it stays put, so the last asset placed is the one a further click moves.
  *
  * **This does NOT start the match**, and that is a deliberate reversal of how it
  * worked when placement was a fixed sequence. Back then the fourth click was
  * unambiguously "I am done". Now that any asset can be repositioned at any time,
- * auto-starting on the fourth placement would snatch the board away at exactly
+ * auto-starting on the last placement would snatch the board away at exactly
  * the moment the player finally has the whole thing in front of them to judge.
  * `startPlacedMatch` is the explicit commitment instead.
  */
@@ -762,7 +762,7 @@ export function clearPlacements(): void {
  * Commit the setup and begin the match (spec §12's `SETUP -> ORDER_PHASE` edge).
  *
  * A no-op on an incomplete roster rather than a throw: the button is disabled
- * until all four are down, so reaching here early is a UI event, not a caller
+ * until all are down, so reaching here early is a UI event, not a caller
  * bug — the same reasoning as `resolveRound` on a finished match.
  */
 export function startPlacedMatch(): void {

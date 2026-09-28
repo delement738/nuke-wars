@@ -195,7 +195,7 @@ describe('placeHex', () => {
   });
 
   /**
-   * **The fourth placement does NOT start the match**, and that is a deliberate
+   * **The last placement does NOT start the match**, and that is a deliberate
    * reversal of how it worked while placement was a fixed sequence. Any asset can
    * now be repositioned at any time, so auto-starting on the last click would
    * snatch the board away at exactly the moment the player finally has the whole
@@ -430,7 +430,7 @@ describe('autoPlace', () => {
 });
 
 /**
- * Where the CPU's four assets are, read from its own view.
+ * Where the CPU's three assets are, read from its own view.
  *
  * This is the CPU's own board, which it is always allowed to see (§11 rule 1) —
  * the human's view of it stays empty, which the next describe checks.

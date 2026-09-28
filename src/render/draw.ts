@@ -8,7 +8,7 @@
 // handing that fact over.
 //
 // Each function owns one layer and rebuilds it from scratch. That is deliberate
-// at this size (~300 tiles, 16 units): a redraw per state change costs nothing
+// at this size (~300 tiles, 14 units): a redraw per state change costs nothing
 // and cannot desynchronise from the state, whereas incremental patching of Pixi
 // objects is the classic source of "the map says something the state doesn't".
 // The one exception is terrain, which is redrawn only when the map itself
@@ -707,7 +707,7 @@ export interface PlacementOverlay {
   /** The player's roster — the filled slots are what gets drawn. */
   slots: readonly PlacementSlot[];
   /** The hex holding the selected slot's asset, if it is on the board — drawn
-   *  lifted, so "the one I am moving" is visible among four identical blue tiles. */
+   *  lifted, so "the one I am moving" is visible among three identical blue tiles. */
   selectedHex: Hex | null;
   /** The hex under the cursor — previews the asset before it is committed. */
   hovered: Hex | null;
