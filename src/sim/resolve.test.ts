@@ -1102,7 +1102,7 @@ describe('resolve() — recon reveals', () => {
 
     const result = resolve(state, [fly('eye', destination)], NO_ORDERS, 0);
 
-    expect(unitOf(result.state, 'eye').destroyed).toBe(true);
+    expect(result.events.map((e) => e.type)).toContain('DRONE_DOWNED');
     expect(result.state.intel.p1.staticReveals).toEqual([]);
     // All the owner gets is the death hex: the base is somewhere within R of it
     // (§6, §11).
@@ -1265,16 +1265,26 @@ describe('resolve() — drone loss and respawn', () => {
     return { state, line, destination };
   }
 
-  it('is destroyed entering coverage, and the wreck sits on the death hex', () => {
+  it('dies on the death hex, and is back at its spawn hex by the next order phase', () => {
     const { state, line, destination } = ambush();
+    const spawn = offsetToAxial(SPAWNS.p1.drone);
+    // At a delay of 1 the respawn tick at the end of this same resolution
+    // brings the drone back — no blind round (spec §11, changed 2026-09-28).
+    expect(RULES.droneRespawnDelay).toBe(1);
 
     const result = resolve(state, [fly('eye', destination)], NO_ORDERS, 0);
 
+    expect(result.events).toContainEqual({
+      type: 'DRONE_DOWNED',
+      unitId: 'eye',
+      owner: 'p1',
+      hex: line[2],
+    });
     const drone = unitOf(result.state, 'eye');
-    expect(drone.destroyed).toBe(true);
-    expect(drone.hp).toBe(0);
-    expect(drone.position).toEqual(line[2]);
-    expect(result.state.droneRespawnIn.p1).toBe(RULES.droneRespawnDelay - 1);
+    expect(drone.destroyed).toBe(false);
+    expect(drone.hp).toBe(UNIT_DEFS.drone.hp);
+    expect(drone.position).toEqual(spawn);
+    expect(result.state.droneRespawnIn.p1).toBe(0);
   });
 
   it('logs the transmitted path and the death hex separately', () => {
@@ -1295,6 +1305,13 @@ describe('resolve() — drone loss and respawn', () => {
         path: [line[0], line[1]],
       },
       { type: 'DRONE_DOWNED', unitId: 'eye', owner: 'p1', hex: line[2] },
+      // Delay 1: the tick closing this same resolution brings it home (§11).
+      {
+        type: 'DRONE_RESPAWNED',
+        unitId: 'eye',
+        owner: 'p1',
+        hex: offsetToAxial(SPAWNS.p1.drone),
+      },
     ]);
   });
 
@@ -1322,42 +1339,31 @@ describe('resolve() — drone loss and respawn', () => {
       'ASSET_SPOTTED',
       'ASSET_SPOTTED',
       'DRONE_DOWNED',
+      'DRONE_RESPAWNED',
     ]);
   });
 
-  it('costs exactly one blind round, then respawns at the fixed spawn hex', () => {
+  it('costs no blind round: the replacement flies the very next round', () => {
     const { state, destination } = ambush();
     const spawn = offsetToAxial(SPAWNS.p1.drone);
 
-    // Round 1: shot down.
+    // Round 1: shot down — and respawned by the tick that closes the round.
     const downed = resolve(state, [fly('eye', destination)], NO_ORDERS, 0);
-    expect(downed.state.droneRespawnIn.p1).toBe(1);
-    expect(unitOf(downed.state, 'eye').destroyed).toBe(true);
-
-    // Round 2: the blind round. The order is submitted and simply has no drone
-    // to act on, so phase 1 produces no flight and no swath at all.
-    const blind = resolve(downed.state, [fly('eye', destination)], NO_ORDERS, 0);
-    expect(blind.events.filter((e) => e.type === 'DRONE_MOVED')).toEqual([]);
-
-    // ...and it comes back for round 3's order phase.
-    expect(blind.state.droneRespawnIn.p1).toBe(0);
-    const drone = unitOf(blind.state, 'eye');
-    expect(drone.destroyed).toBe(false);
-    expect(drone.hp).toBe(UNIT_DEFS.drone.hp);
-    expect(drone.position).toEqual(spawn);
-    expect(blind.events).toContainEqual({
+    const types = downed.events.map((e) => e.type);
+    expect(types.indexOf('DRONE_DOWNED')).toBeLessThan(types.indexOf('DRONE_RESPAWNED'));
+    expect(downed.events).toContainEqual({
       type: 'DRONE_RESPAWNED',
       unitId: 'eye',
       owner: 'p1',
       hex: spawn,
     });
 
-    // Round 3: it is orderable again.
-    const back = resolve(blind.state, [fly('eye', north(spawn, 3))], NO_ORDERS, 0);
+    // Round 2: it is orderable again, flying out from the home edge.
+    const back = resolve(downed.state, [fly('eye', north(spawn, 3))], NO_ORDERS, 0);
     expect(positionOf(back.state, 'eye')).toEqual(north(spawn, 3));
   });
 
-  it('a blind player keeps permanent reveals but loses launcher contacts', () => {
+  it('losing the drone keeps permanent reveals; launcher contacts expire as normal', () => {
     const { state, destination, line } = ambush();
     state.units.push(makeUnit('real', 'p2', 'bunker', line[1]));
     state.units.push(makeUnit('z', 'p2', 'launcher', neighbors(line[1])[0]));
@@ -1366,12 +1372,12 @@ describe('resolve() — drone loss and respawn', () => {
     expect(downed.state.intel.p1.staticReveals).toHaveLength(1);
     expect(downed.state.intel.p1.contacts).toHaveLength(1);
 
-    const blind = resolve(downed.state, NO_ORDERS, NO_ORDERS, 0);
+    const next = resolve(downed.state, NO_ORDERS, NO_ORDERS, 0);
 
-    // "Blind" means no drone, not amnesia: the bunker cannot move, so that
-    // sighting stays true. The launcher contact expires on the normal schedule.
-    expect(blind.state.intel.p1.staticReveals).toHaveLength(1);
-    expect(blind.state.intel.p1.contacts).toEqual([]);
+    // A lost drone is not amnesia: the bunker cannot move, so that sighting
+    // stays true. The launcher contact expires on the normal schedule.
+    expect(next.state.intel.p1.staticReveals).toHaveLength(1);
+    expect(next.state.intel.p1.contacts).toEqual([]);
   });
 
   it('a friendly base never engages its owner’s drone', () => {

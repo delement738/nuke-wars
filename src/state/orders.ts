@@ -117,7 +117,8 @@ export const EMPTY_DRAFT: OrderDraft = {};
 export function modesFor(view: VisibleGameState, unit: Unit): OrderMode[] {
   if (view.outcome !== null || view.phase === 'GAME_OVER') return [];
   // A wreck takes no orders. The drone is flagged destroyed while it is down
-  // and revived in place on respawn (§11), so this covers the blind round too.
+  // and revived in place on respawn (§11), so this covers any round it is
+  // still awaiting respawn (none at `droneRespawnDelay` 1, but the rule is a knob).
   if (unit.destroyed) return [];
 
   if (view.phase === 'DEAD_HAND_PHASE') {

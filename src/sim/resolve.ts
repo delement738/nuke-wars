@@ -270,12 +270,13 @@ function runReconPhase(
  * end of a resolution is, so it runs last and its effect is visible to the
  * player when they next give orders.
  *
- * That placement is what produces "one full blind round". A drone downed during
- * round N's phase 1 sets the counter to `RULES.droneRespawnDelay` (2); the tick
- * at the end of that same resolution takes it to 1, so round N+1's order phase
- * has no drone; the tick at the end of round N+1 takes it to 0 and revives the
- * unit, so the drone is on the board and orderable for round N+2. Recon can be
- * taxed and delayed, never permanently denied.
+ * A drone downed during round N's phase 1 sets the counter to
+ * `RULES.droneRespawnDelay` (1); the tick at the end of that same resolution
+ * takes it to 0 and revives the unit at its spawn hex, so the drone is on the
+ * board and orderable for round N+1. The cost of losing it is its forward
+ * position, not a round of recon. (At a delay of 2 — the rule until
+ * 2026-09-28 — round N+1 was a full blind round.) Recon can be taxed and
+ * delayed, never permanently denied.
  *
  * `DRONE_RESPAWNED` is owner-only (spec §6): the spawn hex is public knowledge,
  * but the *timing* of your recon coming back online is not the enemy's to have.
