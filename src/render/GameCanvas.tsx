@@ -21,7 +21,7 @@
 //   3. **pieces**, on every state change — units, intel and the selection;
 //   4. **the order overlay** and 5. **the setup overlay**, both hover-driven and
 //      therefore redrawn far more often than the board is;
-//   6. **the replay** (presentation phase, session 1): while the viewer has an
+//   6. **the replay** (presentation phase, sessions 1–2): while the viewer has an
 //      unwatched resolution, the board shows the view from *before* it and a
 //      function on Pixi's ticker plays the round's events over it, frame by
 //      frame, from `./timeline`. When it ends — or is skipped — the store
@@ -66,11 +66,19 @@ import {
   labelKey,
   verdictBanner,
 } from './playbackDraw';
-import { buildTimeline, captionAt, frameAt, hiddenUnitIds } from './timeline';
+import { planFlights } from './flights';
+import {
+  buildTimeline,
+  captionAt,
+  frameAt,
+  hiddenMissileIds,
+  hiddenUnitIds,
+} from './timeline';
 import {
   clearLayer,
   drawCoverage,
   drawIntel,
+  drawMissiles,
   drawOrders,
   drawPlacement,
   drawSelection,
@@ -111,6 +119,9 @@ interface Scene {
   orders: Container;
   intel: Container;
   units: Container;
+  /** Missiles still in the air, with the warning on their targets (session 2).
+   *  Above the units, so a warning over your own piece is never hidden by it. */
+  missiles: Container;
   /** The replay's moving effects and their words — above the units, because an
    *  impact or a sliding launcher is the thing to look at while it plays. */
   fxShapes: Container;
@@ -162,10 +173,11 @@ export default function GameCanvas() {
       const orders = new Container();
       const intel = new Container();
       const units = new Container();
+      const missiles = new Container();
       const fxShapes = new Container();
       const fxLabels = new Container();
       world.addChild(
-        terrain, coverage, placement, selection, orders, intel, units, fxShapes, fxLabels,
+        terrain, coverage, placement, selection, orders, intel, units, missiles, fxShapes, fxLabels,
       );
       const caption = new Container();
       app.stage.addChild(world, caption);
@@ -181,6 +193,7 @@ export default function GameCanvas() {
         orders,
         intel,
         units,
+        missiles,
         fxShapes,
         fxLabels,
         caption,
@@ -288,6 +301,7 @@ export default function GameCanvas() {
       clearLayer(scene.coverage);
       clearLayer(scene.intel);
       clearLayer(scene.units);
+      clearLayer(scene.missiles);
       return;
     }
     // While a replay is pending the board is the view from BEFORE the round —
@@ -297,7 +311,8 @@ export default function GameCanvas() {
     drawCoverage(scene.coverage, board);
     drawIntel(scene.intel, board.intel);
     drawUnits(scene.units, board.units);
-  }, [scene, view, replay]);
+    drawMissiles(scene.missiles, board.missiles, viewer);
+  }, [scene, view, replay, viewer]);
 
   useEffect(() => {
     if (!scene) return;
@@ -350,9 +365,13 @@ export default function GameCanvas() {
     if (!scene || !replay) return;
 
     const timeline = buildTimeline(replay.events);
-    const ctx = { own: replay.from.units };
+    const ctx = {
+      own: replay.from.units,
+      flights: planFlights(replay.events, replay.from.missiles, replay.from.units),
+    };
     let elapsed = 0;
     let hiddenKey = '';
+    let hiddenMissilesKey = '';
     let labelsKey = '';
     let captionKey = '';
 
@@ -373,6 +392,15 @@ export default function GameCanvas() {
       if (nextHidden !== hiddenKey) {
         hiddenKey = nextHidden;
         drawUnits(scene.units, replay.from.units.filter((unit) => !hidden.has(unit.id)));
+      }
+
+      // Same for a missile carried over from last round: its marker gives way
+      // to the final dive once its intercept or impact clip starts.
+      const hiddenMissiles = hiddenMissileIds(frames);
+      const nextHiddenMissiles = [...hiddenMissiles].join(',');
+      if (nextHiddenMissiles !== hiddenMissilesKey) {
+        hiddenMissilesKey = nextHiddenMissiles;
+        drawMissiles(scene.missiles, replay.from.missiles, viewer, hiddenMissiles);
       }
 
       const nextLabels = labelKey(frames);

@@ -18,7 +18,7 @@
 // one after another. The dead-hand round's repeated launch → impact passes need
 // no special case: they are simply more beats.
 
-import type { UnitId, VisibleEvent } from '../sim/types';
+import type { MissileId, UnitId, VisibleEvent } from '../sim/types';
 
 /** One kind of beat. Listed in spec §6's phase order. */
 export type Cue =
@@ -66,15 +66,20 @@ export const CUE_OF: Record<VisibleEvent['type'], Cue> = {
  * roughly 4–6 seconds: slow enough that the replay explains the round by itself
  * and the player should not need the event log to follow it (designer's call,
  * 2026-09-28). A quiet round (a drone hovering, a launcher moving) is ~2 s.
+ *
+ * Session 2 gave the missile beats more room — a trail has to be followed by
+ * eye, and an intercept or impact clip may open with a carried missile's final
+ * dive before its burst — and paid for it out of the drone's flight, the gaps
+ * and the end hold, so the busy-round budget still holds.
  */
 export const CUE_DURATION: Record<Cue, number> = {
-  fly: 1000,
+  fly: 900,
   spot: 500,
   downed: 600,
-  launch: 700,
-  intercept: 500,
+  launch: 900,
+  intercept: 700,
   exposed: 500,
-  impact: 500,
+  impact: 700,
   damage: 600,
   verdict: 1200,
   move: 700,
@@ -100,11 +105,11 @@ export const CUE_CAPTION: Record<Cue, string> = {
 export const LEAD_IN = 300;
 
 /** The pause between beats. */
-export const BEAT_GAP = 150;
+export const BEAT_GAP = 120;
 
 /** How long the finished picture holds before the board settles, so the end of
  *  the round registers instead of snapping away on the last frame. */
-export const HOLD_END = 800;
+export const HOLD_END = 700;
 
 /** One event, placed on the timeline. */
 export interface Clip {
@@ -204,6 +209,24 @@ export function hiddenUnitIds(frames: readonly ClipFrame[]): Set<UnitId> {
     const { event } = clip;
     if (event.type === 'UNIT_MOVED' || event.type === 'DRONE_MOVED') {
       hidden.add(event.unitId);
+    }
+  }
+  return hidden;
+}
+
+/**
+ * The in-flight missiles the static missile layer should NOT draw right now,
+ * because their intercept or impact clip has started and is drawing the final
+ * dive instead (presentation phase, session 2). Only a missile carried over
+ * from an earlier round has a static marker to hide — one launched in this
+ * replay is not on the pre-round board at all.
+ */
+export function hiddenMissileIds(frames: readonly ClipFrame[]): Set<MissileId> {
+  const hidden = new Set<MissileId>();
+  for (const { clip } of frames) {
+    const { event } = clip;
+    if (event.type === 'IMPACT' || event.type === 'MISSILE_INTERCEPTED') {
+      hidden.add(event.missileId);
     }
   }
   return hidden;
