@@ -12,7 +12,10 @@
 >
 > **Update 2026-09-27:** Step 2 ("single public base") was REPLACED by the
 > interceptor redesign — one base, radius 2, hidden until it intercepts a missile
-> (`BASE_EXPOSED`, spec §10). The baseline is the post-redesign soak in CLAUDE.md.
+> (`BASE_EXPOSED`, spec §10). The CPU also started force-marching on the opening
+> the same day. **The baseline is the latest soak in CLAUDE.md (the force-march
+> entry, re-verified on `main` 2026-09-27): hard mirror DECAPITATION 49 / ARMISTICE
+> 7 of 60, hard vs medium 58–38.**
 > One interaction to keep: an interception in a missile's *second* round must
 > still expose the base, so route every interception through
 > `exposeInterceptingBases` in `resolve.ts`, whichever round it happens in.
