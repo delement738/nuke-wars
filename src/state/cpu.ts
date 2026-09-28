@@ -202,25 +202,31 @@ export function nextSweepWaypoint(from: Hex, lanes: readonly Hex[]): Hex {
  * Every hex this player's drone should refuse to enter, read off its own event
  * history and its own intel — never anything a human in the seat could not see.
  *
- * Two sources, both of which a human would use:
- *   - **A drone of ours was downed at hex H** (`DRONE_DOWNED`, spec §6/§11). The
- *     killing base is one of the hexes within `interceptorCoverageRadius` of H,
- *     so every hex that ANY of those candidates could cover is suspect — the
- *     disc of radius `2 * R` about H. Conservative on purpose: the heuristic has
- *     no way to intersect clues cleverly, and losing some sweep coverage costs
- *     far less than two blind rounds.
- *   - **A base we can see** (a static reveal of kind `interceptor`). Its exact
- *     coverage, radius `R`. At the shipped radii recon never photographs a base
- *     (CLAUDE.md gotcha 20), so this is dormant today; it becomes live the moment
- *     a rules change makes bases visible.
+ * The question is "where could the enemy's base be?", answered the way a human
+ * would, and then "which hexes could a base there cover?":
  *
- * A clue is dropped once a base is publicly destroyed within `R` of it — the kill
- * may have been the base that shot us down. It may also have been the other one;
- * the heuristic accepts re-learning that the hard way over a region closed
- * forever by a base that no longer exists.
+ *   - **A base we can see** (a static reveal of kind `interceptor`). Since the
+ *     2026-09-27 redesign a base goes public the first time it intercepts one of
+ *     our missiles (`BASE_EXPOSED`), so this is live. Its exact coverage,
+ *     radius `R`, is danger, and it explains every drone death within `R` of it.
+ *   - **A drone of ours was downed at hex H** that no known base explains. The
+ *     killer is within `R` of H. Candidates are then pruned three ways, all from
+ *     public or own-side facts: the hex must be on the board, inside the enemy's
+ *     home zone (§12 — bases are placed there), and NOT within `R` of any hex our
+ *     drone ever transmitted from (`DRONE_MOVED.path`), because a base there
+ *     would have shot it down.
+ *   - **Several unexplained deaths point at the same base** while each player
+ *     has one (`RULES.placementCounts.interceptor`), so their candidate sets are
+ *     intersected. At radius 2 that is the difference between a 61-hex no-fly
+ *     blob per death and a region that shrinks with every clue. If the sets do
+ *     not meet — which would mean more than one base — it falls back to their
+ *     union rather than trust a wrong inference.
+ *
+ * A clue is dropped once an enemy base is publicly destroyed within `R` of it:
+ * with one base per side, that was the base.
  *
  * Only `DRONE_DOWNED` events naming `player` count: the event is public, and the
- * enemy's drone dying over our own bases says nothing about theirs.
+ * enemy's drone dying over our own base says nothing about theirs.
  */
 export function droneDangerHexes(
   view: VisibleGameState,
@@ -228,11 +234,16 @@ export function droneDangerHexes(
   player: PlayerId,
 ): Set<string> {
   const R = RULES.interceptorCoverageRadius;
+  const zone = RULES.homeZoneRows[opponentOf(player)];
 
   const deaths: Hex[] = [];
   const deadBases: Hex[] = [];
+  const transmitted = new Set<string>();
   for (const event of history) {
     if (event.type === 'DRONE_DOWNED' && event.owner === player) deaths.push(event.hex);
+    if (event.type === 'DRONE_MOVED' && event.owner === player) {
+      for (const hex of event.path) transmitted.add(hexKey(hex));
+    }
     if (
       event.type === 'UNIT_DESTROYED' &&
       event.kind === 'interceptor' &&
@@ -242,14 +253,46 @@ export function droneDangerHexes(
     }
   }
 
+  const knownBases = view.intel.staticReveals
+    .filter((reveal) => reveal.kind === 'interceptor')
+    .map((reveal) => reveal.hex);
+
   const danger = new Set<string>();
-  for (const death of deaths) {
-    if (deadBases.some((base) => distance(base, death) <= R)) continue;
-    for (const hex of hexesInRange(death, 2 * R)) danger.add(hexKey(hex));
+  for (const base of knownBases) {
+    for (const hex of hexesInRange(base, R)) danger.add(hexKey(hex));
   }
-  for (const reveal of view.intel.staticReveals) {
-    if (reveal.kind !== 'interceptor') continue;
-    for (const hex of hexesInRange(reveal.hex, R)) danger.add(hexKey(hex));
+
+  const explained = [...knownBases, ...deadBases];
+  const clues = deaths.filter((death) => !explained.some((b) => distance(b, death) <= R));
+  if (clues.length === 0) return danger;
+
+  const couldHoldBase = (hex: Hex): boolean => {
+    if (!onMap(view.map, hex)) return false;
+    const { row } = axialToOffset(hex);
+    if (row < zone.min || row > zone.max) return false;
+    return !hexesInRange(hex, R).some((near) => transmitted.has(hexKey(near)));
+  };
+  const candidateSets = clues.map((clue) => {
+    const disc = hexesInRange(clue, R);
+    const pruned = disc.filter(couldHoldBase);
+    // Cannot be empty if every rule above is right; a disc is the safe answer
+    // if one of them is ever wrong.
+    return new Map((pruned.length > 0 ? pruned : disc).map((h) => [hexKey(h), h]));
+  });
+
+  let candidates = [...candidateSets[0].values()];
+  if (RULES.placementCounts.interceptor === 1) {
+    const shared = candidates.filter((h) =>
+      candidateSets.every((set) => set.has(hexKey(h))),
+    );
+    if (shared.length > 0) candidates = shared;
+    else candidates = candidateSets.flatMap((set) => [...set.values()]);
+  } else {
+    candidates = candidateSets.flatMap((set) => [...set.values()]);
+  }
+
+  for (const base of candidates) {
+    for (const hex of hexesInRange(base, R)) danger.add(hexKey(hex));
   }
   return danger;
 }
@@ -291,10 +334,52 @@ function knownTargets(view: VisibleGameState): Target[] {
   for (const contact of view.intel.contacts) {
     targets.push({ hex: contact.hex, priority: 1 });
   }
+  // Exposed interceptor bases are NOT single-launcher targets: one missile at a
+  // base always crosses its own bubble and is always intercepted (§10, gotcha
+  // 23). They are fired on only as a volley — see `baseVolley`.
   for (const reveal of view.intel.staticReveals) {
+    if (reveal.kind === 'interceptor') continue;
     targets.push({ hex: reveal.hex, priority: 0 });
   }
   return targets;
+}
+
+/**
+ * Launchers that should fire at an exposed enemy base this round, and where.
+ *
+ * A base is self-protecting: a missile aimed at it must cross its coverage, so
+ * a lone shot is always intercepted (§10, gotcha 23). The counter is saturation
+ * — `RULES.interceptsPerRound + 1` missiles in one round, the first spent on the
+ * intercept and the rest landing. So a base is attacked only when that many
+ * launchers can reach it this round, and then exactly that many fire, nearest
+ * first (id as the tiebreak, so the choice is deterministic). Everyone else is
+ * left free to shoot at something else.
+ *
+ * Taking priority over a site shot is deliberate. The kill is permanent, it
+ * opens every lane the base covered, and before the redesign bases were never
+ * visible so this could not happen at all (bases killed: 0.01 per side).
+ */
+function baseVolley(
+  view: VisibleGameState,
+  launchers: readonly Unit[],
+): Map<string, Hex> {
+  const volley = new Map<string, Hex>();
+  const needed = RULES.interceptsPerRound + 1;
+
+  for (const reveal of view.intel.staticReveals) {
+    if (reveal.kind !== 'interceptor') continue;
+    const inRange = launchers
+      .filter((l) => !volley.has(l.id))
+      .filter((l) => distance(l.position, reveal.hex) <= RULES.missileRange)
+      .sort(
+        (a, b) =>
+          distance(a.position, reveal.hex) - distance(b.position, reveal.hex) ||
+          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      );
+    if (inRange.length < needed) continue;
+    for (const launcher of inRange.slice(0, needed)) volley.set(launcher.id, reveal.hex);
+  }
+  return volley;
 }
 
 /**
@@ -304,9 +389,8 @@ function knownTargets(view: VisibleGameState): Target[] {
  * cannot express 'decoy' at all).
  *
  * Interceptor bases are excluded because a site is a thing worth *driving to*
- * and a base is not. In practice the list can never contain one anyway — the
- * radii make a base impossible to photograph (spec §11) — so the filter is
- * documentation as much as logic.
+ * and a base is not. Since 2026-09-27 a base does appear here once it has
+ * intercepted one of our missiles (`BASE_EXPOSED`), so the filter is live.
  */
 function knownSites(view: VisibleGameState): Hex[] {
   return view.intel.staticReveals
@@ -692,7 +776,11 @@ function deadHandOrders(
 ): Order[] {
   const believed = believedState(view);
   const launchers = view.units.filter((u) => u.kind === 'launcher' && !u.destroyed);
-  const staticTargets = view.intel.staticReveals.map((r) => r.hex);
+  // Bunker sites only: an exposed base can be on the map now (`BASE_EXPOSED`),
+  // and killing it cannot change the verdict — only the real bunker can.
+  const staticTargets = view.intel.staticReveals
+    .filter((r) => r.kind === 'bunker')
+    .map((r) => r.hex);
   const opponent = opponentOf(player);
   const zone = RULES.homeZoneRows[opponent];
 
@@ -771,7 +859,18 @@ export function cpuOrders(
     // HARD plays for the decapitation the match is actually about (spec §1).
     const sites = difficulty === 'hard' ? knownSites(view) : [];
 
+    const volley = difficulty === 'easy' ? new Map<string, Hex>() : baseVolley(view, launchers);
+
     for (const launcher of launchers) {
+      const volleyTarget = volley.get(launcher.id);
+      if (volleyTarget) {
+        const order: Order = { type: 'LAUNCH', unitId: launcher.id, target: volleyTarget };
+        if (validateLaunch(believed, player, order).legal) {
+          orders.push(order);
+          continue;
+        }
+      }
+
       const goal: AdvanceGoal =
         sites.length > 0
           ? { kind: 'site', site: nearestTo(sites, launcher.position) }

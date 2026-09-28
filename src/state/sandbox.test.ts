@@ -22,12 +22,7 @@ describe('sandboxSetup', () => {
     const map = generateMap();
     const setup = sandboxSetup(map, 'p1', makeRng(1));
 
-    expect(setup.map((p) => p.kind)).toEqual([
-      'bunker',
-      'decoy',
-      'interceptor',
-      'interceptor',
-    ]);
+    expect(setup.map((p) => p.kind)).toEqual(['bunker', 'decoy', 'interceptor']);
     expect(nextPlacementKind(setup)).toBeNull();
   });
 

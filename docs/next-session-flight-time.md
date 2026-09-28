@@ -9,6 +9,13 @@
 > below changed; note only that the inbound-strike warning it creates should be
 > surfaced through the battle-report layer built in Step 1, and that the soak
 > baseline to compare against is the one taken after Step 2, not the §1 figures.
+>
+> **Update 2026-09-27:** Step 2 ("single public base") was REPLACED by the
+> interceptor redesign — one base, radius 2, hidden until it intercepts a missile
+> (`BASE_EXPOSED`, spec §10). The baseline is the post-redesign soak in CLAUDE.md.
+> One interaction to keep: an interception in a missile's *second* round must
+> still expose the base, so route every interception through
+> `exposeInterceptingBases` in `resolve.ts`, whichever round it happens in.
 
 ## Session goal and boundary
 

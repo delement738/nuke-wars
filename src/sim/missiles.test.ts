@@ -302,21 +302,28 @@ describe('flyMissiles()', () => {
 
   it('destroys a missile on the first covered hex it enters', () => {
     const missile = shot(RANGE);
-    const base = makeUnit('base', 'p2', 'interceptor', north(CENTER, 3));
+    const R = RULES.interceptorCoverageRadius;
+    const base = makeUnit('base', 'p2', 'interceptor', north(CENTER, R + 2));
 
     const flights = flyMissiles([base], [missile]);
 
-    // Coverage radius 1, so the bubble starts at the hex before the base.
+    // The bubble starts R hexes before the base, and the interception names the
+    // base that spent its intercept (engine bookkeeping for BASE_EXPOSED).
     expect(flights.survivors).toEqual([]);
-    expect(flights.interceptions).toEqual([{ missile, hex: north(CENTER, 2) }]);
+    expect(flights.interceptions).toEqual([{ missile, hex: north(CENTER, 2), base }]);
   });
 
   it('never engages a missile on its ORIGIN hex', () => {
-    // An enemy base one hex south of the launcher covers the launcher's own hex,
-    // but the missile flies north — so the first hex it ENTERS is two hexes from
-    // the base and clear. Keeping the origin in the path would shoot the missile
+    // An enemy base R hexes south of the launcher covers the launcher's own hex,
+    // but the missile flies north — so the first hex it ENTERS is R+1 from the
+    // base and clear. Keeping the origin in the path would shoot the missile
     // down before it left the rail.
-    const base = makeUnit('base', 'p2', 'interceptor', north(CENTER, -1));
+    const base = makeUnit(
+      'base',
+      'p2',
+      'interceptor',
+      north(CENTER, -RULES.interceptorCoverageRadius),
+    );
     const missile = shot(3);
 
     expect(distance(base.position, CENTER)).toBeLessThanOrEqual(

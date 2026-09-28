@@ -37,8 +37,7 @@ import {
 /** Slot ids, by name, so the tests read as intent rather than as indexes. */
 const BUNKER = 0;
 const DECOY = 1;
-const BASE_1 = 2;
-const BASE_2 = 3;
+const BASE = 2;
 
 beforeEach(() => {
   newMatch();
@@ -130,7 +129,7 @@ describe('newMatch', () => {
 // ---------------------------------------------------------------------------
 
 describe('placeHex', () => {
-  it('pre-selects the roster in order, so four clicks fill it', () => {
+  it('pre-selects the roster in order, so one click per slot fills it', () => {
     const kinds: string[] = [];
     for (let i = 0; i < ROSTER_SIZE; i++) {
       const { activeSeat, selectedSlot } = matchStore.getState();
@@ -138,7 +137,7 @@ describe('placeHex', () => {
       placeHex(targets()[0]);
     }
 
-    expect(kinds).toEqual(['bunker', 'decoy', 'interceptor', 'interceptor']);
+    expect(kinds).toEqual(['bunker', 'decoy', 'interceptor']);
     expect(placedCount()).toBe(ROSTER_SIZE);
   });
 
@@ -147,8 +146,8 @@ describe('placeHex', () => {
    * locked until both sites were down, because the ≥3 exclusion rule was checked
    * only from the base's side; it is symmetric now, so any asset may go first.
    */
-  it('accepts the four assets in any order', () => {
-    for (const slotId of [BASE_2, BUNKER, BASE_1, DECOY]) {
+  it('accepts the assets in any order', () => {
+    for (const slotId of [BASE, BUNKER, DECOY]) {
       selectSlot(slotId);
       placeHex(targets()[0]);
     }
@@ -159,19 +158,19 @@ describe('placeHex', () => {
   });
 
   it('fills the slot that was selected, not the next one in the roster', () => {
-    selectSlot(BASE_2);
+    selectSlot(BASE);
     placeHex(targets()[0]);
 
-    expect(slots()[BASE_2].hex).not.toBeNull();
-    expect(slots()[BASE_1].hex).toBeNull();
+    expect(slots()[BASE].hex).not.toBeNull();
+    expect(slots()[DECOY].hex).toBeNull();
     expect(slots()[BUNKER].hex).toBeNull();
   });
 
   it('advances the selection to the first still-empty slot', () => {
-    selectSlot(BASE_1);
+    selectSlot(DECOY);
     placeHex(targets()[0]);
-    // Bunker and decoy are still empty, so it goes back to the earliest gap
-    // rather than marching on to base 2.
+    // The bunker is still empty, so it goes back to the earliest gap rather
+    // than marching on to the base.
     expect(activeSlot()).toBe(BUNKER);
   });
 
@@ -230,8 +229,8 @@ describe('placeHex', () => {
       expect(view).not.toBeNull();
       expect(view!.round).toBe(1);
       expect(view!.phase).toBe('ORDER_PHASE');
-      // 3 launchers + drone + bunker + decoy + 2 bases (spec §2).
-      expect(view!.units).toHaveLength(8);
+      // 3 launchers + drone + bunker + decoy + base (spec §2).
+      expect(view!.units).toHaveLength(7);
     }
   });
 
@@ -272,8 +271,8 @@ function placeAllWithoutStarting(): void {
 
 describe('selectSlot', () => {
   it('selects an empty slot and clears the board selection', () => {
-    selectSlot(BASE_2);
-    expect(activeSlot()).toBe(BASE_2);
+    selectSlot(BASE);
+    expect(activeSlot()).toBe(BASE);
     expect(matchStore.getState().selected).toBeNull();
   });
 
@@ -305,8 +304,8 @@ describe('clearSlot / clearPlacements', () => {
 
   it('selects the slot it emptied, ready to re-place it', () => {
     placeAllWithoutStarting();
-    clearSlot(BASE_2);
-    expect(activeSlot()).toBe(BASE_2);
+    clearSlot(BASE);
+    expect(activeSlot()).toBe(BASE);
   });
 
   it('does nothing to an empty slot', () => {

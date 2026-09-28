@@ -354,7 +354,7 @@ export const matchStore = createStore<MatchState>()(() => ({
   hovered: null,
   orderMode: null,
   // The client opens on the setup screen, not on a match: nothing is playable
-  // until the human has placed their bunker, decoy and two bases (§12).
+  // until the human has placed their bunker, decoy and base (§12).
   views: null,
   logs: { p1: [], p2: [] },
   reports: { p1: [], p2: [] },

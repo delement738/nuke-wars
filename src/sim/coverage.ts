@@ -1,7 +1,7 @@
 // PURE SIMULATION CODE — no React or Pixi imports allowed in src/sim/, ever.
 //
 // Interceptor coverage geometry (spec §10). A base covers its own hex plus
-// every hex within `RULES.interceptorCoverageRadius` — radius 1, so 7 hexes.
+// every hex within `RULES.interceptorCoverageRadius` — radius 2, so 19 hexes.
 //
 // This is its own module because two resolution phases read the same rule from
 // opposite ends. The recon phase (build-order step 5) asks "does an enemy base

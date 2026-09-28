@@ -49,7 +49,7 @@ export interface Placement {
 }
 
 /**
- * A player's secret setup, in placement order: bunker, decoy, then both bases.
+ * A player's secret setup, in placement order: bunker, decoy, then the base.
  *
  * Also used for a *partial* setup while the UI is collecting placements — every
  * function here takes "what has been placed so far" rather than a finished
@@ -110,7 +110,7 @@ const SPAWN_KEYS: ReadonlySet<string> = new Set(
   ALL_SPAWN_HEXES.map((offset) => hexKey(offsetToAxial(offset))),
 );
 
-/** Total assets a complete setup places — 1 bunker + 1 decoy + 2 bases. */
+/** Total assets a complete setup places — 1 bunker + 1 decoy + 1 base. */
 const ROSTER_SIZE = Object.values(RULES.placementCounts).reduce(
   (total, count) => total + count,
   0,
@@ -314,7 +314,7 @@ function makeUnit(
 
 /**
  * Every unit one player starts with: 3 launchers and a drone on their public
- * spawn hexes, plus the 4 assets they placed in secret (spec §7, §12).
+ * spawn hexes, plus the assets they placed in secret (spec §7, §12).
  *
  * **Placements are emitted in `PLACEMENT_ORDER`, not in the order the player
  * placed them** (added 2026-08-13, when placement order became free). Unit array
@@ -346,11 +346,11 @@ function startingUnits(playerId: PlayerId, setup: PlayerSetup): Unit[] {
   );
 
   for (const kind of PLACEMENT_ORDER) {
-    // Within a kind, the player's own sequence is kept — it is what numbers the
-    // two bases, and it is the only ordering left that the player controls.
+    // Within a kind, the player's own sequence is kept — it is what would number
+    // several bases, and it is the only ordering left that the player controls.
     const ofKind = setup.filter((p) => p.kind === kind);
     ofKind.forEach(({ hex }, i) => {
-      // Single-instance kinds get a bare name; only the two bases are numbered.
+      // Single-instance kinds get a bare name; only a kind with several is numbered.
       const suffix = RULES.placementCounts[kind] > 1 ? `-${i + 1}` : '';
       units.push(makeUnit(`${playerId}-${kind}${suffix}`, playerId, kind, hex));
     });

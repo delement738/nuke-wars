@@ -24,8 +24,7 @@ const PLAYER: PlayerId = 'p1';
 /** Slot ids, by name, so the tests read as intent rather than as indexes. */
 const BUNKER = 0;
 const DECOY = 1;
-const BASE_1 = 2;
-const BASE_2 = 3;
+const BASE = 2;
 
 function keysOf(hexes: readonly Hex[]): Set<string> {
   return new Set(hexes.map(hexKey));
@@ -39,7 +38,7 @@ function fill(draft: PlacementDraft, slotId: number, pick = 0): PlacementDraft {
 }
 
 /** A draft with the named slots filled, in the order given. */
-function fillAll(order: number[] = [BUNKER, DECOY, BASE_1, BASE_2]): PlacementDraft {
+function fillAll(order: number[] = [BUNKER, DECOY, BASE]): PlacementDraft {
   return order.reduce<PlacementDraft>(
     (draft, slotId) => fill(draft, slotId),
     emptyPlacementDraft(),
@@ -60,24 +59,17 @@ describe('placementSlots', () => {
     for (const placed of [[], fillAll()]) {
       const slots = placementSlots(placed);
       expect(slots).toHaveLength(ROSTER_SIZE);
-      expect(slots.map((s) => s.kind)).toEqual([
-        'bunker',
-        'decoy',
-        'interceptor',
-        'interceptor',
-      ]);
-      expect(slots.map((s) => s.id)).toEqual([0, 1, 2, 3]);
+      expect(slots.map((s) => s.kind)).toEqual(['bunker', 'decoy', 'interceptor']);
+      expect(slots.map((s) => s.id)).toEqual([0, 1, 2]);
     }
   });
 
-  it('numbers only the kinds with more than one slot', () => {
+  it('reads each slot’s number and count off RULES', () => {
+    // One of everything since 2026-09-27 (a single interceptor base), so every
+    // slot is "1 of 1" and the panel numbers nothing. The numbering is still
+    // derived from `RULES.placementCounts`, so raising a count brings it back.
     const slots = placementSlots([]);
-    expect(slots.map((s) => `${s.index}/${s.ofKind}`)).toEqual([
-      '1/1',
-      '1/1',
-      '1/2',
-      '2/2',
-    ]);
+    expect(slots.map((s) => `${s.index}/${s.ofKind}`)).toEqual(['1/1', '1/1', '1/1']);
   });
 
   it('reports empty slots as empty and filled ones with their hex', () => {
@@ -98,11 +90,12 @@ describe('placementSlots', () => {
    * base placed into base 1's slot whichever button was pressed, and the panel
    * would silently contradict the click that filled it.
    */
-  it('fills the slot that was chosen, not the first free one of that kind', () => {
-    const slots = placementSlots(fillAll([BASE_2]));
+  it('fills the slot that was chosen, leaving the earlier ones empty', () => {
+    const slots = placementSlots(fillAll([BASE]));
 
-    expect(slots[BASE_1].hex).toBeNull();
-    expect(slots[BASE_2].hex).not.toBeNull();
+    expect(slots[BUNKER].hex).toBeNull();
+    expect(slots[DECOY].hex).toBeNull();
+    expect(slots[BASE].hex).not.toBeNull();
   });
 });
 
@@ -116,13 +109,13 @@ describe('firstEmptySlot / placementComplete', () => {
       if (i < ROSTER_SIZE) placed = fill(placed, firstEmptySlot(placed)!);
     }
 
-    expect(seen).toEqual([0, 1, 2, 3, null]);
+    expect(seen).toEqual([0, 1, 2, null]);
     expect(placementComplete(placed)).toBe(true);
   });
 
   it('reports the earliest gap, not the next index', () => {
     // Placement order is free, so "first empty" has to mean first, not next.
-    const placed = fillAll([BASE_1, BASE_2, DECOY]);
+    const placed = fillAll([BASE, DECOY]);
     expect(firstEmptySlot(placed)).toBe(BUNKER);
     expect(placementComplete(placed)).toBe(false);
   });
@@ -165,7 +158,7 @@ describe('placementTargets', () => {
    * to be locked until both sites were down.
    */
   it('offers ground for every slot on an empty setup', () => {
-    for (const slotId of [BUNKER, DECOY, BASE_1, BASE_2]) {
+    for (const slotId of [BUNKER, DECOY, BASE]) {
       expect(placementTargets(map, PLAYER, [], slotId).length).toBeGreaterThan(0);
     }
   });
@@ -182,7 +175,7 @@ describe('placementTargets', () => {
     );
 
     // And with a base down, so the exclusion rule is in play for both.
-    const withBase = fill([], BASE_1);
+    const withBase = fill([], BASE);
     expect(keysOf(placementTargets(map, PLAYER, withBase, BUNKER))).toEqual(
       keysOf(placementTargets(map, PLAYER, withBase, DECOY)),
     );
@@ -190,7 +183,7 @@ describe('placementTargets', () => {
 
   it('withholds ground inside the exclusion radius of a placed site', () => {
     const sites = fillAll([BUNKER, DECOY]);
-    const targets = placementTargets(map, PLAYER, sites, BASE_1);
+    const targets = placementTargets(map, PLAYER, sites, BASE);
 
     for (const hex of targets) {
       for (const site of setupOf(sites)) {
@@ -200,7 +193,7 @@ describe('placementTargets', () => {
       }
     }
     expect(targets.length).toBeLessThan(
-      placementTargets(map, PLAYER, [], BASE_1).length,
+      placementTargets(map, PLAYER, [], BASE).length,
     );
   });
 
@@ -210,7 +203,7 @@ describe('placementTargets', () => {
    * for a SITE has the same hole in it.
    */
   it('withholds ground inside the exclusion radius of a placed base', () => {
-    const bases = fillAll([BASE_1]);
+    const bases = fillAll([BASE]);
     const targets = placementTargets(map, PLAYER, bases, BUNKER);
 
     for (const hex of targets) {
@@ -230,15 +223,15 @@ describe('placementTargets', () => {
    */
   it('does not let a placed asset block its own relocation', () => {
     const full = fillAll();
-    const baseHex = placementSlots(full)[BASE_1].hex!;
-    const targets = placementTargets(map, PLAYER, full, BASE_1);
+    const baseHex = placementSlots(full)[BASE].hex!;
+    const targets = placementTargets(map, PLAYER, full, BASE);
 
     expect(targets.length).toBeGreaterThan(0);
     // Its own hex is offered back — putting it where it already is is legal.
     expect(keysOf(targets).has(hexKey(baseHex))).toBe(true);
     // And the other three assets still block their own hexes.
     for (const slot of placementSlots(full)) {
-      if (slot.id === BASE_1) continue;
+      if (slot.id === BASE) continue;
       expect(keysOf(targets).has(hexKey(slot.hex!))).toBe(false);
     }
   });
@@ -272,20 +265,20 @@ describe('placementTargets', () => {
 
 describe('withPlacementInSlot', () => {
   it('places into the slot that was asked for, whichever it is', () => {
-    const placed = fill(emptyPlacementDraft(), BASE_2);
+    const placed = fill(emptyPlacementDraft(), BASE);
     const slots = placementSlots(placed);
 
     expect(setupOf(placed)).toHaveLength(1);
-    expect(slots[BASE_2].kind).toBe('interceptor');
-    expect(slots[BASE_2].hex).not.toBeNull();
-    expect(slots[BASE_1].hex).toBeNull();
+    expect(slots[BASE].kind).toBe('interceptor');
+    expect(slots[BASE].hex).not.toBeNull();
+    expect(slots[BUNKER].hex).toBeNull();
   });
 
-  it('accepts the four assets in any order', () => {
+  it('accepts the assets in any order', () => {
     for (const order of [
-      [BUNKER, DECOY, BASE_1, BASE_2],
-      [BASE_1, BASE_2, BUNKER, DECOY],
-      [DECOY, BASE_1, BUNKER, BASE_2],
+      [BUNKER, DECOY, BASE],
+      [BASE, BUNKER, DECOY],
+      [DECOY, BASE, BUNKER],
     ]) {
       const placed = fillAll(order);
       expect(setupOf(placed)).toHaveLength(ROSTER_SIZE);
@@ -318,10 +311,10 @@ describe('withPlacementInSlot', () => {
   it('refuses a base inside the exclusion radius of a site, and vice versa', () => {
     const sites = fillAll([BUNKER, DECOY]);
     const siteHex = placementSlots(sites)[BUNKER].hex!;
-    expect(withPlacementInSlot(map, PLAYER, sites, BASE_1, siteHex)).toBe(sites);
+    expect(withPlacementInSlot(map, PLAYER, sites, BASE, siteHex)).toBe(sites);
 
-    const bases = fillAll([BASE_1]);
-    const baseHex = placementSlots(bases)[BASE_1].hex!;
+    const bases = fillAll([BASE]);
+    const baseHex = placementSlots(bases)[BASE].hex!;
     expect(withPlacementInSlot(map, PLAYER, bases, BUNKER, baseHex)).toBe(bases);
   });
 
@@ -331,7 +324,7 @@ describe('withPlacementInSlot', () => {
     expect(withPlacementInSlot(map, PLAYER, placed, 99, somewhere)).toBe(placed);
   });
 
-  it('moves an already-placed asset instead of adding a fifth', () => {
+  it('moves an already-placed asset instead of adding another', () => {
     const full = fillAll();
     const elsewhere = placementTargets(map, PLAYER, full, BUNKER).find(
       (hex) => hexKey(hex) !== hexKey(placementSlots(full)[BUNKER].hex!),
@@ -341,24 +334,6 @@ describe('withPlacementInSlot', () => {
     expect(setupOf(moved)).toHaveLength(ROSTER_SIZE);
     expect(placementSlots(moved)[BUNKER].hex).toEqual(elsewhere);
     expect(validateSetup(map, PLAYER, setupOf(moved))).toEqual({ legal: true });
-  });
-
-  /**
-   * Relocation writes back in place rather than removing and appending. If it
-   * appended, moving base 1 would push it behind base 2 in submission order and
-   * the two would silently swap names on screen.
-   */
-  it('does not renumber the other bases when one is moved', () => {
-    const full = fillAll();
-    const base2Hex = placementSlots(full)[BASE_2].hex!;
-
-    const elsewhere = placementTargets(map, PLAYER, full, BASE_1).find(
-      (hex) => hexKey(hex) !== hexKey(placementSlots(full)[BASE_1].hex!),
-    )!;
-    const moved = withPlacementInSlot(map, PLAYER, full, BASE_1, elsewhere);
-
-    expect(placementSlots(moved)[BASE_1].hex).toEqual(elsewhere);
-    expect(placementSlots(moved)[BASE_2].hex).toEqual(base2Hex);
   });
 
   /**
@@ -372,7 +347,7 @@ describe('withPlacementInSlot', () => {
       const board = generateMap(undefined, undefined, seed);
       for (const player of PLAYERS) {
         let placed: PlacementDraft = emptyPlacementDraft();
-        for (const slotId of [BASE_1, BASE_2, DECOY, BUNKER]) {
+        for (const slotId of [BASE, DECOY, BUNKER]) {
           const targets = placementTargets(board, player, placed, slotId);
           expect(targets.length).toBeGreaterThan(0);
           placed = withPlacementInSlot(
@@ -395,13 +370,12 @@ describe('withoutSlot', () => {
     const without = withoutSlot(full, DECOY);
     const slots = placementSlots(without);
 
-    // The draft keeps its shape — four slots, one now empty.
+    // The draft keeps its shape — every slot, one now empty.
     expect(without).toHaveLength(ROSTER_SIZE);
     expect(setupOf(without)).toHaveLength(ROSTER_SIZE - 1);
     expect(slots[DECOY].hex).toBeNull();
     expect(slots[BUNKER].hex).toEqual(placementSlots(full)[BUNKER].hex);
-    expect(slots[BASE_1].hex).toEqual(placementSlots(full)[BASE_1].hex);
-    expect(slots[BASE_2].hex).toEqual(placementSlots(full)[BASE_2].hex);
+    expect(slots[BASE].hex).toEqual(placementSlots(full)[BASE].hex);
   });
 
   it('returns the same reference when the slot is already empty', () => {
@@ -411,12 +385,12 @@ describe('withoutSlot', () => {
 
   it('re-opens ground the removed asset was excluding', () => {
     const sites = fillAll([BUNKER, DECOY]);
-    const narrowed = placementTargets(map, PLAYER, sites, BASE_1).length;
+    const narrowed = placementTargets(map, PLAYER, sites, BASE).length;
     const widened = placementTargets(
       map,
       PLAYER,
       withoutSlot(sites, DECOY),
-      BASE_1,
+      BASE,
     ).length;
 
     expect(widened).toBeGreaterThan(narrowed);
@@ -429,18 +403,17 @@ describe('withoutSlot', () => {
 
 describe('exclusionHexes', () => {
   it('is empty when nothing the rule pairs with has been placed', () => {
-    expect(exclusionHexes(map, PLAYER, [], BASE_1)).toEqual([]);
-    // Two bases down, placing the third... there is no third; placing a base
-    // when only bases exist still excludes nothing, because the rule pairs a
-    // base with a SITE.
-    expect(exclusionHexes(map, PLAYER, fillAll([BASE_1]), BASE_2)).toEqual([]);
+    expect(exclusionHexes(map, PLAYER, [], BASE)).toEqual([]);
+    // Moving the base when only the base is down excludes nothing: the rule
+    // pairs a base with a SITE, and a slot never excludes itself.
+    expect(exclusionHexes(map, PLAYER, fillAll([BASE]), BASE)).toEqual([]);
     // ...and two sites do not exclude each other either.
     expect(exclusionHexes(map, PLAYER, fillAll([BUNKER]), DECOY)).toEqual([]);
   });
 
   it('covers everything nearer than the radius to a site, when placing a base', () => {
     const sites = fillAll([BUNKER, DECOY]);
-    const excluded = keysOf(exclusionHexes(map, PLAYER, sites, BASE_1));
+    const excluded = keysOf(exclusionHexes(map, PLAYER, sites, BASE));
     const zone = RULES.homeZoneRows[PLAYER];
 
     for (const tile of map.tiles) {
@@ -458,7 +431,7 @@ describe('exclusionHexes', () => {
    * with a base down, choosing a SITE must show the ring around that base.
    */
   it('covers the ring around a placed base, when placing a site', () => {
-    const bases = fillAll([BASE_1]);
+    const bases = fillAll([BASE]);
     const zone = RULES.homeZoneRows[PLAYER];
 
     for (const slotId of [BUNKER, DECOY]) {
@@ -481,8 +454,8 @@ describe('exclusionHexes', () => {
     const sites = fillAll([BUNKER, DECOY]);
     const zone = RULES.homeZoneRows[PLAYER];
 
-    const offered = keysOf(placementTargets(map, PLAYER, sites, BASE_1));
-    const excluded = keysOf(exclusionHexes(map, PLAYER, sites, BASE_1));
+    const offered = keysOf(placementTargets(map, PLAYER, sites, BASE));
+    const excluded = keysOf(exclusionHexes(map, PLAYER, sites, BASE));
     const taken = keysOf(setupOf(sites).map((s) => s.hex));
     const spawns = keysOf(ALL_SPAWN_HEXES.map(offsetToAxial));
 
@@ -499,12 +472,12 @@ describe('exclusionHexes', () => {
     // moment a site was placed near... nothing. The rule is about the OTHER
     // assets, always.
     const full = fillAll();
-    const baseHex = placementSlots(full)[BASE_1].hex!;
+    const baseHex = placementSlots(full)[BASE].hex!;
     const excluded = keysOf(exclusionHexes(map, PLAYER, full, BUNKER));
 
-    expect(excluded.has(hexKey(baseHex))).toBe(true); // the other base's ring...
+    expect(excluded.has(hexKey(baseHex))).toBe(true); // the base's ring, seen from the bunker...
     expect(
-      keysOf(exclusionHexes(map, PLAYER, full, BASE_1)).has(hexKey(baseHex)),
+      keysOf(exclusionHexes(map, PLAYER, full, BASE)).has(hexKey(baseHex)),
     ).toBe(false); // ...but not its own, when it is the one being moved
   });
 
@@ -512,7 +485,7 @@ describe('exclusionHexes', () => {
     const sites = fillAll([BUNKER, DECOY]);
     const zone = RULES.homeZoneRows[PLAYER];
 
-    for (const hex of exclusionHexes(map, PLAYER, sites, BASE_1)) {
+    for (const hex of exclusionHexes(map, PLAYER, sites, BASE)) {
       const { col, row } = axialToOffset(hex);
       expect(row).toBeGreaterThanOrEqual(zone.min);
       expect(row).toBeLessThanOrEqual(zone.max);
@@ -528,7 +501,7 @@ describe('exclusionHexes', () => {
    * unrepresentable rather than merely avoided.
    */
   it('reports no hex twice, even where two rings overlap', () => {
-    const hexes = exclusionHexes(map, PLAYER, fillAll([BUNKER, DECOY]), BASE_1);
+    const hexes = exclusionHexes(map, PLAYER, fillAll([BUNKER, DECOY]), BASE);
     expect(new Set(hexes.map(hexKey)).size).toBe(hexes.length);
   });
 });

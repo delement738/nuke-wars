@@ -113,6 +113,12 @@ interface PlayerStats {
   bunkerHits: number;
   decoysKilled: number;
   launchersKilled: number;
+  /**
+   * Enemy bases this player forced into the open by having a missile
+   * intercepted (`BASE_EXPOSED`, spec §10 — added 2026-09-27). Credited to the
+   * ATTACKER: `owner` on the event is the base's side.
+   */
+  basesExposed: number;
   basesKilled: number;
 }
 
@@ -137,6 +143,7 @@ function emptyStats(): PlayerStats {
     bunkerHits: 0,
     decoysKilled: 0,
     launchersKilled: 0,
+    basesExposed: 0,
     basesKilled: 0,
   };
 }
@@ -333,6 +340,11 @@ function tally(
         break;
       }
 
+      case 'BASE_EXPOSED':
+        // `owner` is the base's side; the exposure is the attacker's doing.
+        stats[opponentOf(event.owner)].basesExposed += 1;
+        break;
+
       case 'BUNKER_HIT':
         // `owner` is the victim; the hit is the ATTACKER's achievement.
         stats[opponentOf(event.owner)].bunkerHits += 1;
@@ -401,6 +413,7 @@ function report(difficulty: CpuDifficulty, matches: readonly MatchStats[]): stri
     `    hits on the real bunker        ${mean(sides.map((s) => s.bunkerHits)).toFixed(2)}`,
     `    decoys killed                  ${mean(sides.map((s) => s.decoysKilled)).toFixed(2)}`,
     `    launchers killed               ${mean(sides.map((s) => s.launchersKilled)).toFixed(2)}`,
+    `    bases exposed                  ${mean(sides.map((s) => s.basesExposed)).toFixed(2)}`,
     `    bases killed                   ${mean(sides.map((s) => s.basesKilled)).toFixed(2)}`,
     ``,
     `  MANEUVER (per side, per match)`,

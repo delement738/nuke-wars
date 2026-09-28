@@ -575,9 +575,15 @@ describe('resolve() — phase 2: launch & interception', () => {
     const missileId = missileIdFor(state.round, CENTER);
     expect(result.events).toEqual([
       { type: 'LAUNCH_DETECTED', missileId, origin: CENTER, target: victim },
-      // Killed on the first covered hex it entered — the bubble starts one hex
-      // before the base itself (coverage radius 1).
-      { type: 'MISSILE_INTERCEPTED', missileId, hex: north(CENTER, 2) },
+      // Killed on the first covered hex it entered — the bubble starts R hexes
+      // before the base itself.
+      {
+        type: 'MISSILE_INTERCEPTED',
+        missileId,
+        hex: north(CENTER, 3 - RULES.interceptorCoverageRadius),
+      },
+      // ...and the intercept gave the base away (§10).
+      { type: 'BASE_EXPOSED', owner: 'p2', hex: north(CENTER, 3) },
     ]);
     expect(unitOf(result.state, 'z').destroyed).toBe(false);
   });
@@ -895,6 +901,7 @@ describe('resolve() — event log ordering', () => {
       'LAUNCH_DETECTED',
       'LAUNCH_DETECTED',
       'MISSILE_INTERCEPTED',
+      'BASE_EXPOSED',
       // Phase 3 — arrivals first (never naming a victim), then the damage.
       'IMPACT',
       'UNIT_DESTROYED',
@@ -1075,14 +1082,15 @@ describe('resolve() — recon reveals', () => {
     const line = hexLine(CENTER, destination);
     const state = openField([
       makeUnit('eye', 'p1', 'drone', CENTER),
-      makeUnit('base', 'p2', 'interceptor', line[3]),
+      makeUnit('base', 'p2', 'interceptor', line[RULES.interceptorCoverageRadius + 2]),
     ]);
 
     const result = resolve(state, [fly('eye', destination)], NO_ORDERS, 0);
 
     expect(unitOf(result.state, 'eye').destroyed).toBe(true);
     expect(result.state.intel.p1.staticReveals).toEqual([]);
-    // All the owner gets is the death hex, leaving 7 candidates (§6, §11).
+    // All the owner gets is the death hex: the base is somewhere within R of it
+    // (§6, §11).
     expect(result.events).toContainEqual({
       type: 'DRONE_DOWNED',
       unitId: 'eye',
@@ -1237,7 +1245,7 @@ describe('resolve() — drone loss and respawn', () => {
     const line = hexLine(CENTER, destination);
     const state = openField([
       makeUnit('eye', 'p1', 'drone', CENTER),
-      makeUnit('base', 'p2', 'interceptor', line[3]),
+      makeUnit('base', 'p2', 'interceptor', line[RULES.interceptorCoverageRadius + 2]),
     ]);
     return { state, line, destination };
   }
@@ -1464,7 +1472,7 @@ describe('resolve() — determinism', () => {
     const droneStart = offsetToAxial({ col: 15, row: 15 });
     const droneDest = north(droneStart, FLIGHT);
     const droneLane = hexLine(droneStart, droneDest);
-    const spyStart = offsetToAxial({ col: 3, row: 15 });
+    const spyStart = offsetToAxial({ col: 5, row: 15 }); // clear of 'shield'
     // A lane of its own on the west edge: 'v' fires north into 'shield'.
     const gunner = offsetToAxial({ col: 1, row: 8 });
     const shield = offsetToAxial({ col: 1, row: 10 });
@@ -1480,7 +1488,7 @@ describe('resolve() — determinism', () => {
       makeUnit('v', 'p2', 'launcher', gunner),
       makeUnit('spy', 'p2', 'drone', spyStart),
       // Sits on p1's drone lane: 'eye' dies entering droneLane[2]...
-      makeUnit('base', 'p2', 'interceptor', droneLane[3]),
+      makeUnit('base', 'p2', 'interceptor', droneLane[RULES.interceptorCoverageRadius + 2]),
       // ...but not before photographing this one, which 'c' then kills.
       makeUnit('w', 'p2', 'launcher', droneLane[1]),
     ]);
@@ -1505,13 +1513,18 @@ describe('resolve() — determinism', () => {
     // Guards the tests below: if a refactor stopped downing the drone or
     // intercepting the missile, they would still pass while covering nothing.
     const { state, p1, p2 } = busyRound();
-    const types = new Set(resolve(state, p1, p2, 0).events.map((e) => e.type));
+    const events = resolve(state, p1, p2, 0).events;
+    const types = new Set(events.map((e) => e.type));
+
+    // One drone down (p1's), one survives its sweep (p2's).
+    expect(events.filter((e) => e.type === 'DRONE_DOWNED')).toHaveLength(1);
 
     expect(types).toContain('DRONE_MOVED');
     expect(types).toContain('DRONE_DOWNED');
     expect(types).toContain('ASSET_SPOTTED');
     expect(types).toContain('LAUNCH_DETECTED');
     expect(types).toContain('MISSILE_INTERCEPTED');
+    expect(types).toContain('BASE_EXPOSED');
     expect(types).toContain('IMPACT');
     expect(types).toContain('UNIT_DESTROYED');
     expect(types).toContain('UNIT_MOVED');
