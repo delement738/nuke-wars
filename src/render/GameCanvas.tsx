@@ -49,6 +49,7 @@ import {
   useActiveSeat,
   useDraft,
   useHovered,
+  useIntelOverlay,
   useMap,
   useOrderMode,
   usePlaced,
@@ -78,6 +79,7 @@ import {
   clearLayer,
   drawCoverage,
   drawIntel,
+  drawIntelOverlay,
   drawMissiles,
   drawOrders,
   drawPlacement,
@@ -114,6 +116,10 @@ interface Scene {
   world: Container;
   terrain: Container;
   coverage: Container;
+  /** What the viewer has worked out from their log: photographed ground and
+   *  where the enemy base could be (session 3). Under everything that marks a
+   *  piece, because it is a backdrop, not a sighting. */
+  inferred: Container;
   placement: Container;
   selection: Container;
   orders: Container;
@@ -159,7 +165,8 @@ export default function GameCanvas() {
       host.appendChild(app.canvas);
 
       const world = new Container();
-      // Draw order, bottom to top: the board, what my bases cover, where I may
+      // Draw order, bottom to top: the board, what my bases cover, what I have
+      // inferred (ground photographed, where their base could be), where I may
       // build during setup, the tile I clicked, the orders I am giving, what I
       // know of the enemy, then my own units on top. Orders sit *under* intel
       // and units deliberately — a range wash must never obscure a detected
@@ -168,6 +175,7 @@ export default function GameCanvas() {
       // other's lifetime.
       const terrain = new Container();
       const coverage = new Container();
+      const inferred = new Container();
       const placement = new Container();
       const selection = new Container();
       const orders = new Container();
@@ -177,7 +185,7 @@ export default function GameCanvas() {
       const fxShapes = new Container();
       const fxLabels = new Container();
       world.addChild(
-        terrain, coverage, placement, selection, orders, intel, units, missiles, fxShapes, fxLabels,
+        terrain, coverage, inferred, placement, selection, orders, intel, units, missiles, fxShapes, fxLabels,
       );
       const caption = new Container();
       app.stage.addChild(world, caption);
@@ -188,6 +196,7 @@ export default function GameCanvas() {
         world,
         terrain,
         coverage,
+        inferred,
         placement,
         selection,
         orders,
@@ -225,6 +234,7 @@ export default function GameCanvas() {
   const draft = useDraft();
   const replay = useReplay();
   const viewer = useViewer();
+  const inference = useIntelOverlay();
 
   // The unit being ordered, and the hexes it may legally be sent to. Computed
   // here rather than in `draw.ts` because deciding what is legal is state's job
@@ -299,6 +309,7 @@ export default function GameCanvas() {
     if (!scene) return;
     if (!view) {
       clearLayer(scene.coverage);
+      clearLayer(scene.inferred);
       clearLayer(scene.intel);
       clearLayer(scene.units);
       clearLayer(scene.missiles);
@@ -309,10 +320,12 @@ export default function GameCanvas() {
     // finishes, `replay` goes null and this redraws the current view: the settle.
     const board = replay ? replay.from : view;
     drawCoverage(scene.coverage, board);
+    // Already describes `board` — the hook swaps in the pre-round picture too.
+    drawIntelOverlay(scene.inferred, inference);
     drawIntel(scene.intel, board.intel);
     drawUnits(scene.units, board.units);
     drawMissiles(scene.missiles, board.missiles, viewer);
-  }, [scene, view, replay, viewer]);
+  }, [scene, view, replay, viewer, inference]);
 
   useEffect(() => {
     if (!scene) return;
@@ -368,6 +381,8 @@ export default function GameCanvas() {
     const ctx = {
       own: replay.from.units,
       flights: planFlights(replay.events, replay.from.missiles, replay.from.units),
+      map: replay.from.map,
+      events: replay.events,
     };
     let elapsed = 0;
     let hiddenKey = '';

@@ -21,6 +21,7 @@ import {
   hexKey,
   hexLine,
   hexesInRange,
+  neighbors,
   offsetToAxial,
   type Hex,
 } from '../sim/hex';
@@ -37,6 +38,7 @@ import type {
 // Types only. The order builder's shapes live in client state, and the render
 // layer is handed them fully assembled — it draws the overlay, it never decides
 // what is in one.
+import type { IntelOverlay } from '../state/inference';
 import type { DraftEntry, OrderDraft, OrderMode } from '../state/orders';
 import type { PlacementSlot } from '../state/placement';
 import { missileMarkers, warningLine } from './flights';
@@ -78,6 +80,9 @@ export const COLOR = {
   // means "not yours to use".
   place: 0xf2c14e,
   excluded: 0xff5f4a,
+
+  // Intel overlay (session 3): ground the drone has photographed is lit up.
+  seen: 0xffffff,
 } as const;
 
 // Keyed by Terrain rather than by string, so removing or adding a terrain in the
@@ -224,6 +229,68 @@ export function drawCoverage(layer: Container, view: VisibleGameState): void {
       );
     }
   }
+}
+
+// --- intel overlay (presentation Session 3) ----------------------------------
+
+/**
+ * What the viewer has worked out, as opposed to what they have seen (spec §11).
+ *
+ * Two washes, both computed in `src/state/inference.ts` from the viewer's own
+ * log — this function is handed the hexes and paints them:
+ *
+ *   - **Photographed ground**, lightened: seen ground is brighter than unknown
+ *     ground. A neutral tint rather than the drone's purple, which turned
+ *     mountains lavender and made them read as a third terrain. Sites cannot
+ *     move, so ground under it holds no bunker or decoy that is not already on
+ *     the map; it says nothing about launchers.
+ *   - **Where the enemy base could be**, a red wash with a red border round the
+ *     region. Red because it is intel about them; a wash and not a ring because
+ *     it is a *possibility*, where a solid ring (`drawIntel`) is a sighting.
+ *
+ * The two never overlap in practice: a candidate is more than
+ * `interceptorCoverageRadius` from every hex the drone transmitted from, and
+ * photographed ground is within `reconSwathRadius` of one.
+ */
+export function drawIntelOverlay(layer: Container, overlay: IntelOverlay | null): void {
+  clear(layer);
+  if (!overlay) return;
+
+  const g = new Graphics();
+  for (const hex of overlay.photographed) {
+    const { x, y } = centerOf(hex);
+    g.poly(hexCorners(x, y)).fill({ color: COLOR.seen, alpha: 0.07 });
+  }
+
+  const inRegion = new Set(overlay.candidates.map(hexKey));
+  for (const hex of overlay.candidates) {
+    const { x, y } = centerOf(hex);
+    g.poly(hexCorners(x, y)).fill({ color: COLOR.enemy, alpha: 0.24 });
+  }
+  for (const hex of overlay.candidates) {
+    for (const next of neighbors(hex)) {
+      if (inRegion.has(hexKey(next))) continue;
+      const [a, b] = sharedEdge(hex, next);
+      g.moveTo(a.x, a.y).lineTo(b.x, b.y);
+    }
+  }
+  g.stroke({ width: 2, color: COLOR.enemy, alpha: 0.85 });
+  layer.addChild(g);
+}
+
+/** The two corners of `hex` on the edge it shares with its neighbour `next`:
+ *  the pair nearest the midpoint between their centres. Found by distance so it
+ *  does not depend on which corner index faces which direction. */
+function sharedEdge(hex: Hex, next: Hex): [{ x: number; y: number }, { x: number; y: number }] {
+  const c = centerOf(hex);
+  const n = centerOf(next);
+  const mid = { x: (c.x + n.x) / 2, y: (c.y + n.y) / 2 };
+  const flat = hexCorners(c.x, c.y);
+  const corners = [0, 1, 2, 3, 4, 5].map((i) => ({ x: flat[i * 2], y: flat[i * 2 + 1] }));
+  corners.sort(
+    (p, q) => Math.hypot(p.x - mid.x, p.y - mid.y) - Math.hypot(q.x - mid.x, q.y - mid.y),
+  );
+  return [corners[0], corners[1]];
 }
 
 /** The tile the player clicked. Presentation state — it means nothing to the sim. */

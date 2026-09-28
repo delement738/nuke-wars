@@ -15,11 +15,13 @@
 // selector that built a fresh array every call would return a new reference on
 // every render and re-render forever.
 
+import { useMemo } from 'react';
 import { useStore } from 'zustand';
 import type { CpuDifficulty } from './cpu';
 import type { Hex } from '../sim/hex';
 import type { MapData } from '../sim/map';
 import type { PlayerId, UnitId, VisibleGameState } from '../sim/types';
+import { intelOverlay, type IntelOverlay } from './inference';
 import { matchStore, type LogEntry, type Replay } from './match';
 import type { OrderDraft, OrderMode } from './orders';
 import { placementComplete, type PlacementDraft } from './placement';
@@ -97,6 +99,27 @@ export function useReport(): BattleReport | null {
  */
 export function useReplay(): Replay | null {
   return useStore(matchStore, (state) => state.replay[state.viewer]);
+}
+
+/**
+ * The viewer's intel overlay — base candidates and photographed ground
+ * (presentation Session 3) — or null on the setup screen.
+ *
+ * The one hook here that derives rather than selects, so it memoises on the
+ * stored values it reads instead of building a fresh object in a selector (see
+ * the header). Composed only from viewer-keyed hooks, so it cannot be pointed at
+ * the other seat (gotcha 57). While a replay is pending it describes the board
+ * from BEFORE the round, without that round's events, as the log does.
+ */
+export function useIntelOverlay(): IntelOverlay | null {
+  const view = useView();
+  const log = useLog();
+  const replay = useReplay();
+  const viewer = useViewer();
+  return useMemo(
+    () => (view ? intelOverlay(view, log, replay, viewer) : null),
+    [view, log, replay, viewer],
+  );
 }
 
 /** Whose view is on screen. */

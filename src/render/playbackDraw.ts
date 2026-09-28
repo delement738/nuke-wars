@@ -19,7 +19,10 @@
 //     the skip hint, plus a big banner for a verdict.
 
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
-import type { Hex } from '../sim/hex';
+import { RULES } from '../sim/defs';
+import { axialToOffset, distance, hexKey, hexesInRange, type Hex } from '../sim/hex';
+import { tileAt, type MapData } from '../sim/map';
+import { reconSwath } from '../sim/recon';
 import type { MissileId, Unit, UnitId, VisibleEvent } from '../sim/types';
 import {
   COLOR,
@@ -43,6 +46,7 @@ import {
 } from './flights';
 import { HEX, hexCorners } from './geometry';
 import type { ClipFrame } from './timeline';
+import { downedOnFirstStep } from '../state/inference';
 
 /** What the drawing needs besides the frames: whose replay this is. */
 export interface ReplayContext {
@@ -50,6 +54,11 @@ export interface ReplayContext {
   own: readonly Unit[];
   /** Where each missile goes, from `planFlights` (session 2). */
   flights: ReadonlyMap<MissileId, Flight>;
+  /** The board, for keeping the intel washes on it (gotcha 37). Public. */
+  map: MapData;
+  /** Every event of the round being replayed — for the one label that depends
+   *  on a later event of the same round (`downedOnFirstStep`). */
+  events: readonly VisibleEvent[];
 }
 
 const FX = {
@@ -73,6 +82,9 @@ const LABEL_STYLE = new TextStyle({
   fill: FX.label,
   stroke: { color: 0x0b0f14, width: 3 },
 });
+
+/** The rule under a base disc (session 3), in the intel red. */
+const DISC_STYLE = new TextStyle({ ...LABEL_STYLE, fill: COLOR.enemy });
 
 const CAPTION_STYLE = new TextStyle({
   fontFamily: 'monospace',
@@ -99,6 +111,52 @@ function isOwn(ctx: ReplayContext, unitId: UnitId): boolean {
 
 function ownUnit(ctx: ReplayContext, unitId: UnitId): Unit | undefined {
   return ctx.own.find((unit) => unit.id === unitId);
+}
+
+/**
+ * "Some enemy base is within range of here" (session 3): every on-board hex a
+ * base could stand on to have covered `center`, washed in red and fading in with
+ * `p`. The raw disc, deliberately — the replay states the rule, and the settled
+ * board then shows what the player's whole history narrows it to
+ * (`enemyBaseCandidates`).
+ */
+function baseDisc(g: Graphics, ctx: ReplayContext, center: Hex, p: number): void {
+  const alpha = 0.24 * Math.min(1, p * 2);
+  for (const hex of hexesInRange(center, RULES.interceptorCoverageRadius)) {
+    if (!tileAt(ctx.map, axialToOffset(hex))) continue;
+    const { x, y } = centerOf(hex);
+    g.poly(hexCorners(x, y)).fill({ color: COLOR.enemy, alpha });
+  }
+  const { x, y } = centerOf(center);
+  g.circle(x, y, DISC_REACH).stroke({ width: 2, color: COLOR.enemy, alpha: 0.8 * Math.min(1, p * 2) });
+}
+
+/** Radius of the ring drawn round a base disc: half a hex past its outer row. */
+const DISC_REACH = HEX * Math.sqrt(3) * (RULES.interceptorCoverageRadius + 0.5);
+
+/** The hex a base disc is centred on, or null if this clip draws none: our own
+ *  drone going down, or our own missile stopped before any exposure explains it. */
+function discCenter(
+  event: VisibleEvent,
+  frames: readonly ClipFrame[],
+  ctx: ReplayContext,
+): Hex | null {
+  if (event.type === 'DRONE_DOWNED') return isOwn(ctx, event.unitId) ? event.hex : null;
+  if (event.type === 'MISSILE_INTERCEPTED') {
+    const mine = ctx.flights.get(event.missileId)?.mine ?? false;
+    return mine && !answered(frames, event.hex) ? event.hex : null;
+  }
+  return null;
+}
+
+/** A base exposed near `hex` in this replay has answered the question the disc
+ *  about it was asking, so the disc gives way to the exact mark. */
+function answered(frames: readonly ClipFrame[], hex: Hex): boolean {
+  return frames.some(
+    ({ clip }) =>
+      clip.event.type === 'BASE_EXPOSED' &&
+      distance(clip.event.hex, hex) <= RULES.interceptorCoverageRadius,
+  );
 }
 
 function lerp(a: number, b: number, t: number): number {
@@ -302,6 +360,20 @@ export function drawReplayShapes(
         const reached = alongPath(event.path, p);
         const trail = event.path.map(centerOf);
         const upTo = Math.floor(p * (trail.length - 1));
+        // The ground photographed so far (session 3): the corridor of every hex
+        // transmitted from up to here, from the sim's own `reconSwath`. Brighter
+        // than the settled wash on purpose — this round's pictures.
+        const swath = reconSwath(event.path.slice(0, upTo + 1));
+        const washed = new Set<string>();
+        for (const step of event.path.slice(0, upTo + 1)) {
+          for (const hex of hexesInRange(step, RULES.reconSwathRadius)) {
+            const key = hexKey(hex);
+            if (washed.has(key) || !swath.has(key) || !tileAt(ctx.map, axialToOffset(hex))) continue;
+            washed.add(key);
+            const c = centerOf(hex);
+            g.poly(hexCorners(c.x, c.y)).fill({ color: COLOR.seen, alpha: 0.1 });
+          }
+        }
         if (trail.length > 1) {
           g.moveTo(trail[0].x, trail[0].y);
           for (let i = 1; i <= upTo; i++) g.lineTo(trail[i].x, trail[i].y);
@@ -319,6 +391,10 @@ export function drawReplayShapes(
         break;
       }
       case 'DRONE_DOWNED': {
+        // Only our own drone is a clue. Theirs dying says their drone met OUR
+        // base, which we already know about.
+        const disc = discCenter(event, frames, ctx);
+        if (disc) baseDisc(g, ctx, disc, p);
         const { x, y } = centerOf(event.hex);
         cross(g, x, y, HEX * 0.45 * Math.min(1, p * 2), COLOR.enemy);
         break;
@@ -353,6 +429,10 @@ export function drawReplayShapes(
         const q = afterDive(g, ctx.flights.get(event.missileId), p);
         if (q === null) break;
         const { x, y } = centerOf(event.hex);
+        // Our missile stopped means an enemy base covers this hex. On a base's
+        // first intercept the exposure follows at once and takes over.
+        const disc = discCenter(event, frames, ctx);
+        if (disc) baseDisc(g, ctx, disc, q);
         interceptBurst(g, x, y, q);
         break;
       }
@@ -437,7 +517,10 @@ export function labelKey(frames: readonly ClipFrame[]): string {
 function labelFor(event: VisibleEvent, ctx: ReplayContext): { text: string; hex: Hex } | null {
   switch (event.type) {
     case 'DRONE_MOVED':
-      return event.path.length === 1
+      // A flight downed on its first step looks exactly like a hover; the
+      // round's own DRONE_DOWNED tells them apart (it names our own drone, and
+      // the words only drop "HOVERS", so nothing is given away early).
+      return event.path.length === 1 && !downedOnFirstStep(event, ctx.events)
         ? { text: 'DRONE HOVERS', hex: event.to }
         : { text: 'DRONE', hex: event.from };
     case 'ASSET_SPOTTED':
@@ -519,6 +602,20 @@ export function drawReplayLabels(
     text.position.set(x, y - HEX * 0.7);
     text.alpha = progress < 1 ? 1 : 0.6;
     layer.addChild(text);
+
+    // The rule a base disc illustrates, on the ring's lower rim — kept off the
+    // event's own label, which already shares its hex with others.
+    const disc = discCenter(clip.event, frames, ctx);
+    if (disc) {
+      const c = centerOf(disc);
+      const rule = new Text({
+        text: `ENEMY BASE WITHIN ${RULES.interceptorCoverageRadius}`,
+        style: DISC_STYLE,
+      });
+      rule.anchor.set(0.5, 0);
+      rule.position.set(c.x, c.y + DISC_REACH + 4);
+      layer.addChild(rule);
+    }
 
     // A spotted or exposed asset gets its letter too, in the intel red.
     if (clip.event.type === 'ASSET_SPOTTED') {

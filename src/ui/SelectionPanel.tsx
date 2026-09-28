@@ -6,15 +6,16 @@
 // enemy-held hex the player has not detected reports bare terrain, exactly as it
 // should — the map is public, the assets on it are not (spec §11).
 
-import { UNIT_DEFS } from '../sim/defs';
+import { RULES, UNIT_DEFS } from '../sim/defs';
 import { axialToOffset, hexKey } from '../sim/hex';
 import { tileAt, type Terrain } from '../sim/map';
-import { useSelected, useView } from '../state/useMatch';
+import { useIntelOverlay, useSelected, useView } from '../state/useMatch';
 import { hexLabel } from './eventText';
 
 export default function SelectionPanel() {
   const view = useView();
   const selected = useSelected();
+  const inference = useIntelOverlay();
 
   // Unreachable in practice — `App` mounts this only once a match exists — but
   // `useView()` is nullable because the setup screen has no board (step 10b).
@@ -34,6 +35,10 @@ export default function SelectionPanel() {
   const own = view.units.filter((unit) => hexKey(unit.position) === key);
   const reveal = view.intel.staticReveals.find((r) => hexKey(r.hex) === key);
   const contact = view.intel.contacts.find((c) => hexKey(c.hex) === key);
+  // What the board's washes mean, in words (session 3) — both are deductions
+  // from the viewer's own log, not sightings.
+  const candidate = inference?.candidates.some((hex) => hexKey(hex) === key) ?? false;
+  const photographed = inference?.photographed.some((hex) => hexKey(hex) === key) ?? false;
 
   return (
     <section className="panel">
@@ -69,7 +74,22 @@ export default function SelectionPanel() {
         </p>
       )}
 
-      {own.length === 0 && !reveal && !contact && (
+      {candidate && (
+        <p className="enemy">
+          The enemy interceptor base could be here: your drone was shot down within{' '}
+          {RULES.interceptorCoverageRadius} hexes of this spot, and nothing else you know rules
+          it out.
+        </p>
+      )}
+
+      {photographed && (
+        <p className="muted">
+          Photographed by your drone. A bunker site here would already be on your map; a
+          launcher may have moved in since.
+        </p>
+      )}
+
+      {own.length === 0 && !reveal && !contact && !candidate && !photographed && (
         <p className="muted">Nothing you can see.</p>
       )}
     </section>
