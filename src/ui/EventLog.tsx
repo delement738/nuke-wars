@@ -8,13 +8,20 @@
 // round is the engine's canonical emission order (§6 — recon, launches,
 // impacts, movement), which is also the order a client would animate it in, so
 // the log reads as a narrative of the round rather than a set of facts.
+//
+// **The round being replayed is held back until its replay finishes**
+// (presentation phase, session 1; designer's call): the player watches the
+// round first, then reads it. The entries are in the log the whole time — this
+// only chooses not to show them yet.
 
-import { useLog, useView, useViewer } from '../state/useMatch';
+import { useLog, useReplay, useView, useViewer } from '../state/useMatch';
 import type { LogEntry } from '../state/match';
 import { describeEvent } from './eventText';
 
 export default function EventLog() {
-  const log = useLog();
+  const fullLog = useLog();
+  const replay = useReplay();
+  const log = replay ? fullLog.filter((entry) => entry.round !== replay.round) : fullLog;
   const viewer = useViewer();
   const view = useView();
 
@@ -24,7 +31,12 @@ export default function EventLog() {
     <section className="panel log">
       <h2>Event log</h2>
 
+      {replay && (
+        <p className="muted">Round {replay.round} appears here once its replay ends.</p>
+      )}
+
       {rounds.length === 0 ? (
+        replay ? null :
         <p className="muted">Nothing detected yet. Resolve a round.</p>
       ) : (
         <ol className="rounds">

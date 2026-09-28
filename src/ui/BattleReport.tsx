@@ -29,11 +29,16 @@
 
 import { useEffect } from 'react';
 import { dismissReport } from '../state/match';
-import { useReport } from '../state/useMatch';
+import { useReplay, useReport } from '../state/useMatch';
 import './hud.css';
 
 export default function BattleReport() {
-  const report = useReport();
+  // Held back until the viewer's replay has played (presentation phase,
+  // session 1): "Launcher lost" popping up before the round has been watched
+  // would spoil it. Still mounted inside `App`'s board branch — gotcha 62.
+  const replaying = useReplay() !== null;
+  const pending = useReport();
+  const report = replaying ? null : pending;
 
   // Space and Enter dismiss, so a player mid-order-entry does not have to reach
   // for the mouse. Bound while a banner is up and unbound the instant it is

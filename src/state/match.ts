@@ -116,6 +116,24 @@ export interface LogEntry {
 }
 
 /**
+ * One player's not-yet-watched resolution (presentation phase, session 1).
+ *
+ * The render layer plays `events` back on top of `from` and then settles on the
+ * current view. Both halves are already filtered: `from` is the view this player
+ * had *before* the round resolved, and `events` is exactly the slice their log
+ * received — so a replay cannot show anything the log does not (spec §6).
+ *
+ * `from` is the backdrop, never something to diff against. What changed is read
+ * off the events, which is the architecture rule: animate from the event log.
+ */
+export interface Replay {
+  /** The round that was resolved — the same number its log entries carry. */
+  round: number;
+  from: VisibleGameState;
+  events: readonly VisibleEvent[];
+}
+
+/**
  * Everything the presentation layer may read. Note what is *not* here: the
  * unfiltered state, both players' orders, and anything keyed by a raw `Unit`
  * belonging to the enemy.
@@ -259,6 +277,18 @@ export interface MatchState {
    * a history. The permanent record is `logs`, always.
    */
   reports: Record<PlayerId, BattleReport[]>;
+  /**
+   * Each player's pending replay of the last resolution, or null (presentation
+   * phase, session 1).
+   *
+   * **Per player, for the same reason as `reports`**: in hotseat one resolution
+   * produces a replay for two people and the second is not at the screen yet.
+   * Theirs waits in their slot until they take the screen, and `finishReplay`
+   * clears only the viewer's — so P1 watching or skipping cannot use up P2's.
+   * Nothing plays during a handoff because `App` unmounts the canvas then
+   * (gotchas 58, 62); this field only says what is *waiting* to play.
+   */
+  replay: Record<PlayerId, Replay | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -359,6 +389,7 @@ export const matchStore = createStore<MatchState>()(() => ({
   views: null,
   logs: { p1: [], p2: [] },
   reports: { p1: [], p2: [] },
+  replay: { p1: null, p2: null },
 }));
 
 /**
@@ -372,7 +403,7 @@ export const matchStore = createStore<MatchState>()(() => ({
  */
 function publish(round: number, events: readonly GameEvent[]): void {
   if (!truth) return; // no match — nothing to project and nothing to log
-  const { logs, reports } = matchStore.getState();
+  const { logs, reports, views: before } = matchStore.getState();
 
   const views = viewsOf(truth);
   const seen = {
@@ -394,7 +425,30 @@ function publish(round: number, events: readonly GameEvent[]): void {
       p1: queueReports(reports.p1, seen.p1, 'p1', views.p1.units, round),
       p2: queueReports(reports.p2, seen.p2, 'p2', views.p2.units, round),
     },
+    // The replay is built from the SAME filtered slice the log just got, played
+    // over the view this player had a moment ago — never from `truth`.
+    replay: {
+      p1: replayOf(before?.p1, round, seen.p1),
+      p2: replayOf(before?.p2, round, seen.p2),
+    },
   });
+}
+
+/**
+ * A player's replay of this resolution, or null when there is nothing to play —
+ * no previous board to play it on, or no events they were allowed to see.
+ *
+ * A newer resolution replaces an unwatched older one rather than queueing behind
+ * it: the backdrop of the old one is no longer the board the new one starts
+ * from, so playing both in sequence would be a picture the state never held.
+ */
+function replayOf(
+  from: VisibleGameState | undefined,
+  round: number,
+  events: readonly VisibleEvent[],
+): Replay | null {
+  if (!from || events.length === 0) return null;
+  return { round, from, events };
 }
 
 /**
@@ -469,6 +523,7 @@ export function newMatch(seed: number = DEFAULT_SEED): void {
     views: null,
     logs: { p1: [], p2: [] },
     reports: { p1: [], p2: [] },
+    replay: { p1: null, p2: null },
   });
 }
 
@@ -1108,6 +1163,14 @@ export function selectUnit(unitId: UnitId): void {
  * and cannot grow one that disagrees with this about what a hex click does.
  */
 export function pickHex(hex: Hex): void {
+  // During a replay a click skips it (presentation phase, session 1): the board
+  // on screen is last round's, so a click cannot mean an order or a selection.
+  const { replay, viewer } = matchStore.getState();
+  if (replay[viewer]) {
+    finishReplay();
+    return;
+  }
+
   const view = orderingView();
   if (!view) {
     placeHex(hex);
@@ -1176,4 +1239,24 @@ export function dismissReport(): void {
   matchStore.setState({
     reports: { ...reports, [viewer]: queue.slice(1) },
   });
+}
+
+/** `player`'s pending replay, or null (presentation phase, session 1). */
+export function replayFor(player: PlayerId): Replay | null {
+  return matchStore.getState().replay[player];
+}
+
+/**
+ * The **viewer's** replay is over — it played to the end or was skipped
+ * (presentation phase, session 1). The board settles on the current view.
+ *
+ * Keyed on `viewer` and taking no `PlayerId`, for gotcha 36/57's reason: in
+ * hotseat the other seat's replay is waiting for a player who has not sat down
+ * yet, and nothing the person at the machine does may consume it.
+ */
+export function finishReplay(): void {
+  const { replay, viewer } = matchStore.getState();
+  if (replay[viewer] === null) return;
+
+  matchStore.setState({ replay: { ...replay, [viewer]: null } });
 }
