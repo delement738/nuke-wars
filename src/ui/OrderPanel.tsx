@@ -52,7 +52,7 @@ const MODE_HINT: Record<OrderMode, string> = {
   // States the cost, because no overlay can draw it: the hexes look like richer
   // MOVE ground, and the price is a public event on the hex you are leaving.
   MARCH: 'Click a bright green hex to force-march there — twice the distance, but the hex you leave is announced to the enemy for one round.',
-  LAUNCH: 'Click any hex in the amber ring to fire on it — mountains included, and blind fire at empty ground is legal.',
+  LAUNCH: 'Click any hex in the amber ring to fire on it — mountains included, and blind fire at empty ground is legal. A mountain in the way blocks the shot, so hexes behind a ridge are not offered.',
   FLY: 'Hover a violet hex to preview the flight path and the corridor it photographs, then click to commit.',
 };
 

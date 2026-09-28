@@ -38,6 +38,11 @@ amendments, CPU updates, and a before/after soak.
 
 ### Session A: mountains block line of fire
 
+> **DONE 2026-09-28** (`feature/mountains-block-fire`; CLAUDE.md entry of that date). Two corrections to
+> the plan below: `launchTargets` did *not* get the rule free (it never called `validateLaunch`),
+> and the `LINE_BLOCKED` soak line always reads 0 because the CPU pre-validates — the lane-blindness
+> signal is the new "site in range, but no clear line" line. Hard mirror Armistice ended at 13–15%.
+
 **Rule:** a LAUNCH is illegal if any hex *strictly between* origin and target is a
 mountain. The target hex is exempt, so a mountain bunker stays hittable (§10's
 invulnerability trap). Launchers can't stand on mountains, so the origin never blocks.
@@ -129,8 +134,8 @@ decision and wins.
 
 ## Soak harness additions (make them in the session that needs them)
 
-- A: launches rejected as `LINE_BLOCKED` per side, split by CPU tier. A high count
-  means the CPU is not learning lanes.
+- A (done): `LINE_BLOCKED` launches sent (an honesty check, 0 by construction) and
+  launcher-rounds with a known site in range but no clear line, per tier.
 - B: bunkers repaired per side, and kills by a same-round double hit vs. anything else.
   Time-on-target kills get their own line.
 - C: recon passes that went over a dug-in launcher without revealing it.

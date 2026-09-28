@@ -39,7 +39,7 @@
 
 import { RULES, TERRAIN_DEFS } from '../sim/defs';
 import { axialToOffset, distance, hexLine, hexesInRange, type Hex } from '../sim/hex';
-import { tileAt, type MapData } from '../sim/map';
+import { lineOfFireClear, tileAt, type MapData } from '../sim/map';
 import { legalPlacementHexes, type Placement, type PlayerSetup } from '../sim/setup';
 import type { PlayerId } from '../sim/types';
 import type { CpuDifficulty } from './cpu';
@@ -134,9 +134,9 @@ export function cpuSetup(
 /**
  * The flight paths an enemy missile at `site` would plausibly fly: every hex a
  * launcher could stand on (plains, on the map) at range `LANE_MIN_RANGE` to
- * `missileRange`, on the enemy's side of the site's row — the approach. Each
- * path drops its origin, as `createMissile` does (§10), since the origin hex is
- * never intercept-checked.
+ * `missileRange`, on the enemy's side of the site's row, with a clear line of
+ * fire (§10) — the approach. Each path drops its origin, as `createMissile`
+ * does (§10), since the origin hex is never intercept-checked.
  */
 export function approachLanes(map: MapData, player: PlayerId, site: Hex): Hex[][] {
   const siteRow = axialToOffset(site).row;
@@ -151,6 +151,10 @@ export function approachLanes(map: MapData, player: PlayerId, site: Hex): Hex[][
     // P1's home zone is the south edge, so the enemy comes from lower rows.
     const row = axialToOffset(origin).row;
     if (player === 'p1' ? row > siteRow : row < siteRow) continue;
+
+    // A lane a mountain blocks is not a lane (§10, 2026-09-28): no missile can
+    // fly it, so covering it defends nothing.
+    if (!lineOfFireClear(map, origin, site)) continue;
 
     lanes.push(hexLine(origin, site).slice(1));
   }

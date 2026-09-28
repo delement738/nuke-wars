@@ -120,8 +120,9 @@ function noNegativeZero(n: number): number {
  * `hexLine(a, b)` reversed equals `hexLine(b, a)`.
  *
  * This is pure geometry and knows nothing about game rules: no range limit, no
- * terrain, no legality. Missiles ignore terrain by design (§10 — a mountain
- * bunker must stay killable), and range/legality checks belong to the order
+ * terrain, no legality. Line of fire (§10 — a mountain strictly between
+ * launcher and target blocks a launch; the target hex never does) is read by
+ * `lineOfFireClear` in map.ts, and range/legality checks belong to the order
  * validators. `hexLine(a, a)` returns `[a]` rather than throwing; "the drone may
  * not fly to its own hex" (§11) is a validation rule, not a geometric one.
  *

@@ -80,6 +80,16 @@ export interface TerrainDef {
   groundPassable: boolean;
   /** Cost to enter this tile. Not read when `groundPassable` is false. */
   moveCost: number;
+  /**
+   * Whether a missile may be LAUNCHED across this tile (spec §10, 2026-09-28).
+   *
+   * Read for the hexes strictly BETWEEN origin and target only — never the
+   * target, or a bunker built on a mountain (§12) would be invulnerable, and
+   * never the origin, which a launcher cannot stand on anyway. Checked once, at
+   * launch (`lineOfFireClear` in map.ts); a missile in flight is never
+   * re-checked, and this has nothing to do with interception.
+   */
+  blocksFire: boolean;
 }
 
 /**
@@ -88,8 +98,9 @@ export interface TerrainDef {
  * so a future third terrain is a data edit here and not an algorithm change.
  */
 export const TERRAIN_DEFS = {
-  plains: { groundPassable: true, moveCost: 1 },
-  mountain: { groundPassable: false, moveCost: Infinity }, // spec §2: launchers only
+  plains: { groundPassable: true, moveCost: 1, blocksFire: false },
+  // spec §2: blocks launchers, and since 2026-09-28 blocks line of fire (§10)
+  mountain: { groundPassable: false, moveCost: Infinity, blocksFire: true },
 } as const satisfies Record<Terrain, TerrainDef>;
 
 /**

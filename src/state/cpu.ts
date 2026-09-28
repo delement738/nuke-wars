@@ -73,7 +73,7 @@ import {
   offsetToAxial,
   type Hex,
 } from '../sim/hex';
-import { tileAt } from '../sim/map';
+import { firingPositions, lineOfFireClear, tileAt } from '../sim/map';
 import { validateLaunch } from '../sim/missiles';
 import {
   groundBudget,
@@ -376,7 +376,7 @@ function baseVolley(
     if (reveal.kind !== 'interceptor') continue;
     const inRange = launchers
       .filter((l) => !volley.has(l.id))
-      .filter((l) => distance(l.position, reveal.hex) <= RULES.missileRange)
+      .filter((l) => canFire(view.map, l.position, reveal.hex))
       .sort(
         (a, b) =>
           distance(a.position, reveal.hex) - distance(b.position, reveal.hex) ||
@@ -459,16 +459,19 @@ export function selectTarget(
  * led hex almost never lands in the 5–6 band. The tiers above gave
  * 50→53, 49→54, 48→53 on the same three seeds.
  *
+ * Every tier is filtered by `canFire`, so a target behind a ridge (§10) is
+ * simply not a solution, and the launcher advances toward a lane instead.
+ *
  * Nearest wins within a tier.
  */
 export function hardFiringSolution(view: VisibleGameState, from: Hex): Hex | undefined {
   const reach = (hex: Hex) => distance(from, hex);
-  const sites = knownSites(view).filter((hex) => reach(hex) <= RULES.missileRange);
+  const sites = knownSites(view).filter((hex) => canFire(view.map, from, hex));
   const short: Hex[] = [];
   const long: Hex[] = [];
   for (const contact of view.intel.contacts) {
     const d = reach(contact.hex);
-    if (contact.source === 'MARCH' || d === 0 || d > RULES.missileRange) continue;
+    if (contact.source === 'MARCH' || !canFire(view.map, from, contact.hex)) continue;
     if (d <= RULES.missileSpeed) short.push(contact.hex);
     else if (contact.source === 'LAUNCH') long.push(contact.hex);
   }
@@ -525,6 +528,7 @@ function lastShot(
     const zone = RULES.homeZoneRows[opponentOf(player)];
     const candidates = hexesInRange(launcher.position, RULES.missileRange).filter((hex) => {
       if (!onMap(believed.map, hex) || seen.has(hexKey(hex))) return false;
+      if (!canFire(believed.map, launcher.position, hex)) return false;
       const { row } = axialToOffset(hex);
       return row >= zone.min && row <= zone.max;
     });
@@ -545,12 +549,19 @@ function lastShot(
  * after the target's next move, and a HARD launcher that is not firing is
  * always moving, so only the ≤ 4 band is a threat it cannot walk out of.
  * Measured with `hardFiringSolution`, hard vs medium, seeds 3/7/11: 53→54,
- * 54→55, 53→54. */
-function dangerHexes(view: VisibleGameState): Set<string> {
+ * 54→55, 53→54.
+ *
+ * Only hexes the contact has a clear line to (§10, 2026-09-28): a hex behind a
+ * ridge from the contact cannot be hit from it, so it is cover, not danger.
+ * Measured on top of line of fire, `SOAK_MATCHES=60`, seeds 3/7/11: hard vs
+ * medium 53–27 / 52–26 / 51–25 → 56–26 / 54–26 / 53–24, hard mirror unchanged
+ * (Armistice 9 / 9 / 8 both ways), hard vs easy 94 / 94 / 96 → 91 / 91 / 93
+ * (still no losses). */
+export function dangerHexes(view: VisibleGameState): Set<string> {
   const danger = new Set<string>();
   for (const contact of view.intel.contacts) {
     for (const hex of hexesInRange(contact.hex, RULES.missileSpeed)) {
-      danger.add(hexKey(hex));
+      if (lineOfFireClear(view.map, contact.hex, hex)) danger.add(hexKey(hex));
     }
   }
   return danger;
@@ -567,6 +578,18 @@ function pickRandom<T>(items: readonly T[], rng: Rng): T | undefined {
 
 function onMap(map: GameState['map'], hex: Hex): boolean {
   return tileAt(map, axialToOffset(hex)) !== undefined;
+}
+
+/**
+ * Whether a launcher on `from` could legally fire at `target` on terrain
+ * alone: in range, not its own hex, and a clear line (§10). The CPU's every
+ * "can I shoot that?" question goes through here, so none of them can still
+ * mean "is it within 6?" — which since line of fire is only half the answer.
+ * `validateLaunch` stays the final word on every order.
+ */
+function canFire(map: GameState['map'], from: Hex, target: Hex): boolean {
+  const d = distance(from, target);
+  return d > 0 && d <= RULES.missileRange && lineOfFireClear(map, from, target);
 }
 
 function nearestTo(hexes: readonly Hex[], from: Hex): Hex {
@@ -593,20 +616,37 @@ export const SAFETY_DETOUR_TOLERANCE = 1;
  *   - `row` — MEDIUM's standing goal: push toward the near edge of the enemy
  *     home zone and fight whatever is there. Column-blind, which is why a
  *     MEDIUM launcher advances straight up the board.
- *   - `site` — HARD's goal once recon has found something: get within missile
- *     range of *that hex*. Scored as the distance still to cover, so every hex
- *     already in range scores 0 and the safety preference below becomes the
- *     tiebreak — the launcher closes to the edge of its reach and then prefers
- *     to sit somewhere the enemy cannot answer from.
+ *   - `site` — HARD's goal once recon has found something: get to a hex it
+ *     can actually shoot *that hex* from. `firingHexes` is `firingPositions`
+ *     for the site — in range AND a clear line (§10) — and the score is the
+ *     distance to the nearest of them, so every firing hex scores 0 and the
+ *     safety preference below becomes the tiebreak.
+ *
+ * Before line of fire (2026-09-28) the site score was `max(0, distance − 6)`,
+ * the distance to the edge of the range disk. On a board with no mountains the
+ * two are the same number; with a ridge in the way the old one parks the
+ * launcher behind it at range 6 forever.
  */
 export type AdvanceGoal =
   | { kind: 'row'; row: number }
-  | { kind: 'site'; site: Hex };
+  | { kind: 'site'; site: Hex; firingHexes: readonly Hex[] };
+
+/** A `site` goal for `site` on this map — see `AdvanceGoal`. */
+export function siteGoal(map: GameState['map'], site: Hex): AdvanceGoal {
+  return { kind: 'site', site, firingHexes: firingPositions(map, site) };
+}
 
 function advanceScore(hex: Hex, goal: AdvanceGoal): number {
-  return goal.kind === 'row'
-    ? Math.abs(axialToOffset(hex).row - goal.row)
-    : Math.max(0, distance(hex, goal.site) - RULES.missileRange);
+  if (goal.kind === 'row') return Math.abs(axialToOffset(hex).row - goal.row);
+  // No lane at all cannot happen for a home-zone site on a generated board
+  // (`NO_FIRING_LANE`), but a hand-built test map can do it; fall back to the
+  // range disk rather than scoring every hex Infinity.
+  if (goal.firingHexes.length === 0) {
+    return Math.max(0, distance(hex, goal.site) - RULES.missileRange);
+  }
+  let best = Infinity;
+  for (const lane of goal.firingHexes) best = Math.min(best, distance(hex, lane));
+  return best;
 }
 
 /**
@@ -668,9 +708,9 @@ export function pickAdvanceDestination(
  * shape without a distance threshold to tune. For the `row` goal that means the
  * launchers force-march out of their home zone at the start of the match and go
  * quiet once they reach the front (both destinations score 0 there). For a
- * `site` goal, `advanceScore` is `max(0, distance - missileRange)`, so the
- * launcher is loud while closing and silent once a walk already reaches firing
- * range. Either way the loud phase is the approach, which is the tactically
+ * `site` goal, `advanceScore` is the distance to the nearest clear firing hex
+ * (§10), so the launcher is loud while closing and silent once a walk already
+ * reaches a lane. Either way the loud phase is the approach, which is the tactically
  * right shape, and it is emergent rather than written down.
  *
  * Returns the MOVE whenever the march is refused, so this never costs a round.
@@ -738,7 +778,7 @@ function reactiveLauncherOrder(
   const aim = ranked
     ? hardFiringSolution(view, launcher.position)
     : selectTarget(
-        targets.filter((t) => distance(launcher.position, t.hex) <= RULES.missileRange),
+        targets.filter((t) => canFire(believed.map, launcher.position, t.hex)),
         launcher.position,
         false,
       )?.hex;
@@ -832,7 +872,7 @@ function easyLauncherOrder(
   }
 
   const inRange = hexesInRange(launcher.position, RULES.missileRange).filter(
-    (hex) => hexKey(hex) !== hexKey(launcher.position) && onMap(believed.map, hex),
+    (hex) => onMap(believed.map, hex) && canFire(believed.map, launcher.position, hex),
   );
   const target = pickRandom(inRange, rng);
   if (!target) return null;
@@ -890,8 +930,8 @@ function deadHandOrders(
 
   const orders: Order[] = [];
   for (const launcher of launchers) {
-    const inRange = staticTargets.filter(
-      (hex) => distance(launcher.position, hex) <= RULES.missileRange,
+    const inRange = staticTargets.filter((hex) =>
+      canFire(believed.map, launcher.position, hex),
     );
 
     let target: Hex | undefined;
@@ -900,7 +940,7 @@ function deadHandOrders(
         difficulty === 'easy' ? pickRandom(inRange, rng) : nearestTo(inRange, launcher.position);
     } else {
       const candidates = hexesInRange(launcher.position, RULES.missileRange).filter(
-        (hex) => hexKey(hex) !== hexKey(launcher.position) && onMap(believed.map, hex),
+        (hex) => onMap(believed.map, hex) && canFire(believed.map, launcher.position, hex),
       );
       const zoned = candidates.filter((hex) => {
         const row = axialToOffset(hex).row;
@@ -983,9 +1023,7 @@ export function cpuOrders(
       }
 
       const goal: AdvanceGoal =
-        sites.length > 0
-          ? { kind: 'site', site: nearestTo(sites, launcher.position) }
-          : fallback;
+        sites.length > 0 ? siteGoal(view.map, nearestTo(sites, launcher.position)) : fallback;
 
       const order =
         difficulty === 'easy'

@@ -28,8 +28,9 @@
 import { describe, it } from 'vitest';
 
 import { RULES } from '../src/sim/defs';
-import { hexKey, offsetToAxial } from '../src/sim/hex';
-import { generateMap, makeRng } from '../src/sim/map';
+import { distance, hexKey, offsetToAxial } from '../src/sim/hex';
+import { generateMap, lineOfFireClear, makeRng } from '../src/sim/map';
+import { validateLaunch } from '../src/sim/missiles';
 import { reconSwath } from '../src/sim/recon';
 import { resolve } from '../src/sim/resolve';
 import { startMatch } from '../src/sim/setup';
@@ -120,6 +121,26 @@ interface PlayerStats {
    */
   basesExposed: number;
   basesKilled: number;
+  /**
+   * LAUNCH orders this player submitted that the engine rejects as
+   * `LINE_BLOCKED` (§10, 2026-09-28), re-validated here against the truth.
+   *
+   * An honesty check that should read 0: every CPU tier runs `validateLaunch`
+   * on its own orders before sending them, and terrain is public, so a blocked
+   * shot is never *submitted* — it quietly becomes a ground order instead. A
+   * non-zero number means a tier stopped checking.
+   */
+  lineBlockedLaunches: number;
+  /**
+   * Launcher-rounds spent with a known site within `missileRange` and no clear
+   * line to any of them — "parked behind a ridge".
+   *
+   * This is the line-of-fire number that actually shows whether a tier is
+   * learning lanes, since rejections never happen (above). HARD drives to a
+   * clear firing hex (`siteGoal`), so its count should stay low; MEDIUM and
+   * EASY never prosecute sites, so theirs is mostly incidental.
+   */
+  blockedRounds: number;
 }
 
 interface MatchStats {
@@ -145,6 +166,8 @@ function emptyStats(): PlayerStats {
     launchersKilled: 0,
     basesExposed: 0,
     basesKilled: 0,
+    lineBlockedLaunches: 0,
+    blockedRounds: 0,
   };
 }
 
@@ -253,6 +276,29 @@ function playMatch(seed: number, difficulty: Record<PlayerId, CpuDifficulty>): M
         makeRng(seed * 100000 + round * 2 + (player === 'p1' ? 0 : 1)),
         history[player],
       );
+    }
+
+    // Line of fire (§10), measured against the board as the orders met it.
+    for (const player of PLAYERS) {
+      for (const order of orders[player]) {
+        if (order.type !== 'LAUNCH') continue;
+        const check = validateLaunch(state, player, order);
+        if (!check.legal && check.reason === 'LINE_BLOCKED') {
+          stats[player].lineBlockedLaunches += 1;
+        }
+      }
+
+      const sites = state.intel[player].staticReveals
+        .filter((r) => r.kind === 'bunker' || r.kind === 'decoy')
+        .map((r) => r.hex);
+      if (sites.length === 0) continue;
+      for (const unit of state.units) {
+        if (unit.owner !== player || unit.kind !== 'launcher' || unit.destroyed) continue;
+        const inRange = sites.filter((hex) => distance(unit.position, hex) <= RULES.missileRange);
+        if (inRange.length > 0 && !inRange.some((hex) => lineOfFireClear(map, unit.position, hex))) {
+          stats[player].blockedRounds += 1;
+        }
+      }
     }
 
     const result = resolve(state, orders.p1, orders.p2, seed);
@@ -418,6 +464,9 @@ function report(difficulty: CpuDifficulty, matches: readonly MatchStats[]): stri
     `    launchers killed               ${mean(sides.map((s) => s.launchersKilled)).toFixed(2)}`,
     `    bases exposed                  ${mean(sides.map((s) => s.basesExposed)).toFixed(2)}`,
     `    bases killed                   ${mean(sides.map((s) => s.basesKilled)).toFixed(2)}`,
+    `    LINE_BLOCKED launches sent     ${mean(sides.map((s) => s.lineBlockedLaunches)).toFixed(2)}`,
+    `    launcher-rounds site in range,`,
+    `      but no clear line            ${mean(sides.map((s) => s.blockedRounds)).toFixed(2)}`,
     ``,
     `  MANEUVER (per side, per match)`,
     `    forced marches ordered         ${mean(sides.map((s) => s.marches)).toFixed(2)}`,

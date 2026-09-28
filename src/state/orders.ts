@@ -26,7 +26,7 @@ import {
   hexesInRange,
   type Hex,
 } from '../sim/hex';
-import { tileAt, type MapData } from '../sim/map';
+import { lineOfFireClear, tileAt, type MapData } from '../sim/map';
 import { validateLaunch } from '../sim/missiles';
 import { groundBudget, reachableHexes, validateMove } from '../sim/movement';
 import { validateFly } from '../sim/recon';
@@ -243,11 +243,14 @@ function groundTargets(
 /**
  * Where this launcher may fire (spec §3, §10).
  *
- * **No terrain filter, and adding one would be a rules bug, not a tidy-up**
- * (CLAUDE.md gotcha 7c). Missiles ignore terrain in flight *and* in targeting.
- * Bunkers, decoys and interceptor bases may all be built on mountains (§2, §12),
- * so a targeting rule that skipped impassable hexes would make a mountain bunker
- * literally invulnerable and hand its owner a guaranteed win.
+ * **No target-terrain filter, and adding one would be a rules bug, not a
+ * tidy-up** (CLAUDE.md gotcha 7b). Bunkers, decoys and interceptor bases may
+ * all be built on mountains (§2, §12), so a targeting rule that skipped
+ * mountain hexes would make a mountain bunker literally invulnerable and hand
+ * its owner a guaranteed win. What IS filtered is the line: a shot whose path
+ * crosses a mountain strictly between origin and target is illegal (§10,
+ * 2026-09-28), via the sim's own `lineOfFireClear` so the highlight and the
+ * validator cannot disagree.
  *
  * Blind fire at hexes holding nothing the player can see is legal and stays
  * offered — it is the norm, not the exception (§3). Firing *at* a detected enemy
@@ -256,7 +259,9 @@ function groundTargets(
  */
 export function launchTargets(view: VisibleGameState, unit: Unit): Hex[] {
   if (!modesFor(view, unit).includes('LAUNCH')) return [];
-  return straightLineTargets(view.map, unit.position, RULES.missileRange);
+  return straightLineTargets(view.map, unit.position, RULES.missileRange).filter((hex) =>
+    lineOfFireClear(view.map, unit.position, hex),
+  );
 }
 
 /**

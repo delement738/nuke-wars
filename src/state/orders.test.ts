@@ -350,7 +350,7 @@ describe('marchTargets', () => {
 // ---------------------------------------------------------------------------
 
 describe('launchTargets', () => {
-  it('INCLUDES mountain hexes (spec §10, CLAUDE.md gotcha 7c)', () => {
+  it('INCLUDES mountain hexes as targets (spec §10, CLAUDE.md gotcha 7b)', () => {
     // The regression guard that matters most in this file. Structures may be
     // built on mountains (§2, §12), so a targeting rule that filtered
     // impassable ground would make a mountain bunker literally invulnerable.
@@ -368,6 +368,20 @@ describe('launchTargets', () => {
 
     // The same hex is NOT a legal move, which is the whole asymmetry.
     expect(keysOf(moveTargets(view, launcher)).has(hexKey(peak))).toBe(false);
+  });
+
+  it('EXCLUDES hexes behind a mountain — line of fire (spec §10, 2026-09-28)', () => {
+    const launcher = makeUnit('p1-launcher-1', 'p1', 'launcher', CENTER);
+    const peak = offsetToAxial({ col: 8, row: 6 }); // 3 north
+    const behind = offsetToAxial({ col: 8, row: 4 }); // 5 north, same column
+    const view = makeView(mapWithMountainAt(axialToOffset(peak)), [launcher]);
+    const offered = keysOf(launchTargets(view, launcher));
+
+    // The peak itself stays a target (above); what lies past it does not, and
+    // the engine agrees in both directions.
+    expect(offered.has(hexKey(peak))).toBe(true);
+    expect(offered.has(hexKey(behind))).toBe(false);
+    expect(isLegalOrder(view, orderFor(launcher, 'LAUNCH', behind))).toBe(false);
   });
 
   it('excludes the launcher’s own hex (SAME_HEX) and everything off the map', () => {

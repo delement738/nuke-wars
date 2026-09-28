@@ -6,9 +6,11 @@
 // board, updates intel, and emits events.
 //
 // The three rules that shape everything here:
-//   - a missile IGNORES TERRAIN, in flight and in targeting (§10). There is no
-//     passability check anywhere in this file, and adding one would make a
-//     bunker built on a mountain (§12) literally invulnerable.
+//   - a LAUNCH may not cross a mountain, but may TARGET one (§10, amended
+//     2026-09-28). `lineOfFireClear` checks the hexes strictly between origin
+//     and target, once, at launch. The target hex is exempt because filtering
+//     targets by terrain would make a bunker built on a mountain (§12)
+//     literally invulnerable. Flight itself never reads terrain.
 //   - a missile is checked for interception on every hex AFTER its origin,
 //     target hex included — `hexLine(...).slice(1)` (§10). Keeping the origin in
 //     would let a launcher be shot down by a base covering its own hex, which
@@ -30,7 +32,7 @@ import {
   hexLine,
   type Hex,
 } from './hex';
-import { tileAt } from './map';
+import { lineOfFireClear, tileAt } from './map';
 import type {
   GameState,
   LaunchOrder,
@@ -44,10 +46,12 @@ import type {
 /**
  * Why a LAUNCH order was rejected.
  *
- * Note what is *absent*: there is no impassable-terrain reason and no
- * occupied-tile reason. Blind fire at any hex on the map within range is legal
- * (§3) — a mountain, open plains, a hex holding your own launcher, all of it.
- * Filtering targets by terrain is the one mistake §10 calls out by name.
+ * Note what is *absent*: there is no target-terrain reason and no
+ * occupied-tile reason. Blind fire at any hex on the map within range and with
+ * a clear line is legal (§3) — a mountain, open plains, a hex holding your own
+ * launcher, all of it. `LINE_BLOCKED` is about the hexes the shot CROSSES,
+ * never the one it lands on: filtering targets by terrain is the one mistake
+ * §10 calls out by name.
  *
  * `NOT_A_LAUNCHER` completes the set movement.ts's `AIR_UNIT` and recon.ts's
  * `NOT_AIR_UNIT` began: each order kind rejects the wrong sort of unit with a
@@ -61,7 +65,8 @@ export type LaunchIllegalReason =
   | 'UNIT_DESTROYED' // already dead; wrecks don't shoot
   | 'SAME_HEX' // §3: the target may not be the launcher's own hex
   | 'OFF_MAP' // target isn't a real tile
-  | 'OUT_OF_RANGE'; // straight-line distance exceeds RULES.missileRange
+  | 'OUT_OF_RANGE' // straight-line distance exceeds RULES.missileRange
+  | 'LINE_BLOCKED'; // a mountain strictly between origin and target (§10)
 
 export type LaunchValidation =
   | { legal: true; distance: number }
@@ -148,11 +153,19 @@ export function validateLaunch(
   }
 
   // Straight-line distance, with NO terrain-aware path cost anywhere near it:
-  // a missile flies over mountains, over units, and over the whole ground
-  // layer's notion of "reachable" (§10).
+  // a missile flies over units and over the whole ground layer's notion of
+  // "reachable" (§10).
   const flown = distance(unit.position, order.target);
   if (flown > RULES.missileRange) {
     return { legal: false, reason: 'OUT_OF_RANGE' };
+  }
+
+  // Line of fire (§10, 2026-09-28): no mountain strictly between. Checked here,
+  // at launch, and nowhere in `flyMissiles` — a missile in the air has a fixed
+  // path. Terrain is public, so like every rejection above this one is
+  // derivable by the sender and is dropped in silence.
+  if (!lineOfFireClear(state.map, unit.position, order.target)) {
+    return { legal: false, reason: 'LINE_BLOCKED' };
   }
 
   return { legal: true, distance: flown };

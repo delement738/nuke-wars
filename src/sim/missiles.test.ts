@@ -115,7 +115,7 @@ describe('validateLaunch()', () => {
     expect(validateLaunch(state, 'p1', aim('a', empty)).legal).toBe(true);
   });
 
-  it('accepts a MOUNTAIN target — missiles ignore terrain in targeting (§10)', () => {
+  it('accepts a MOUNTAIN target — the target hex is exempt from line of fire (§10)', () => {
     const state = openField([launcher]);
     const peak = north(CENTER, 2);
     setTerrain(state.map, peak, 'mountain');
@@ -183,6 +183,84 @@ describe('validateLaunch()', () => {
       .toEqual({ legal: false, reason: 'UNIT_DESTROYED' });
   });
 });
+
+// --- line of fire (spec §10, 2026-09-28) -------------------------------------
+
+describe('validateLaunch() — line of fire', () => {
+  const launcher = makeUnit('a', 'p1', 'launcher', CENTER);
+
+  it('rejects a shot across a mountain strictly between origin and target', () => {
+    const state = openField([launcher]);
+    setTerrain(state.map, north(CENTER, 2), 'mountain');
+
+    expect(validateLaunch(state, 'p1', aim('a', north(CENTER, 4))))
+      .toEqual({ legal: false, reason: 'LINE_BLOCKED' });
+  });
+
+  it('blocks on the very first hex after the origin, and the last before the target', () => {
+    for (const step of [1, RANGE - 1]) {
+      const state = openField([launcher]);
+      setTerrain(state.map, north(CENTER, step), 'mountain');
+
+      expect(validateLaunch(state, 'p1', aim('a', north(CENTER, RANGE))))
+        .toEqual({ legal: false, reason: 'LINE_BLOCKED' });
+    }
+  });
+
+  it('exempts the TARGET: a mountain site stays hittable (the §10 invulnerability trap)', () => {
+    // Same board as the rejection above, one hex shorter. The mountain is now
+    // the target, and the line to it is clear.
+    const state = openField([launcher]);
+    setTerrain(state.map, north(CENTER, 2), 'mountain');
+
+    expect(validateLaunch(state, 'p1', aim('a', north(CENTER, 2))).legal).toBe(true);
+  });
+
+  it('a mountain target behind a mountain is blocked by the one in FRONT, not by itself', () => {
+    const state = openField([launcher]);
+    setTerrain(state.map, north(CENTER, 3), 'mountain');
+    setTerrain(state.map, north(CENTER, 4), 'mountain');
+
+    expect(validateLaunch(state, 'p1', aim('a', north(CENTER, 3))).legal).toBe(true);
+    expect(validateLaunch(state, 'p1', aim('a', north(CENTER, 4))))
+      .toEqual({ legal: false, reason: 'LINE_BLOCKED' });
+  });
+
+  it('ignores mountains beside the line — only hexLine’s own hexes count', () => {
+    const state = openField([launcher]);
+    const target = north(CENTER, 4);
+    const line = new Set(hexLine(CENTER, target).map(hexKey));
+    // Wall in every neighbour of the line that is not on it.
+    for (const hex of hexLine(CENTER, target)) {
+      for (const n of neighbors(hex)) {
+        if (!line.has(hexKey(n))) setTerrain(state.map, n, 'mountain');
+      }
+    }
+
+    expect(validateLaunch(state, 'p1', aim('a', target)).legal).toBe(true);
+  });
+
+  it('reports OUT_OF_RANGE, not LINE_BLOCKED, for a shot that is both', () => {
+    const state = openField([launcher]);
+    setTerrain(state.map, north(CENTER, 2), 'mountain');
+
+    expect(validateLaunch(state, 'p1', aim('a', north(CENTER, RANGE + 1))))
+      .toEqual({ legal: false, reason: 'OUT_OF_RANGE' });
+  });
+
+  it('is checked at launch only — a missile already in flight crosses a mountain', () => {
+    // Terrain never changes, so this can only arise from a path built without
+    // the check; it pins that flyMissiles itself reads no terrain (§10: a
+    // missile in flight has a fixed path).
+    const state = openField([launcher]);
+    setTerrain(state.map, north(CENTER, 2), 'mountain');
+    const missile = createMissile(1, launcher, north(CENTER, 3));
+
+    const flights = flyMissiles(state.units, [missile]);
+    expect(flights.arrived.map((m) => m.id)).toEqual([missile.id]);
+  });
+});
+
 
 // --- missile identity (spec §6) ---------------------------------------------
 

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { axialToOffset, hexKey, offsetToAxial } from '../sim/hex';
+import { RULES } from '../sim/defs';
+import { distance, hexKey, offsetToAxial, type Hex } from '../sim/hex';
 import {
   PLAYERS,
   type Order,
@@ -64,6 +65,23 @@ function viewFor(player: PlayerId): VisibleGameState {
 }
 
 /** Every event of one kind in a player's log, narrowed. */
+/**
+ * A legal shot that lands this round: the first hex the UI offers within
+ * `missileSpeed`. Read from `launchTargets` rather than written as "three hexes
+ * north", because since line of fire (§10, 2026-09-28) a fixed offset can be
+ * behind a ridge on the generated board.
+ */
+function shortShot(launcher: { position: Hex; id: string }): Hex {
+  const view = viewFor('p1');
+  const unit = view.units.find((u) => u.id === launcher.id);
+  if (!unit) throw new Error('launcher is not p1’s');
+  const hex = launchTargets(view, unit).find(
+    (h) => distance(h, unit.position) <= RULES.missileSpeed,
+  );
+  if (!hex) throw new Error('no short clear shot on this board');
+  return hex;
+}
+
 function eventsOfKind<K extends VisibleEvent['type']>(
   player: PlayerId,
   type: K,
@@ -176,12 +194,10 @@ describe('resolveRound', () => {
     const launcher = viewFor('p1').units.find((unit) => unit.kind === 'launcher');
     if (!launcher) throw new Error('p1 has no launcher');
 
-    const origin = axialToOffset(launcher.position);
     const order: Order = {
       type: 'LAUNCH',
       unitId: launcher.id,
-      // Three hexes north — well inside range 6, and on the map from row 16.
-      target: offsetToAxial({ col: origin.col, row: origin.row - 3 }),
+      target: shortShot(launcher),
     };
 
     // Drafted through the real order builder, not handed straight to the round
@@ -208,12 +224,11 @@ describe('resolveRound', () => {
   it('expires a launcher contact after one order phase', () => {
     const launcher = viewFor('p1').units.find((unit) => unit.kind === 'launcher');
     if (!launcher) throw new Error('p1 has no launcher');
-    const origin = axialToOffset(launcher.position);
 
     setOrder({
       type: 'LAUNCH',
       unitId: launcher.id,
-      target: offsetToAxial({ col: origin.col, row: origin.row - 3 }),
+      target: shortShot(launcher),
     });
     resolveRound();
     expect(viewFor('p2').intel.contacts).toHaveLength(1);
