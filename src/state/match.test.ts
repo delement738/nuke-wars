@@ -42,7 +42,7 @@ import {
 // (a client has exactly one match), so this is the reset.
 //
 // `newMatch` alone now leaves the client on the setup screen (build-order step
-// 10b) — a match does not exist until someone has placed four assets. These
+// 10b) — a match does not exist until someone has placed all three assets. These
 // tests are about playing, so they take the sandbox fixture's setup and start.
 // `setup-placement.test.ts` covers the screen this skips.
 beforeEach(() => {

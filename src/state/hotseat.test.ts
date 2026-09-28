@@ -53,7 +53,7 @@ function placedCount(player: PlayerId): number {
   return placementSetup(state().placed[player]).length;
 }
 
-/** Fill the active seat's roster by clicking the first legal hex four times. */
+/** Fill the active seat's roster by clicking the first legal hex once per slot. */
 function placeRoster(): void {
   for (let i = 0; i < ROSTER_SIZE; i++) placeHex(targets()[0]);
 }

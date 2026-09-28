@@ -11,7 +11,7 @@
 // an asset already on the board moves to wherever you click next — placement
 // order is free (§12, changed 2026-08-13), so the roster is a list of things you
 // own rather than a sequence you march through. The panel pre-selects the next
-// empty slot after each placement, so clicking four times in a row still works
+// empty slot after each placement, so clicking in a row still works
 // without ever touching this list.
 //
 // There is no click handler for the board here. The board is the input device,
