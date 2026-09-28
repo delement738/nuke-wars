@@ -793,7 +793,7 @@ export function resolveRound(): void {
   // was just played.
   const round = truth.round;
 
-  const { seed, seats, difficulty, draft } = matchStore.getState();
+  const { seed, seats, difficulty, draft, logs } = matchStore.getState();
 
   // One question, asked of every seat: what are this player's orders? A human
   // seat answers from its draft and a CPU seat decides on the spot — and the
@@ -809,6 +809,9 @@ export function resolveRound(): void {
             difficulty,
             player,
             makeRng(seed * 100000 + round),
+            // The seat's own filtered history — the same log the HUD shows a
+            // human in that seat, so the CPU remembers only what a human could.
+            logs[player].map((entry) => entry.event),
           );
   }
 

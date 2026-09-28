@@ -27,6 +27,7 @@ import {
   type PlayerId,
   type Unit,
   type UnitKind,
+  type VisibleEvent,
   type VisibleGameState,
   type VisiblePlayerIntel,
   type VisibleStaticReveal,
@@ -34,6 +35,7 @@ import {
 import { filterForPlayer } from '../sim/visibility';
 import {
   cpuOrders,
+  droneDangerHexes,
   nextSweepWaypoint,
   pickAdvanceDestination,
   SAFETY_DETOUR_TOLERANCE,
@@ -718,5 +720,127 @@ describe('site-seeking movement', () => {
 
     expect(launch).toBeDefined();
     expect(hexKey((launch as Extract<Order, { type: 'LAUNCH' }>).target)).toBe(hexKey(site));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The drone remembers where it was shot down (2026-09-27)
+// ---------------------------------------------------------------------------
+
+describe('drone memory — droneDangerHexes', () => {
+  const map = plainsMap();
+  const R = RULES.interceptorCoverageRadius;
+  const death = offsetToAxial({ col: 8, row: 3 });
+  const downed = (owner: PlayerId, hex: Hex = death): VisibleEvent => ({
+    type: 'DRONE_DOWNED',
+    unitId: `${owner}-drone`,
+    owner,
+    hex,
+  });
+
+  it('marks every hex any candidate base could cover: the 2R disc about the death hex', () => {
+    const danger = droneDangerHexes(makeView(map, []), [downed('p1')], 'p1');
+    for (let col = 0; col < map.width; col++) {
+      for (let row = 0; row < map.height; row++) {
+        const hex = offsetToAxial({ col, row });
+        expect(danger.has(hexKey(hex))).toBe(distance(hex, death) <= 2 * R);
+      }
+    }
+  });
+
+  it('ignores the ENEMY drone dying — DRONE_DOWNED is public, and it says nothing about their bases', () => {
+    expect(droneDangerHexes(makeView(map, []), [downed('p2')], 'p1').size).toBe(0);
+  });
+
+  it('forgets a clue once an enemy base is publicly destroyed within R of it', () => {
+    const killed: VisibleEvent = {
+      type: 'UNIT_DESTROYED',
+      unitId: 'p2-interceptor-1',
+      kind: 'interceptor',
+      hex: death,
+    };
+    expect(droneDangerHexes(makeView(map, []), [downed('p1'), killed], 'p1').size).toBe(0);
+  });
+
+  it('does NOT forget when the destroyed base was one of our own', () => {
+    const ownBase = makeUnit('p1-interceptor-1', 'p1', 'interceptor', death);
+    const killed: VisibleEvent = {
+      type: 'UNIT_DESTROYED',
+      unitId: ownBase.id,
+      kind: 'interceptor',
+      hex: death,
+    };
+    const view = makeView(map, [{ ...ownBase, destroyed: true }]);
+    expect(droneDangerHexes(view, [downed('p1'), killed], 'p1').size).toBeGreaterThan(0);
+  });
+
+  it('marks exactly the coverage of a base it can see', () => {
+    const base = offsetToAxial({ col: 4, row: 2 });
+    const view = makeView(map, [], {
+      staticReveals: [{ hex: base, kind: 'interceptor', round: 1 }],
+    });
+    const danger = droneDangerHexes(view, [], 'p1');
+    expect(danger.size).toBe(1 + 3 * R * (R + 1));
+    expect(danger.has(hexKey(base))).toBe(true);
+  });
+});
+
+describe('drone memory — the sweep flies around a known death', () => {
+  const map = plainsMap();
+  const player: PlayerId = 'p1';
+
+  function flyOrder(drone: Unit, history: readonly VisibleEvent[], difficulty: CpuDifficulty) {
+    const view = makeView(map, [drone]);
+    const fly = cpuOrders(view, difficulty, player, makeRng(1), history).find(
+      (o) => o.type === 'FLY',
+    );
+    return fly as Extract<Order, { type: 'FLY' }> | undefined;
+  }
+
+  it('re-routes a flight that would re-enter the disc where it died', () => {
+    const drone = makeUnit('D1', player, 'drone', offsetToAxial(SPAWNS[player].drone));
+    for (const difficulty of ['medium', 'hard'] as const) {
+      const naive = flyOrder(drone, [], difficulty)!;
+      const path = hexLine(drone.position, naive.destination);
+      // Kill the drone at the far end of the route it would otherwise fly.
+      const death = path[path.length - 1];
+      const history: VisibleEvent[] = [
+        { type: 'DRONE_DOWNED', unitId: 'D1', owner: player, hex: death },
+      ];
+      const danger = droneDangerHexes(makeView(map, [drone]), history, player);
+      // Sanity: without memory the drone flies straight back into it.
+      expect(path.slice(1).some((h) => danger.has(hexKey(h)))).toBe(true);
+
+      const remembered = flyOrder(drone, history, difficulty);
+      expect(remembered).toBeDefined();
+      const safePath = hexLine(drone.position, remembered!.destination).slice(1);
+      expect(safePath.some((h) => danger.has(hexKey(h)))).toBe(false);
+      expect(validateFly(believedStateFor(map, [drone]), player, remembered!).legal).toBe(true);
+    }
+  });
+
+  it('hovers rather than flying when every possible flight enters danger', () => {
+    // Died on the very hex it now hovers over: every neighbour is suspect, so
+    // no flight of any length can leave without entering the disc.
+    const drone = makeUnit('D1', player, 'drone', offsetToAxial({ col: 8, row: 3 }));
+    const history: VisibleEvent[] = [
+      { type: 'DRONE_DOWNED', unitId: 'D1', owner: player, hex: drone.position },
+    ];
+    for (const difficulty of ['medium', 'hard'] as const) {
+      expect(flyOrder(drone, history, difficulty)).toBeUndefined();
+    }
+  });
+
+  it('EASY does not read the log — memory is the sweep, and EASY has no sweep', () => {
+    const drone = makeUnit('D1', player, 'drone', offsetToAxial({ col: 8, row: 3 }));
+    const history: VisibleEvent[] = [
+      { type: 'DRONE_DOWNED', unitId: 'D1', owner: player, hex: drone.position },
+    ];
+    const view = makeView(map, [drone]);
+    for (let seed = 1; seed <= 10; seed++) {
+      expect(cpuOrders(view, 'easy', player, makeRng(seed), history)).toEqual(
+        cpuOrders(view, 'easy', player, makeRng(seed)),
+      );
+    }
   });
 });

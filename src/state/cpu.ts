@@ -47,7 +47,16 @@
 //
 // MEDIUM and HARD share one recon behaviour, because searching the enemy home
 // zone is not a difficulty setting — a drone that does not search is simply
-// broken. Both fly the serpentine tour in `sweepLanes`.
+// broken. Both fly the serpentine tour in `sweepLanes`, steering around every
+// hex their own event log says a hidden base might cover (`droneDangerHexes`).
+//
+// **The one exception to "stateless": the player's own event log.** `cpuOrders`
+// still remembers nothing it decided, but it may be handed the log its seat has
+// received so far — the same permanent, filtered history a human reads in the
+// HUD (spec §6). Without it the drone was re-flying the same route into the same
+// bubble after every respawn: measured 2026-09-27, 180 of 273 HARD drone deaths
+// (66%) were on a hex that drone had already died on. That is not a difficulty
+// setting either; a human stops doing it after the first loss.
 
 import { RULES, UNIT_DEFS } from '../sim/defs';
 import {
@@ -55,6 +64,7 @@ import {
   compareHex,
   distance,
   hexKey,
+  hexLine,
   hexesInRange,
   offsetToAxial,
   type Hex,
@@ -74,6 +84,7 @@ import {
   type Order,
   type PlayerId,
   type Unit,
+  type VisibleEvent,
   type VisibleGameState,
 } from '../sim/types';
 import { believedState, knownEnemyHexes } from './belief';
@@ -185,6 +196,62 @@ export function nextSweepWaypoint(from: Hex, lanes: readonly Hex[]): Hex {
   }
   if (distance(from, lanes[nearest]) > UNIT_DEFS.drone.movement) return lanes[nearest];
   return lanes[(nearest + 1) % lanes.length];
+}
+
+/**
+ * Every hex this player's drone should refuse to enter, read off its own event
+ * history and its own intel — never anything a human in the seat could not see.
+ *
+ * Two sources, both of which a human would use:
+ *   - **A drone of ours was downed at hex H** (`DRONE_DOWNED`, spec §6/§11). The
+ *     killing base is one of the hexes within `interceptorCoverageRadius` of H,
+ *     so every hex that ANY of those candidates could cover is suspect — the
+ *     disc of radius `2 * R` about H. Conservative on purpose: the heuristic has
+ *     no way to intersect clues cleverly, and losing some sweep coverage costs
+ *     far less than two blind rounds.
+ *   - **A base we can see** (a static reveal of kind `interceptor`). Its exact
+ *     coverage, radius `R`. At the shipped radii recon never photographs a base
+ *     (CLAUDE.md gotcha 20), so this is dormant today; it becomes live the moment
+ *     a rules change makes bases visible.
+ *
+ * A clue is dropped once a base is publicly destroyed within `R` of it — the kill
+ * may have been the base that shot us down. It may also have been the other one;
+ * the heuristic accepts re-learning that the hard way over a region closed
+ * forever by a base that no longer exists.
+ *
+ * Only `DRONE_DOWNED` events naming `player` count: the event is public, and the
+ * enemy's drone dying over our own bases says nothing about theirs.
+ */
+export function droneDangerHexes(
+  view: VisibleGameState,
+  history: readonly VisibleEvent[],
+  player: PlayerId,
+): Set<string> {
+  const R = RULES.interceptorCoverageRadius;
+
+  const deaths: Hex[] = [];
+  const deadBases: Hex[] = [];
+  for (const event of history) {
+    if (event.type === 'DRONE_DOWNED' && event.owner === player) deaths.push(event.hex);
+    if (
+      event.type === 'UNIT_DESTROYED' &&
+      event.kind === 'interceptor' &&
+      !view.units.some((u) => u.id === event.unitId)
+    ) {
+      deadBases.push(event.hex);
+    }
+  }
+
+  const danger = new Set<string>();
+  for (const death of deaths) {
+    if (deadBases.some((base) => distance(base, death) <= R)) continue;
+    for (const hex of hexesInRange(death, 2 * R)) danger.add(hexKey(hex));
+  }
+  for (const reveal of view.intel.staticReveals) {
+    if (reveal.kind !== 'interceptor') continue;
+    for (const hex of hexesInRange(reveal.hex, R)) danger.add(hexKey(hex));
+  }
+  return danger;
 }
 
 // ---------------------------------------------------------------------------
@@ -508,14 +575,26 @@ function reactiveDroneOrder(
   believed: GameState,
   player: PlayerId,
   drone: Unit,
+  danger: ReadonlySet<string>,
 ): Order | null {
-  const waypoint = nextSweepWaypoint(
-    drone.position,
-    sweepLanes(player, believed.map.width),
-  );
+  // Waypoints inside known danger are unreachable without dying, so the tour
+  // skips them. If every waypoint is suspect (never, at shipped numbers) the
+  // full tour is kept rather than grounding the drone for the match.
+  const tour = sweepLanes(player, believed.map.width);
+  const safeTour = tour.filter((hex) => !danger.has(hexKey(hex)));
+  const waypoint = nextSweepWaypoint(drone.position, safeTour.length > 0 ? safeTour : tour);
+
+  // A destination is safe only if its whole flight is: coverage kills on
+  // ENTRY to any hex (spec §10), so the path is checked, not the endpoint. The
+  // start hex is exempt — a drone is never killed where it already hovers.
+  const flightIsSafe = (hex: Hex): boolean =>
+    hexLine(drone.position, hex)
+      .slice(1)
+      .every((step) => !danger.has(hexKey(step)));
 
   const candidates = hexesInRange(drone.position, UNIT_DEFS.drone.movement).filter(
-    (hex) => hexKey(hex) !== hexKey(drone.position) && onMap(believed.map, hex),
+    (hex) =>
+      hexKey(hex) !== hexKey(drone.position) && onMap(believed.map, hex) && flightIsSafe(hex),
   );
 
   let best: { hex: Hex; score: number } | null = null;
@@ -529,6 +608,8 @@ function reactiveDroneOrder(
       best = { hex, score };
     }
   }
+  // No safe flight at all: hover. Hovering is always safe (coverage kills on
+  // entry only) and still photographs this hex's corridor (spec §11).
   if (!best) return null;
 
   const order: Order = { type: 'FLY', unitId: drone.id, destination: best.hex };
@@ -654,12 +735,19 @@ function deadHandOrders(
  * replays identically at a fixed seed, matching the rest of this codebase's
  * determinism discipline even though `src/state/` is not bound by the sim's
  * stricter "no Math.random()" rule (CLAUDE.md).
+ *
+ * `history` is this seat's own filtered event log so far — exactly what
+ * `filterEventsForPlayer` has handed that player, never the raw log. It defaults
+ * to empty ("remembers nothing"), which is what unit tests of a single round
+ * want; every caller playing a real match MUST pass it, or the drone goes back
+ * to dying on the same hex (the soak harness's repeat-death line is the check).
  */
 export function cpuOrders(
   view: VisibleGameState,
   difficulty: CpuDifficulty,
   player: PlayerId,
   rng: Rng,
+  history: readonly VisibleEvent[] = [],
 ): Order[] {
   if (view.phase === 'DEAD_HAND_PHASE') {
     // Spec §3: only the decapitated player orders anything this round: "the
@@ -711,7 +799,7 @@ export function cpuOrders(
     const order =
       difficulty === 'easy'
         ? easyDroneOrder(believed, player, drone, rng)
-        : reactiveDroneOrder(believed, player, drone);
+        : reactiveDroneOrder(believed, player, drone, droneDangerHexes(view, history, player));
     if (order) orders.push(order);
   }
 
