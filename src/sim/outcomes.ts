@@ -88,15 +88,21 @@ function bunkerDestroyed(units: readonly Unit[], player: PlayerId): boolean {
 }
 
 /**
- * Whether this player has lost every launcher they ever had (§4 row 5).
+ * Whether this player has lost every launcher they ever had AND has nothing left
+ * in the air (§4 row 5).
  *
  * The `length > 0` guard is the "absence is not destruction" rule from the
  * header: a board with no launchers on it at all — every test fixture that only
  * cares about drones, say — is not a disarmament, it is a board with no
  * launchers on it.
  */
-function isDisarmed(units: readonly Unit[], player: PlayerId): boolean {
-  const all = launchersOf(units, player);
+function isDisarmed(state: GameState, player: PlayerId): boolean {
+  // A missile still in the air is offensive capability (§4, ruled 2026-09-27
+  // with flight time): its launcher may be dead, but a kill-shot can be mid-air.
+  // Without this, a verdict issued while it flies would void a winning missile.
+  if (state.missiles.some((m) => m.owner === player)) return false;
+
+  const all = launchersOf(state.units, player);
   return all.length > 0 && all.every((u) => u.destroyed);
 }
 
@@ -157,7 +163,7 @@ export function adjudicate(state: GameState): Adjudication {
   // capability and loses immediately (§1), so the game can never continue into a
   // later round with one still standing at zero. "In the same round" in §4's
   // wording is therefore descriptive, not an extra condition to test.
-  const disarmed = PLAYERS.filter((p) => isDisarmed(state.units, p));
+  const disarmed = PLAYERS.filter((p) => isDisarmed(state, p));
   if (disarmed.length === 2) {
     return { type: 'OUTCOME', outcome: { type: 'MUTUAL_DISARMAMENT' } };
   }

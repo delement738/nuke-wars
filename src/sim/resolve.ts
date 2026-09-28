@@ -43,7 +43,6 @@ import {
   flyMissiles,
   validateLaunch,
   type Interception,
-  type Missile,
 } from './missiles';
 import { validateMarch, validateMove, type MoveIllegalReason } from './movement';
 import { adjudicate, type Adjudication } from './outcomes';
@@ -53,6 +52,7 @@ import {
   opponentOf,
   type GameEvent,
   type GameState,
+  type Missile,
   type LauncherContact,
   type Order,
   type PlayerId,
@@ -330,8 +330,16 @@ function runDroneRespawns(state: GameState): {
 // ---------------------------------------------------------------------------
 
 /**
- * Resolution phase 2 — every missile fires and flies at once, and interceptor
- * bases engage what they can reach (spec §10).
+ * Resolution phase 2 — every missile fires, every missile in the air advances
+ * `RULES.missileSpeed` hexes at once, and interceptor bases engage what they can
+ * reach (spec §10).
+ *
+ * "Every missile in the air" means this round's launches **and** the ones carried
+ * in `state.missiles` from earlier rounds, both owners' — including in the
+ * dead-hand round, which is how a missile fired before a decapitation can still
+ * land during it and turn the result into Mutual Annihilation (§3). Only the new
+ * launches produce `LAUNCH_DETECTED`; a carried missile was announced the round
+ * it left the ground.
  *
  * Two things happen here that are easy to read past. First, **every launch is
  * detected, by both players, always** — launches are loud, detection needs no
@@ -350,7 +358,8 @@ function runLaunchPhase(
   orders: OrderBook,
 ): {
   intel: Record<PlayerId, PlayerIntel>;
-  survivors: Missile[];
+  arrived: Missile[];
+  inFlight: Missile[];
   events: GameEvent[];
 } {
   const unitsById = new Map(state.units.map((unit) => [unit.id, unit]));
@@ -373,8 +382,9 @@ function runLaunchPhase(
     }
   }
 
-  // Canonical order is by origin hex, never by the order either client listed
-  // its launches and never by launcher id (see `canonicalOrder` in missiles.ts).
+  // Canonical order is launch round then origin hex (every missile here shares
+  // this round, so origin hex decides), never the order either client listed
+  // its launches and never launcher id (see `canonicalOrder` in missiles.ts).
   // Adjudication and emission share it, so the log is byte-identical for the
   // same physical round no matter how a client sorted its submission (§6).
   const missiles = canonicalOrder(fired);
@@ -394,14 +404,23 @@ function runLaunchPhase(
   // Emitted after every LAUNCH_DETECTED because that is the order it happened
   // in: the whole volley leaves the ground, then the defenses engage it.
   // Interceptions are already chronological within themselves (by flight step).
-  const flights = flyMissiles(state.units, missiles);
+  // Carried missiles fly alongside the new ones — flyMissiles puts the whole
+  // set into canonical order (oldest launch first) itself.
+  const flights = flyMissiles(state.units, [...state.missiles, ...missiles]);
   for (const { missile, hex } of flights.interceptions) {
     events.push({ type: 'MISSILE_INTERCEPTED', missileId: missile.id, hex });
   }
 
+  // Every interception exposes its base, whichever round of its flight the
+  // missile was in — a second-round intercept is just as loud as a first (§10).
   events.push(...exposeInterceptingBases(intel, flights.interceptions, state.round));
 
-  return { intel, survivors: flights.survivors, events };
+  return {
+    intel,
+    arrived: flights.arrived,
+    inFlight: flights.inFlight,
+    events,
+  };
 }
 
 /**
@@ -469,7 +488,9 @@ function forgetDestroyed(intel: PlayerIntel, unit: Unit): void {
 }
 
 /**
- * Resolution phase 3 — surviving missiles land simultaneously (spec §3).
+ * Resolution phase 3 — the missiles that completed their path this round land
+ * simultaneously (spec §3). Missiles still in flight are not here; they land in
+ * a later round's phase 3.
  *
  * Damage is totalled **per hex** before anything is applied, because hits stack
  * within a round: two missiles on one full-health bunker deal 2 and destroy it
@@ -490,23 +511,23 @@ function forgetDestroyed(intel: PlayerIntel, unit: Unit): void {
  */
 function runImpactPhase(
   state: GameState,
-  survivors: readonly Missile[],
+  arrived: readonly Missile[],
 ): {
   units: Unit[];
   intel: Record<PlayerId, PlayerIntel>;
   events: GameEvent[];
 } {
-  if (survivors.length === 0) {
+  if (arrived.length === 0) {
     return { units: state.units, intel: state.intel, events: [] };
   }
 
-  const events: GameEvent[] = survivors.map((missile) => ({
+  const events: GameEvent[] = arrived.map((missile) => ({
     type: 'IMPACT',
     missileId: missile.id,
     hex: missile.target,
   }));
 
-  const damage = damageByHex(survivors);
+  const damage = damageByHex(arrived);
   const intel = copyIntel(state.intel);
   const units: Unit[] = [];
 
@@ -885,6 +906,9 @@ function endRound(
     };
   }
 
+  // Missiles still in the air stay in `working.missiles`, frozen: a round that
+  // ends at phase 4 stops there (§3), so they are never advanced again and no
+  // IMPACT follows GAME_OVER for a client to animate.
   events.push({ type: 'GAME_OVER', outcome: verdict.outcome });
   return {
     state: { ...working, phase: 'GAME_OVER', outcome: verdict.outcome },
@@ -895,7 +919,9 @@ function endRound(
 /**
  * The dead-hand round (spec §3): the decapitated player's final volley.
  *
- * **Launches only** — phases 2 and 3, then adjudication. There is no recon
+ * **Launches only** — phases 2 and 3, then adjudication. Unlike a normal round,
+ * phases 2 and 3 repeat until no missile is left in the air (flight time, §10):
+ * the match ends here, so every flight must finish first. There is no recon
  * phase, no ground movement, and no respawn tick, which is exactly why step 6
  * built `runLaunchPhase` and `runImpactPhase` to take a state and hand back a
  * result: this function calls the pair directly instead of re-entering a round.
@@ -933,14 +959,37 @@ function resolveDeadHand(
   let working: GameState = state;
 
   // --- Phase 2: launch & interception (spec §10) -------------------------------
+  // Advances BOTH players' carried missiles, not just the retaliating side's
+  // (§3): the opponent gives no orders this round, but what they already fired
+  // is still in the air.
   const launches = runLaunchPhase(working, orders);
-  working = { ...working, intel: launches.intel };
+  working = { ...working, intel: launches.intel, missiles: launches.inFlight };
   events.push(...launches.events);
 
   // --- Phase 3: impact (spec §3) -----------------------------------------------
-  const impacts = runImpactPhase(working, launches.survivors);
+  const impacts = runImpactPhase(working, launches.arrived);
   working = { ...working, units: impacts.units, intel: impacts.intel };
   events.push(...impacts.events);
+
+  // --- Flights to completion (spec §3, §10 — ruled 2026-09-27) -------------------
+  // This is the last round there will ever be, so nothing may be left aloft: a
+  // range-5 retaliation would otherwise be a missile that cannot matter. Every
+  // missile still flying — both owners' — gets further phase 2 → 3 passes until
+  // it lands or is shot down. Each pass is a full round's worth of flight, so
+  // base capacity resets per pass exactly as it does between rounds, and a base
+  // destroyed by one pass's impacts no longer defends in the next. No orders:
+  // both books are empty, so no new LAUNCH_DETECTED is emitted. Terminates
+  // because every pass advances every surviving missile at least one hex.
+  const noOrders: OrderBook = { p1: empty, p2: empty };
+  while (working.missiles.length > 0) {
+    const pass = runLaunchPhase(working, noOrders);
+    working = { ...working, intel: pass.intel, missiles: pass.inFlight };
+    events.push(...pass.events);
+
+    const landed = runImpactPhase(working, pass.arrived);
+    working = { ...working, units: landed.units, intel: landed.intel };
+    events.push(...landed.events);
+  }
 
   // --- Adjudication (spec §4) --------------------------------------------------
   // Always terminal: this round only exists because a real bunker was destroyed,
@@ -1027,15 +1076,16 @@ export function resolve(
   // Files LAUNCH-sourced launcher contacts on top of the recon contacts phase 1
   // just rebuilt, so a launcher that both fired and was photographed is one
   // hex-keyed entry, not two (spec §11).
+  // Long shots come back as `inFlight` and ride in state into the next round.
   const launches = runLaunchPhase(working, orders);
-  working = { ...working, intel: launches.intel };
+  working = { ...working, intel: launches.intel, missiles: launches.inFlight };
   events.push(...launches.events);
 
   // --- Phase 3: impact (spec §3, §12) ------------------------------------------
   // Runs against the board phase 2 left, and hands phase 5 a post-impact one —
   // §9's "movement is applied against the post-impact state" is true by
   // construction here, not a rule anyone has to remember.
-  const impacts = runImpactPhase(working, launches.survivors);
+  const impacts = runImpactPhase(working, launches.arrived);
   working = { ...working, units: impacts.units, intel: impacts.intel };
   events.push(...impacts.events);
 

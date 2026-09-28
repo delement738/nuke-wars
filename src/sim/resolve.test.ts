@@ -65,6 +65,7 @@ function makeState(map: MapData, units: Unit[]): GameState {
     },
     droneRespawnIn: { p1: 0, p2: 0 },
     deadHandFor: null,
+    missiles: [],
     outcome: null,
   };
 }
@@ -607,11 +608,12 @@ describe('resolve() — phase 2: launch & interception', () => {
     // without it a base is unkillable, because any missile aimed at one must
     // cross its own coverage to get there.
     expect(RULES.interceptsPerRound).toBe(1);
-    const south = north(CENTER, -1);
+    // Both shots within RULES.missileSpeed, so both resolve this round.
+    const behind = north(CENTER, 1);
     const victim = north(CENTER, 4);
     const state = openField([
       makeUnit('a', 'p1', 'launcher', CENTER),
-      makeUnit('b', 'p1', 'launcher', south),
+      makeUnit('b', 'p1', 'launcher', behind),
       makeUnit('base', 'p2', 'interceptor', north(CENTER, 2)),
       makeUnit('z', 'p2', 'launcher', victim),
     ]);
@@ -1699,7 +1701,8 @@ describe('resolve() — phase 4 and the dead-hand round', () => {
   });
 
   it('both bunkers destroyed in one impact phase is a draw, with no final round', () => {
-    const p1Site = north(CENTER, -1);
+    // Range 4 from P2_GUN, so p2's answer lands the same round as p1's shot.
+    const p1Site = north(CENTER, 1);
     const state = openField([
       makeUnit('a', 'p1', 'launcher', CENTER),
       hurtBunker('p1', p1Site),

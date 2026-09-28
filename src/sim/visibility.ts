@@ -156,6 +156,18 @@ export function filterForPlayer(
     intel: filterIntel(state.intel[playerId]),
     droneRespawnIn: state.droneRespawnIn[playerId],
     deadHandFor: state.deadHandFor,
+    // Both players' flights, because every one was announced to both by
+    // LAUNCH_DETECTED (§6, §10). Rebuilt field by field rather than spread, so
+    // `launcherId` cannot ride along: an enemy launcher identity is the leak
+    // §11 keys all intel by hex to prevent.
+    missiles: state.missiles.map((m) => ({
+      id: m.id,
+      owner: m.owner,
+      origin: m.origin,
+      target: m.target,
+      launchRound: m.launchRound,
+      traveled: m.traveled,
+    })),
     outcome: state.outcome,
   };
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { RULES, UNIT_DEFS } from './defs';
 import { offsetToAxial, type Hex } from './hex';
 import type { MapData } from './map';
+import { createMissile } from './missiles';
 import { adjudicate, livingLaunchers } from './outcomes';
 import type { GamePhase, GameState, PlayerId, Unit, UnitKind } from './types';
 
@@ -55,6 +56,7 @@ function board(units: Unit[], overrides: Partial<GameState> = {}): GameState {
     },
     droneRespawnIn: { p1: 0, p2: 0 },
     deadHandFor: null,
+    missiles: [],
     outcome: null,
     ...overrides,
   };
@@ -229,6 +231,25 @@ describe('adjudicate() — launcher outcomes', () => {
     expect(adjudicate(board(units))).toEqual({
       type: 'OUTCOME',
       outcome: { type: 'MUTUAL_DISARMAMENT' },
+    });
+  });
+
+  it('a missile still in the air is offensive capability — not disarmed (ruling 2026-09-27)', () => {
+    // p2 has lost every launcher but has a missile aloft (flight time, §10), so
+    // the match goes on; with nothing in the air the same board is a loss.
+    const units = [
+      unit('p1', 'bunker'),
+      ...launchers('p1'),
+      unit('p2', 'bunker'),
+      ...launchers('p2', true),
+    ];
+    const aloft = createMissile(1, units[4], HEX); // a dead p2 launcher
+
+    expect(adjudicate(board(units, { missiles: [aloft] }))).toEqual({ type: 'CONTINUE' });
+    // Owner matters: a p1 missile in the air does not rescue p2.
+    expect(adjudicate(board(units, { missiles: [{ ...aloft, owner: 'p1' }] }))).toEqual({
+      type: 'OUTCOME',
+      outcome: { type: 'DISARMAMENT', winner: 'p1' },
     });
   });
 

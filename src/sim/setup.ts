@@ -403,6 +403,7 @@ export function startMatch(
     },
     droneRespawnIn: { p1: 0, p2: 0 },
     deadHandFor: null,
+    missiles: [],
     outcome: null,
   };
 }

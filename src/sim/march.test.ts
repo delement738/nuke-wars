@@ -81,6 +81,7 @@ function makeState(map: MapData, units: Unit[]): GameState {
     },
     droneRespawnIn: { p1: 0, p2: 0 },
     deadHandFor: null,
+    missiles: [],
     outcome: null,
   };
 }

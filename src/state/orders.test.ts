@@ -98,6 +98,7 @@ function makeView(
     intel: { staticReveals: [], contacts: [], ...intel },
     droneRespawnIn: 0,
     deadHandFor: null,
+    missiles: [],
     outcome: null,
     ...overrides,
   };
