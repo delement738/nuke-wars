@@ -104,7 +104,7 @@ describe('hotseat setup', () => {
     expect(matchStarted()).toBe(true);
     for (const player of PLAYERS) {
       expect(viewFor(player)!.round).toBe(1);
-      expect(viewFor(player)!.units).toHaveLength(8);
+      expect(viewFor(player)!.units).toHaveLength(7);
     }
   });
 

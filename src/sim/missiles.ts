@@ -91,10 +91,16 @@ export interface Missile {
   path: Hex[];
 }
 
-/** A missile destroyed in flight, and the hex it was destroyed over. */
+/** A missile destroyed in flight, the hex it was destroyed over, and by whom. */
 export interface Interception {
   missile: Missile;
   hex: Hex;
+  /**
+   * The base that spent its intercept. Engine bookkeeping only — resolve() uses
+   * it to expose the base to the enemy (`BASE_EXPOSED`, spec §10), and no event
+   * ever carries its id.
+   */
+  base: Unit;
 }
 
 export interface MissileFlights {
@@ -268,7 +274,7 @@ export function flyMissiles(
 
         capacity.set(base.id, left - 1);
         downed.add(missile.id);
-        interceptions.push({ missile, hex });
+        interceptions.push({ missile, hex, base });
         break;
       }
     }

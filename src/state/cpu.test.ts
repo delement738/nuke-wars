@@ -5,6 +5,7 @@ import {
   distance,
   hexKey,
   hexLine,
+  hexesInRange,
   offsetToAxial,
   type Hex,
 } from '../sim/hex';
@@ -170,11 +171,8 @@ describe('cpuOrders — invariants that hold for every difficulty', () => {
             if (order.type === 'MOVE') {
               expect(validateMove(truth, player, order)).toMatchObject({ legal: true });
             } else if (order.type === 'MARCH') {
-              // Unreachable today — `modesFor` does not offer MARCH yet, so the
-              // CPU cannot produce one (see the note in `src/state/orders.ts`).
-              // Written out rather than folded into the FLY branch so that the
-              // session which teaches the CPU to march finds this assertion
-              // already checking it against TRUE state, not a mis-typed cast.
+              // MEDIUM and HARD march on the opening advance, so this branch is
+              // live from round 1 — checked against TRUE state like the others.
               expect(validateMarch(truth, player, order)).toMatchObject({ legal: true });
             } else if (order.type === 'LAUNCH') {
               expect(validateLaunchOrder(truth, player, order)).toMatchObject({ legal: true });
@@ -279,6 +277,66 @@ describe('cpuOrders — target priority wired end to end', () => {
     expect(orders).toEqual<Order[]>([
       { type: 'LAUNCH', unitId: 'L1', target: farReveal.hex },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Exposed interceptor bases (2026-09-27) — saturate or leave alone
+// ---------------------------------------------------------------------------
+
+describe('cpuOrders — an exposed base is attacked only with a saturating volley', () => {
+  const player: PlayerId = 'p1';
+  const map = plainsMap();
+  const baseHex = offsetToAxial({ col: 8, row: 4 });
+  const exposed: VisibleStaticReveal = { hex: baseHex, kind: 'interceptor', round: 1 };
+  const needed = RULES.interceptsPerRound + 1;
+
+  function launchersAt(cols: readonly number[]): Unit[] {
+    return cols.map((col, i) =>
+      makeUnit(`L${i + 1}`, player, 'launcher', offsetToAxial({ col, row: 9 })),
+    );
+  }
+
+  function launchesAtBase(orders: readonly Order[]): string[] {
+    return orders
+      .filter((o) => o.type === 'LAUNCH' && hexKey(o.target) === hexKey(baseHex))
+      .map((o) => o.unitId);
+  }
+
+  it('the fixture puts every launcher within range of the base', () => {
+    for (const l of launchersAt([7, 8, 9])) {
+      expect(distance(l.position, baseHex)).toBeLessThanOrEqual(RULES.missileRange);
+    }
+  });
+
+  it('never wastes a lone missile on a base — it would always be intercepted', () => {
+    const view = makeView(map, launchersAt([8]), { staticReveals: [exposed] });
+    for (const difficulty of ['medium', 'hard'] as const) {
+      expect(launchesAtBase(cpuOrders(view, difficulty, player, () => 0))).toEqual([]);
+    }
+  });
+
+  it('fires exactly enough to saturate it, nearest first, when enough can reach', () => {
+    // L2 sits in the base's own column, so it is nearest; L1 and L3 tie and the
+    // id breaks it. The third launcher is left free.
+    const view = makeView(map, launchersAt([7, 8, 9]), { staticReveals: [exposed] });
+    for (const difficulty of ['medium', 'hard'] as const) {
+      const firing = launchesAtBase(cpuOrders(view, difficulty, player, () => 0));
+      expect(firing).toHaveLength(needed);
+      expect(firing).toContain('L2');
+    }
+  });
+
+  it('the dead-hand volley never aims at a base — only a bunker can change the verdict', () => {
+    const view = makeView(
+      map,
+      launchersAt([7, 8, 9]),
+      { staticReveals: [exposed] },
+      { phase: 'DEAD_HAND_PHASE', deadHandFor: player },
+    );
+    for (const difficulty of DIFFICULTIES) {
+      expect(launchesAtBase(cpuOrders(view, difficulty, player, makeRng(3)))).toEqual([]);
+    }
   });
 });
 
@@ -659,33 +717,43 @@ describe('site-seeking movement', () => {
     expect(distance(order.destination, site)).toBeLessThan(distance(start, site));
   });
 
-  it('MEDIUM ignores the site, pushes up the board, and never goes loud', () => {
+  it('MEDIUM ignores the site and pushes up the board instead', () => {
     // The tier distinction, asserted as a real behavioural difference rather
     // than trusted to a flag: MEDIUM fights the front, HARD hunts the bunker.
     const medium = advanceFrom('medium');
     expect(distance(medium.destination, site)).toBeGreaterThan(
       distance(advanceFrom('hard').destination, site),
     );
-
-    // Marching is HARD's alone. MEDIUM has no deadline to buy tempo against, so
-    // a public reveal would be a cost it gets nothing for.
-    expect(medium.type).toBe('MOVE');
   });
 
-  it('HARD does NOT march when it has no site to prosecute', () => {
-    // The other half of the policy, and the half with a measurement behind it
-    // (see `groundAdvanceOrder`): marching toward the generic front scores far
-    // better head-to-head and is an artifact of MEDIUM chasing stale contacts,
-    // not a better policy. MUTATION GUARD — relax the gate to `if (mayMarch)`
-    // and this flips to MARCH, with nothing else in the suite objecting.
-    const launcher = makeUnit('L1', player, 'launcher', start);
-    const noIntel = makeView(map, [launcher]); // no staticReveals at all
-    const order = cpuOrders(noIntel, 'hard', player, makeRng(1)).find(
+  it.each(['medium', 'hard'] as const)(
+    '%s force-marches toward the front at the opening, with no intel at all',
+    (difficulty) => {
+      // The aggressive opening (2026-09-27, see `groundAdvanceOrder`): far from
+      // the front, a march makes more progress than a walk, so it is taken.
+      // MUTATION GUARD — restore the old `goal.kind === 'site'` gate and this
+      // becomes a MOVE.
+      const launcher = makeUnit('L1', player, 'launcher', start);
+      const noIntel = makeView(map, [launcher]); // no staticReveals at all
+      const order = cpuOrders(noIntel, difficulty, player, makeRng(1)).find(
+        (o) => o.type === 'MOVE' || o.type === 'MARCH',
+      );
+
+      expect(order).toBeDefined();
+      expect(order!.type).toBe('MARCH');
+      expect(distance(order!.destination, start)).toBeGreaterThan(UNIT_DEFS.launcher.movement);
+    },
+  );
+
+  it('stops marching once it stands at the front', () => {
+    // Loud on the approach, quiet in position: at the `row` goal every
+    // destination a march could add scores no better than a walk.
+    const atFront = offsetToAxial({ col: 8, row: RULES.homeZoneRows.p2.max });
+    const launcher = makeUnit('L1', player, 'launcher', atFront);
+    const order = cpuOrders(makeView(map, [launcher]), 'hard', player, makeRng(1)).find(
       (o) => o.type === 'MOVE' || o.type === 'MARCH',
     );
-
-    expect(order).toBeDefined();
-    expect(order!.type).toBe('MOVE');
+    expect(order?.type).not.toBe('MARCH');
   });
 
   it('HARD stops marching once a plain walk already reaches firing range', () => {
@@ -772,6 +840,73 @@ describe('drone memory — droneDangerHexes', () => {
     };
     const view = makeView(map, [{ ...ownBase, destroyed: true }]);
     expect(droneDangerHexes(view, [downed('p1'), killed], 'p1').size).toBeGreaterThan(0);
+  });
+
+  it('keeps candidates inside the enemy home zone — bases are placed there (§12)', () => {
+    // Died on the zone's near edge: half the disc about it is neutral ground no
+    // base can stand on, so nothing could cover the far side of that half.
+    const edge = offsetToAxial({ col: 8, row: RULES.homeZoneRows.p2.max });
+    const danger = droneDangerHexes(makeView(map, []), [downed('p1', edge)], 'p1');
+    const deepOutside = offsetToAxial({ col: 8, row: RULES.homeZoneRows.p2.max + 2 * R });
+
+    expect(distance(edge, deepOutside)).toBe(2 * R);
+    expect(danger.has(hexKey(deepOutside))).toBe(false);
+    expect(danger.has(hexKey(edge))).toBe(true);
+  });
+
+  it('rules out candidates near hexes our drone transmitted from safely', () => {
+    // An earlier flight crossed the column north of the death hex and lived, so
+    // no base sits within R of that path.
+    const flew: VisibleEvent = {
+      type: 'DRONE_MOVED',
+      unitId: 'p1-drone',
+      owner: 'p1',
+      from: offsetToAxial({ col: 2, row: 0 }),
+      to: offsetToAxial({ col: 14, row: 0 }),
+      path: hexLine(offsetToAxial({ col: 2, row: 0 }), offsetToAxial({ col: 14, row: 0 })),
+    };
+    const without = droneDangerHexes(makeView(map, []), [downed('p1')], 'p1');
+    const withFlight = droneDangerHexes(makeView(map, []), [flew, downed('p1')], 'p1');
+
+    expect(withFlight.size).toBeLessThan(without.size);
+    // Still covers the death hex: the killer covered it, wherever it is.
+    expect(withFlight.has(hexKey(death))).toBe(true);
+  });
+
+  it('intersects two deaths — one base must explain both', () => {
+    // Deaths 2R apart: the only candidate within R of both is the midpoint.
+    const north = offsetToAxial({ col: 8, row: 3 - R });
+    const south = offsetToAxial({ col: 8, row: 3 + R });
+    const danger = droneDangerHexes(
+      makeView(map, []),
+      [downed('p1', north), downed('p1', south)],
+      'p1',
+    );
+
+    expect(RULES.placementCounts.interceptor).toBe(1);
+    expect(danger).toEqual(new Set(hexesInRange(death, R).map(hexKey)));
+  });
+
+  it('falls back to the union when two deaths cannot share a base', () => {
+    const west = offsetToAxial({ col: 2, row: 2 });
+    const east = offsetToAxial({ col: 13, row: 2 });
+    expect(distance(west, east)).toBeGreaterThan(2 * R);
+
+    const danger = droneDangerHexes(makeView(map, []), [downed('p1', west), downed('p1', east)], 'p1');
+    expect(danger.has(hexKey(west))).toBe(true);
+    expect(danger.has(hexKey(east))).toBe(true);
+  });
+
+  it('a death a visible base explains adds nothing beyond that base’s coverage', () => {
+    const base = offsetToAxial({ col: 8, row: 2 });
+    const view = makeView(map, [], {
+      staticReveals: [{ hex: base, kind: 'interceptor', round: 1 }],
+    });
+    expect(distance(base, death)).toBeLessThanOrEqual(R);
+
+    expect(droneDangerHexes(view, [downed('p1')], 'p1')).toEqual(
+      new Set(hexesInRange(base, R).map(hexKey)),
+    );
   });
 
   it('marks exactly the coverage of a base it can see', () => {

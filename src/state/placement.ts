@@ -22,7 +22,7 @@
 // holes in your own overlay (CLAUDE.md gotcha 30).
 //
 // **The roster is modelled as SLOTS, not as a sequence** (2026-08-13). Placement
-// order is free (§12), so the player picks which of their four assets they are
+// order is free (§12), so the player picks which of their assets they are
 // positioning; a slot is the thing they pick, and it is filled or empty rather
 // than pending or done. Every function below is keyed by slot id for that
 // reason, and a slot that already holds an asset can be pointed at a new hex —
@@ -52,7 +52,7 @@ const ROSTER: readonly PlaceableKind[] = PLACEMENT_ORDER.flatMap((kind) =>
   Array.from({ length: RULES.placementCounts[kind] }, () => kind),
 );
 
-/** How many assets a complete setup places — 1 bunker + 1 decoy + 2 bases (§7). */
+/** How many assets a complete setup places — 1 bunker + 1 decoy + 1 base (§7). */
 export const ROSTER_SIZE = ROSTER.length;
 
 /**

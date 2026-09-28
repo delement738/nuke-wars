@@ -393,10 +393,33 @@ export type GameEvent =
   /**
    * Public, so firing cheap probes to map defense lanes is legitimate strategy
    * (spec §10). Names no interceptor base: the defender knows which of theirs
-   * fired, and the attacker learns only that *some* base covers `hex`, i.e. it
-   * is one of 7 candidates. Bases are marked on a map only by recon.
+   * fired, and the attacker learns only that *some* base covers `hex`. The
+   * first interception by a base is followed by `BASE_EXPOSED`, which is what
+   * actually marks it on the attacker's map (§10).
    */
   | { type: 'MISSILE_INTERCEPTED'; missileId: MissileId; hex: Hex }
+  /**
+   * An interceptor base gave itself away by shooting down a missile, and is now
+   * on the enemy's map for good (spec §10, §11 — added 2026-09-27).
+   *
+   * Intercepting is the defender's **loud action**, as launching and
+   * forced-marching are the attacker's: a base that kills only drones stays
+   * hidden, and the first missile it stops exposes it. Fires ONCE per base — on
+   * the first interception that finds the base missing from the enemy's
+   * permanent intel. Later intercepts change nothing, so they emit nothing.
+   *
+   * Public, like every other loud action. The attacker needs it to update their
+   * map, and the defender deserves the warning that their base is now known.
+   *
+   * Carries the hex and NO unit id, deliberately. The hex is all the attacker's
+   * map keys on (§11), and a unit id in a public event is the trackable identity
+   * §6 keeps out of every other one. `owner` is the base's side — both
+   * recipients could derive it, as with `MARCH_DETECTED`.
+   *
+   * Emitted after every `MISSILE_INTERCEPTED` of the round, in ascending hex
+   * order: it is public, so it is ordered by something already public (§9).
+   */
+  | { type: 'BASE_EXPOSED'; owner: PlayerId; hex: Hex }
   /**
    * Emitted for EVERY missile that reaches its target hex, including hits on
    * empty ground, and never saying what it hit. Both halves are load-bearing:
@@ -413,8 +436,9 @@ export type GameEvent =
    */
   | { type: 'UNIT_DESTROYED'; unitId: UnitId; kind: UnitKind; hex: Hex }
   /**
-   * The owner learns only the death hex, leaving 7 candidates for the killing
-   * base. Public because the defender already knows their own base positions,
+   * The owner learns only the death hex, leaving every hex within
+   * `RULES.interceptorCoverageRadius` as a candidate for the killing base (a
+   * drone kill never exposes it). Public because the defender already knows their own base positions,
    * so it leaks nothing to them (spec §6).
    */
   | { type: 'DRONE_DOWNED'; unitId: UnitId; owner: PlayerId; hex: Hex }

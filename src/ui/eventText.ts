@@ -141,6 +141,13 @@ export function describeEvent(
     case 'MISSILE_INTERCEPTED':
       return `Missile intercepted over ${hexLabel(event.hex)} — a base covers that hex.`;
 
+    case 'BASE_EXPOSED':
+      // The defender's loud action (§10): the intercept that saved them also
+      // gave the base away, permanently.
+      return event.owner === viewer
+        ? `Your interceptor base at ${hexLabel(event.hex)} fired and is now exposed to the enemy.`
+        : `Enemy interceptor base located at ${hexLabel(event.hex)} — it gave itself away firing.`;
+
     case 'IMPACT':
       // Says nothing about what was hit, including whether anything was (§6).
       return `Impact at ${hexLabel(event.hex)}.`;

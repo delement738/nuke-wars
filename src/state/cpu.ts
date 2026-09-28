@@ -32,13 +32,14 @@
 // the same (view, difficulty, seed) round always proposes the same orders.
 //   - EASY mostly holds/hovers, and never reacts to intel — a small, seeded
 //     chance of a random legal move, blind shot, or flight, otherwise nothing.
-//   - MEDIUM advances toward the enemy's home zone and fires at whichever
-//     known target — contact or site — is nearest, in range, kind-blind.
+//   - MEDIUM force-marches toward the enemy's home zone at the opening, then
+//     fires at whichever known target — contact or site — is nearest, in
+//     range, kind-blind.
 //   - HARD plays for the decapitation instead, with four concrete refinements:
 //     once recon has found a bunker/decoy site it drives its launchers into
-//     range of *that hex* rather than pushing at the front generically; it
-//     **force-marches during that drive** and goes quiet once in position (see
-//     `groundAdvanceOrder` — it is the only tier that ever pays a public reveal);
+//     range of *that hex* rather than pushing at the front generically (it
+//     force-marches during that drive, as both tiers do on the opening advance,
+//     and goes quiet once in position — see `groundAdvanceOrder`);
 //     it then shoots the site in preference to a launcher contact that is also
 //     in range (see `knownTargets` — this ordering is the opposite of the obvious
 //     one and the comment there explains why, with the measurement that settled
@@ -202,25 +203,31 @@ export function nextSweepWaypoint(from: Hex, lanes: readonly Hex[]): Hex {
  * Every hex this player's drone should refuse to enter, read off its own event
  * history and its own intel — never anything a human in the seat could not see.
  *
- * Two sources, both of which a human would use:
- *   - **A drone of ours was downed at hex H** (`DRONE_DOWNED`, spec §6/§11). The
- *     killing base is one of the hexes within `interceptorCoverageRadius` of H,
- *     so every hex that ANY of those candidates could cover is suspect — the
- *     disc of radius `2 * R` about H. Conservative on purpose: the heuristic has
- *     no way to intersect clues cleverly, and losing some sweep coverage costs
- *     far less than two blind rounds.
- *   - **A base we can see** (a static reveal of kind `interceptor`). Its exact
- *     coverage, radius `R`. At the shipped radii recon never photographs a base
- *     (CLAUDE.md gotcha 20), so this is dormant today; it becomes live the moment
- *     a rules change makes bases visible.
+ * The question is "where could the enemy's base be?", answered the way a human
+ * would, and then "which hexes could a base there cover?":
  *
- * A clue is dropped once a base is publicly destroyed within `R` of it — the kill
- * may have been the base that shot us down. It may also have been the other one;
- * the heuristic accepts re-learning that the hard way over a region closed
- * forever by a base that no longer exists.
+ *   - **A base we can see** (a static reveal of kind `interceptor`). Since the
+ *     2026-09-27 redesign a base goes public the first time it intercepts one of
+ *     our missiles (`BASE_EXPOSED`), so this is live. Its exact coverage,
+ *     radius `R`, is danger, and it explains every drone death within `R` of it.
+ *   - **A drone of ours was downed at hex H** that no known base explains. The
+ *     killer is within `R` of H. Candidates are then pruned three ways, all from
+ *     public or own-side facts: the hex must be on the board, inside the enemy's
+ *     home zone (§12 — bases are placed there), and NOT within `R` of any hex our
+ *     drone ever transmitted from (`DRONE_MOVED.path`), because a base there
+ *     would have shot it down.
+ *   - **Several unexplained deaths point at the same base** while each player
+ *     has one (`RULES.placementCounts.interceptor`), so their candidate sets are
+ *     intersected. At radius 2 that is the difference between a 61-hex no-fly
+ *     blob per death and a region that shrinks with every clue. If the sets do
+ *     not meet — which would mean more than one base — it falls back to their
+ *     union rather than trust a wrong inference.
+ *
+ * A clue is dropped once an enemy base is publicly destroyed within `R` of it:
+ * with one base per side, that was the base.
  *
  * Only `DRONE_DOWNED` events naming `player` count: the event is public, and the
- * enemy's drone dying over our own bases says nothing about theirs.
+ * enemy's drone dying over our own base says nothing about theirs.
  */
 export function droneDangerHexes(
   view: VisibleGameState,
@@ -228,11 +235,16 @@ export function droneDangerHexes(
   player: PlayerId,
 ): Set<string> {
   const R = RULES.interceptorCoverageRadius;
+  const zone = RULES.homeZoneRows[opponentOf(player)];
 
   const deaths: Hex[] = [];
   const deadBases: Hex[] = [];
+  const transmitted = new Set<string>();
   for (const event of history) {
     if (event.type === 'DRONE_DOWNED' && event.owner === player) deaths.push(event.hex);
+    if (event.type === 'DRONE_MOVED' && event.owner === player) {
+      for (const hex of event.path) transmitted.add(hexKey(hex));
+    }
     if (
       event.type === 'UNIT_DESTROYED' &&
       event.kind === 'interceptor' &&
@@ -242,14 +254,46 @@ export function droneDangerHexes(
     }
   }
 
+  const knownBases = view.intel.staticReveals
+    .filter((reveal) => reveal.kind === 'interceptor')
+    .map((reveal) => reveal.hex);
+
   const danger = new Set<string>();
-  for (const death of deaths) {
-    if (deadBases.some((base) => distance(base, death) <= R)) continue;
-    for (const hex of hexesInRange(death, 2 * R)) danger.add(hexKey(hex));
+  for (const base of knownBases) {
+    for (const hex of hexesInRange(base, R)) danger.add(hexKey(hex));
   }
-  for (const reveal of view.intel.staticReveals) {
-    if (reveal.kind !== 'interceptor') continue;
-    for (const hex of hexesInRange(reveal.hex, R)) danger.add(hexKey(hex));
+
+  const explained = [...knownBases, ...deadBases];
+  const clues = deaths.filter((death) => !explained.some((b) => distance(b, death) <= R));
+  if (clues.length === 0) return danger;
+
+  const couldHoldBase = (hex: Hex): boolean => {
+    if (!onMap(view.map, hex)) return false;
+    const { row } = axialToOffset(hex);
+    if (row < zone.min || row > zone.max) return false;
+    return !hexesInRange(hex, R).some((near) => transmitted.has(hexKey(near)));
+  };
+  const candidateSets = clues.map((clue) => {
+    const disc = hexesInRange(clue, R);
+    const pruned = disc.filter(couldHoldBase);
+    // Cannot be empty if every rule above is right; a disc is the safe answer
+    // if one of them is ever wrong.
+    return new Map((pruned.length > 0 ? pruned : disc).map((h) => [hexKey(h), h]));
+  });
+
+  let candidates = [...candidateSets[0].values()];
+  if (RULES.placementCounts.interceptor === 1) {
+    const shared = candidates.filter((h) =>
+      candidateSets.every((set) => set.has(hexKey(h))),
+    );
+    if (shared.length > 0) candidates = shared;
+    else candidates = candidateSets.flatMap((set) => [...set.values()]);
+  } else {
+    candidates = candidateSets.flatMap((set) => [...set.values()]);
+  }
+
+  for (const base of candidates) {
+    for (const hex of hexesInRange(base, R)) danger.add(hexKey(hex));
   }
   return danger;
 }
@@ -291,10 +335,52 @@ function knownTargets(view: VisibleGameState): Target[] {
   for (const contact of view.intel.contacts) {
     targets.push({ hex: contact.hex, priority: 1 });
   }
+  // Exposed interceptor bases are NOT single-launcher targets: one missile at a
+  // base always crosses its own bubble and is always intercepted (§10, gotcha
+  // 23). They are fired on only as a volley — see `baseVolley`.
   for (const reveal of view.intel.staticReveals) {
+    if (reveal.kind === 'interceptor') continue;
     targets.push({ hex: reveal.hex, priority: 0 });
   }
   return targets;
+}
+
+/**
+ * Launchers that should fire at an exposed enemy base this round, and where.
+ *
+ * A base is self-protecting: a missile aimed at it must cross its coverage, so
+ * a lone shot is always intercepted (§10, gotcha 23). The counter is saturation
+ * — `RULES.interceptsPerRound + 1` missiles in one round, the first spent on the
+ * intercept and the rest landing. So a base is attacked only when that many
+ * launchers can reach it this round, and then exactly that many fire, nearest
+ * first (id as the tiebreak, so the choice is deterministic). Everyone else is
+ * left free to shoot at something else.
+ *
+ * Taking priority over a site shot is deliberate. The kill is permanent, it
+ * opens every lane the base covered, and before the redesign bases were never
+ * visible so this could not happen at all (bases killed: 0.01 per side).
+ */
+function baseVolley(
+  view: VisibleGameState,
+  launchers: readonly Unit[],
+): Map<string, Hex> {
+  const volley = new Map<string, Hex>();
+  const needed = RULES.interceptsPerRound + 1;
+
+  for (const reveal of view.intel.staticReveals) {
+    if (reveal.kind !== 'interceptor') continue;
+    const inRange = launchers
+      .filter((l) => !volley.has(l.id))
+      .filter((l) => distance(l.position, reveal.hex) <= RULES.missileRange)
+      .sort(
+        (a, b) =>
+          distance(a.position, reveal.hex) - distance(b.position, reveal.hex) ||
+          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      );
+    if (inRange.length < needed) continue;
+    for (const launcher of inRange.slice(0, needed)) volley.set(launcher.id, reveal.hex);
+  }
+  return volley;
 }
 
 /**
@@ -304,9 +390,8 @@ function knownTargets(view: VisibleGameState): Target[] {
  * cannot express 'decoy' at all).
  *
  * Interceptor bases are excluded because a site is a thing worth *driving to*
- * and a base is not. In practice the list can never contain one anyway — the
- * radii make a base impossible to photograph (spec §11) — so the filter is
- * documentation as much as logic.
+ * and a base is not. Since 2026-09-27 a base does appear here once it has
+ * intercepted one of our missiles (`BASE_EXPOSED`), so the filter is live.
  */
 function knownSites(view: VisibleGameState): Hex[] {
   return view.intel.staticReveals
@@ -455,52 +540,38 @@ export function pickAdvanceDestination(
 
 /**
  * The ground order a launcher gives when it is not firing: a MOVE, or a MARCH
- * when HARD judges the reveal worth paying (spec §9, §11).
+ * whenever the march buys progress (spec §9, §11). MEDIUM and HARD both march;
+ * EASY never reaches this function.
  *
- * **When HARD marches: only to prosecute a known site, and only while the extra
- * budget actually buys progress.** Both halves of that rule matter.
- *
- *   - *Only toward a site.* A march trades position for tempo, and tempo is only
- *     worth buying when there is something to arrive at. Pushing at the front
- *     generically (MEDIUM's `row` goal) has no deadline, so paying a public
- *     reveal to get there a round sooner is a cost with no matching benefit —
- *     the launcher would be announcing its approach axis to buy nothing. Once
- *     recon has found a bunker/decoy site, the calculation inverts: there is a
- *     clock (`RULES.roundCap`), the site marker is permanent while the range to
- *     shoot it from is not, and ~41% of HARD mirror matches were still timing out
- *     in Armistice before this existed.
- *
- *   - *Only while it buys progress.* The test is simply whether the march
- *     destination scores better than the walk destination against the SAME goal.
- *     That one comparison gives the behaviour its shape for free, without a
- *     distance threshold to tune: `advanceScore` for a site goal is
- *     `max(0, distance - missileRange)`, so during the long approach a march
- *     gains real ground and is taken, and the moment the launcher is close
- *     enough that a walk already reaches firing range both score 0, the
- *     comparison fails, and it goes quiet. **HARD is loud while closing and
- *     silent once in position** — which is the tactically right shape, and it is
- *     emergent rather than written down.
+ * **The rule: march while the extra budget actually buys progress toward the
+ * goal.** The test is simply whether the march destination scores better than
+ * the walk destination against the SAME goal, which gives the behaviour its
+ * shape without a distance threshold to tune. For the `row` goal that means the
+ * launchers force-march out of their home zone at the start of the match and go
+ * quiet once they reach the front (both destinations score 0 there). For a
+ * `site` goal, `advanceScore` is `max(0, distance - missileRange)`, so the
+ * launcher is loud while closing and silent once a walk already reaches firing
+ * range. Either way the loud phase is the approach, which is the tactically
+ * right shape, and it is emergent rather than written down.
  *
  * Returns the MOVE whenever the march is refused, so this never costs a round.
  *
- * **The site-only restriction was measured against the obvious alternative, and
- * kept for a reason the headline number argues against** (`npm run soak`, 100
- * matches per pairing, 2026-08-14). Letting HARD march toward the `row` goal as
- * well looks far stronger on tier separation — hard vs medium goes 61–52 to
- * 114–25 — but it is an artifact worth not shipping. The tell is that the gain
- * appears ONLY against MEDIUM: the hard MIRROR gets slightly worse (Armistice
- * 36 -> 41, mean rounds 13.3 -> 13.8), which is not what a genuinely better
- * policy does. What actually happens is that marching every round floods the
- * enemy with contacts on hexes the launcher has already left, and MEDIUM —
- * which has no `dangerHexes` and picks targets by distance alone, kind-blind —
- * spends its volleys on that empty ground. It measures as skill and is really
- * an opponent's blind spot. It also makes marching unconditional (200/200 sides
- * marched, 6.2 per side), which deletes the decision the rule exists to pose.
- *
- * Site-only, by contrast, improves the numbers this harness was built to watch:
- * Armistice 41 -> 36, mean rounds 14.2 -> 13.3, decapitations 45 -> 46, with
- * marching staying a judgement call (42/200 sides, 0.25 per side). Revisit if the
- * CPU ever learns that a march contact is a bearing rather than a target.
+ * **History, because this rule was once rejected.** Until 2026-09-27 the march
+ * was HARD-only and site-only: on 2026-08-14, letting HARD alone march toward
+ * the `row` goal took hard vs medium from 61–52 to 114–25 while the hard MIRROR
+ * got slightly worse. That gain came from an opponent's blind spot: marching
+ * floods the enemy with contacts on hexes the launcher has already left, and
+ * MEDIUM spent its volleys on the empty ground. On 2026-09-27 (after drone
+ * memory and the interceptor redesign; `SOAK_MATCHES=60 SOAK_SEED=3`) the
+ * designer asked for a more aggressive opening, so it was re-measured. HARD-only
+ * row marching still reproduced the artifact (hard vs medium 53–41 -> 85–21).
+ * Giving MEDIUM the march too removes it, and every mirror improves or holds:
+ * hard mirror decapitations 46 -> 49 (Armistice 6 -> 7), medium mirror
+ * decapitations 37 -> 41 (Armistice 15 -> 14), hard vs medium 58–38, medium vs
+ * easy 100–0 -> 111–0. The cost the old note named still applies: every
+ * CPU side now marches (~6 per side per match), so for the CPU the opening march
+ * is a habit, not a judgement call. What is still a judgement call is when to
+ * STOP being loud.
  */
 function groundAdvanceOrder(
   believed: GameState,
@@ -509,16 +580,13 @@ function groundAdvanceOrder(
   goal: AdvanceGoal,
   avoid: ReadonlySet<string>,
   danger: ReadonlySet<string> | null,
-  mayMarch: boolean,
 ): Order | null {
   const walk = pickAdvanceDestination(believed, launcher, goal, avoid, danger, 'MOVE');
 
-  if (mayMarch && goal.kind === 'site') {
-    const march = pickAdvanceDestination(believed, launcher, goal, avoid, danger, 'MARCH');
-    if (march && (!walk || advanceScore(march, goal) < advanceScore(walk, goal))) {
-      const order: Order = { type: 'MARCH', unitId: launcher.id, destination: march };
-      if (validateMarch(believed, player, order).legal) return order;
-    }
+  const march = pickAdvanceDestination(believed, launcher, goal, avoid, danger, 'MARCH');
+  if (march && (!walk || advanceScore(march, goal) < advanceScore(walk, goal))) {
+    const order: Order = { type: 'MARCH', unitId: launcher.id, destination: march };
+    if (validateMarch(believed, player, order).legal) return order;
   }
 
   if (!walk) return null;
@@ -556,10 +624,7 @@ function reactiveLauncherOrder(
     if (validateLaunch(believed, player, order).legal) return order;
   }
 
-  // `ranked` IS the HARD flag (see `selectTarget`), and marching is a HARD-only
-  // tool for the same reason ranking is: it is the tier that plays for the
-  // decapitation, and the march exists to get there before the clock does.
-  return groundAdvanceOrder(believed, player, launcher, goal, avoid, danger, ranked);
+  return groundAdvanceOrder(believed, player, launcher, goal, avoid, danger);
 }
 
 /**
@@ -692,7 +757,11 @@ function deadHandOrders(
 ): Order[] {
   const believed = believedState(view);
   const launchers = view.units.filter((u) => u.kind === 'launcher' && !u.destroyed);
-  const staticTargets = view.intel.staticReveals.map((r) => r.hex);
+  // Bunker sites only: an exposed base can be on the map now (`BASE_EXPOSED`),
+  // and killing it cannot change the verdict — only the real bunker can.
+  const staticTargets = view.intel.staticReveals
+    .filter((r) => r.kind === 'bunker')
+    .map((r) => r.hex);
   const opponent = opponentOf(player);
   const zone = RULES.homeZoneRows[opponent];
 
@@ -771,7 +840,18 @@ export function cpuOrders(
     // HARD plays for the decapitation the match is actually about (spec §1).
     const sites = difficulty === 'hard' ? knownSites(view) : [];
 
+    const volley = difficulty === 'easy' ? new Map<string, Hex>() : baseVolley(view, launchers);
+
     for (const launcher of launchers) {
+      const volleyTarget = volley.get(launcher.id);
+      if (volleyTarget) {
+        const order: Order = { type: 'LAUNCH', unitId: launcher.id, target: volleyTarget };
+        if (validateLaunch(believed, player, order).legal) {
+          orders.push(order);
+          continue;
+        }
+      }
+
       const goal: AdvanceGoal =
         sites.length > 0
           ? { kind: 'site', site: nearestTo(sites, launcher.position) }

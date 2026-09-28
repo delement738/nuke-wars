@@ -42,6 +42,7 @@ import {
   damageByHex,
   flyMissiles,
   validateLaunch,
+  type Interception,
   type Missile,
 } from './missiles';
 import { validateMarch, validateMove, type MoveIllegalReason } from './movement';
@@ -398,7 +399,50 @@ function runLaunchPhase(
     events.push({ type: 'MISSILE_INTERCEPTED', missileId: missile.id, hex });
   }
 
+  events.push(...exposeInterceptingBases(intel, flights.interceptions, state.round));
+
   return { intel, survivors: flights.survivors, events };
+}
+
+/**
+ * Put every base that intercepted a missile this round onto the enemy's map, and
+ * announce the ones that were not already there (spec §10, §11).
+ *
+ * Intercepting is the defender's loud action: a base that only kills drones
+ * stays hidden, but stopping a missile gives it away for good. The reveal is
+ * filed exactly as a drone sighting of a static asset is — permanent, keyed by
+ * hex, until the base is publicly destroyed — so nothing downstream needs to
+ * know which of the two put it there.
+ *
+ * `BASE_EXPOSED` fires only for a base the enemy did not already have on file,
+ * which makes it a once-per-base event without any extra state: after the first
+ * exposure the reveal is there, and later intercepts find it and stay silent.
+ *
+ * Emitted in ascending hex order. The event is public, so it must be ordered by
+ * something already public (§9) — interception order would do too, but hex order
+ * says so without needing the argument.
+ *
+ * Mutates `intel` in place: the caller hands in its own fresh `copyIntel`.
+ */
+function exposeInterceptingBases(
+  intel: Record<PlayerId, PlayerIntel>,
+  interceptions: readonly Interception[],
+  round: number,
+): GameEvent[] {
+  const exposed: Unit[] = [];
+
+  for (const { base } of interceptions) {
+    const enemyIntel = intel[opponentOf(base.owner)];
+    const key = hexKey(base.position);
+    if (enemyIntel.staticReveals.some((r) => hexKey(r.hex) === key)) continue;
+
+    enemyIntel.staticReveals.push({ hex: base.position, kind: 'interceptor', round });
+    exposed.push(base);
+  }
+
+  return exposed
+    .sort((a, b) => compareHex(a.position, b.position))
+    .map((base) => ({ type: 'BASE_EXPOSED', owner: base.owner, hex: base.position }));
 }
 
 // ---------------------------------------------------------------------------

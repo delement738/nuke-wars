@@ -80,8 +80,8 @@ describe('newMatch', () => {
       expect(view.round).toBe(1);
       expect(view.phase).toBe('ORDER_PHASE');
       expect(view.outcome).toBeNull();
-      // The full roster: 3 launchers + 1 drone + bunker + decoy + 2 bases (§2).
-      expect(view.units).toHaveLength(8);
+      // The full roster: 3 launchers + 1 drone + bunker + decoy + base (§2).
+      expect(view.units).toHaveLength(7);
       expect(logFor(player)).toHaveLength(0);
     }
   });
@@ -200,7 +200,9 @@ describe('resolveRound', () => {
     expect(viewFor('p2').intel.contacts).toEqual([
       { hex: launcher.position, source: 'LAUNCH' },
     ]);
-    expect(viewFor('p1').intel.contacts).toHaveLength(0);
+    // (The CPU seat may file MARCH contacts on p1's map — it force-marches on
+    // the opening — so only LAUNCH contacts are the firer's own to check.)
+    expect(viewFor('p1').intel.contacts.filter((c) => c.source === 'LAUNCH')).toHaveLength(0);
   });
 
   it('expires a launcher contact after one order phase', () => {

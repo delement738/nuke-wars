@@ -95,12 +95,13 @@ describe('isCoveredByEnemy()', () => {
     }
   });
 
-  it('covers exactly radius 1 — nothing further out', () => {
-    // Guard the premise: a radius change in defs.ts should fail here loudly.
-    expect(RULES.interceptorCoverageRadius).toBe(1);
-    const twoOut = north(CENTER, 2);
-    expect(distance(CENTER, twoOut)).toBe(2);
-    expect(isCoveredByEnemy([base], twoOut, 'p1')).toBe(false);
+  it('covers exactly its radius — nothing further out', () => {
+    const R = RULES.interceptorCoverageRadius;
+    const edge = north(CENTER, R);
+    const beyond = north(CENTER, R + 1);
+    expect(distance(CENTER, beyond)).toBe(R + 1);
+    expect(isCoveredByEnemy([base], edge, 'p1')).toBe(true);
+    expect(isCoveredByEnemy([base], beyond, 'p1')).toBe(false);
   });
 
   it('never engages for the base owner — friendly fire is impossible by signature', () => {
@@ -246,11 +247,12 @@ describe('flyDrone()', () => {
   it('dies on entering enemy coverage, transmitting everything up to that hex', () => {
     const destination = north(CENTER, FLIGHT);
     const line = hexLine(CENTER, destination);
-    const base = makeUnit('base', 'p2', 'interceptor', line[3]);
+    const R = RULES.interceptorCoverageRadius;
+    const base = makeUnit('base', 'p2', 'interceptor', line[R + 2]);
 
     const flight = flyDrone([drone, base], drone, destination);
 
-    // Killed entering line[2] — the first hex inside the base's radius-1 bubble.
+    // Killed entering line[2] — the first hex inside the base's radius-R bubble.
     expect(flight.downedAt).toEqual(line[2]);
     expect(flight.path).toEqual([line[0], line[1]]);
   });

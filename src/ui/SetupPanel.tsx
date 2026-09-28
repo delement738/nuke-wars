@@ -6,7 +6,7 @@
 // `src/sim/setup.ts` — the same function `startMatch` re-checks the finished
 // setup with. This file's whole job is to put those answers on screen.
 //
-// The loop it implements: pick one of your four assets from the roster, click a
+// The loop it implements: pick one of your assets from the roster, click a
 // gold hex to put it there, repeat, then Start. **Any asset, in any order**, and
 // an asset already on the board moves to wherever you click next — placement
 // order is free (§12, changed 2026-08-13), so the roster is a list of things you
@@ -67,10 +67,10 @@ const KIND_BLURB: Record<PlaceableKind, string> = {
   decoy:
     'Empty concrete, identical to your bunker in every way the enemy can observe. Put it somewhere they will believe, and far from the real one: a single drone pass photographs a 3-hex corridor, so two sites side by side are found together.',
   interceptor:
-    'Shoots down one missile per round in the ring around it. It must sit at least 3 hexes from BOTH of your sites, so it can only defend an approach lane, never the bunker itself.',
+    'Shoots down one missile per round anywhere within 2 hexes of it, and kills enemy drones that fly in. Stopping a missile gives its position away to the enemy for good. It must sit at least 3 hexes from BOTH of your sites, so it can only defend an approach lane, never the bunker itself.',
 };
 
-/** "Interceptor base 2" — the two bases are numbered, the single sites are not. */
+/** "Interceptor base 2" — a kind with several slots is numbered, a single one is not. */
 function slotLabel(slot: PlacementSlot): string {
   const name = KIND_LABEL[slot.kind];
   return slot.ofKind > 1 ? `${name} ${slot.index}` : name;
@@ -108,7 +108,7 @@ export default function SetupPanel() {
 
           <p className="muted">
             You are {seat.toUpperCase()}, holding the{' '}
-            {seat === 'p1' ? 'south' : 'north'}. Place your four assets anywhere
+            {seat === 'p1' ? 'south' : 'north'}. Place your assets anywhere
             in your home zone — rows {RULES.homeZoneRows[seat].min}–
             {RULES.homeZoneRows[seat].max}, highlighted in gold. Plains or
             mountain both work: nothing static is driven into position.
@@ -211,7 +211,7 @@ export default function SetupPanel() {
             </button>
           </div>
           <p className="footnote">
-            Places {hotseat ? 'both players’ assets' : 'your four assets'} for
+            Places {hotseat ? 'both players’ assets' : 'your assets'} for
             you, using the same function that builds the CPU's setup — handy when
             you are testing something that is not placement.
           </p>

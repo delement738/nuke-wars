@@ -259,13 +259,22 @@ export const RULES = {
 
   /**
    * An interceptor base covers its own hex + all hexes within this radius.
+   * At 2 that is 19 hexes (spec §7, §10).
+   *
+   * Raised from 1 on 2026-09-27 with the interceptor redesign, which also cut
+   * each player to ONE base (`placementCounts.interceptor`) and made the base
+   * public the first time it intercepts a missile (`BASE_EXPOSED`, spec §6/§10).
+   * One bigger base rather than two small ones: the defender makes one real
+   * decision about where their shield goes, and the attacker's clues about it
+   * (`DRONE_DOWNED`, `MISSILE_INTERCEPTED`) all point at the same thing.
    *
    * READ THE NOTE ON `reconSwathRadius` BELOW BEFORE CHANGING THIS. The two
    * radii interact: while the swath radius is <= this one, a drone can never
    * photograph a base, and the decision to accept that (spec §11, "Bases are
-   * inferred, never photographed") is a design ruling, not an accident.
+   * inferred, never photographed") is a design ruling, not an accident. At 1
+   * vs 2 it holds with a hex to spare.
    */
-  interceptorCoverageRadius: 1,
+  interceptorCoverageRadius: 2,
 
   /**
    * How far to either side of its flight path the drone photographs (spec §11).
@@ -278,11 +287,11 @@ export const RULES = {
    * fall inside the swath is, by the same distance, covering a hex the drone
    * must enter to get it — so the drone is destroyed one step before the
    * picture is taken (verified by brute force over every flight geometry).
-   * Bases are then findable only by *inference* from the public 7-candidate
-   * clues, `MISSILE_INTERCEPTED` and `DRONE_DOWNED`.
+   * Bases are then findable only by *inference* from `DRONE_DOWNED`, or by
+   * *exposure* once one intercepts a missile (`BASE_EXPOSED`, since 2026-09-27).
    *
    * DECIDED 2026-08-11 (before build-order step 6): this stays at 1, and bases
-   * are found by *inference* from the two public 7-candidate clues rather than
+   * are found by *inference* (and, since 2026-09-27, by exposure) rather than
    * by photograph (spec §11, "Bases are inferred, never photographed"). A drone
    * lost over enemy ground is therefore intel, not a wasted round.
    *
@@ -318,7 +327,7 @@ export const RULES = {
    * (spec §12 — identical rule for both, or the asymmetry would identify the
    * fake for free).
    *
-   * Why it exists: without it both bases sit on top of the bunker, the drone
+   * Why it exists: without it the base sits on top of the bunker, the drone
    * dies before it can see it, and missiles can't reach it — an unfindable,
    * unkillable turtle. The rule forces the bunker to be defended by
    * concealment and geography, never by walls.
@@ -342,14 +351,18 @@ export const RULES = {
    * Launcher and drone counts are not here because they are not placed — they
    * start on the fixed public spawn hexes in SPAWNS.
    *
-   * Placement order is bunker -> decoy -> bases, and every count here is
-   * validated by the same pure function the UI calls, so the two can never
-   * disagree about what a legal setup is.
+   * Placement order is free (§12), and every count here is validated by the
+   * same pure function the UI calls, so the two can never disagree about what a
+   * legal setup is.
+   *
+   * One interceptor base since 2026-09-27 (was 2) — see
+   * `interceptorCoverageRadius`. The setup screen, `sandboxSetup` and
+   * `startMatch` all read this number, so the roster shrank with no other edit.
    */
   placementCounts: {
     bunker: 1,
     decoy: 1,
-    interceptor: 2,
+    interceptor: 1,
   } as const satisfies Record<PlaceableKind, number>,
 
   /**

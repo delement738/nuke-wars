@@ -55,15 +55,21 @@ function place(kind: Placement['kind'], hex: Hex): Placement {
 const BUNKER = at(5, 13);
 const DECOY = at(5, 18);
 const BASE_A = at(0, 16);
-const BASE_B = at(11, 16);
 
 const SITES: PlayerSetup = [place('bunker', BUNKER), place('decoy', DECOY)];
 
-const LEGAL_SETUP: PlayerSetup = [
-  ...SITES,
-  place('interceptor', BASE_A),
-  place('interceptor', BASE_B),
+const LEGAL_SETUP: PlayerSetup = [...SITES, place('interceptor', BASE_A)];
+
+/** P2's counterpart of LEGAL_SETUP, in the north. */
+const P2_SETUP: PlayerSetup = [
+  place('bunker', at(5, 5)),
+  place('decoy', at(5, 0)),
+  place('interceptor', at(0, 2)),
 ];
+
+/** Units a player fields: 3 launchers + a drone + everything placed (§2). */
+const ASSETS_PER_PLAYER =
+  4 + Object.values(RULES.placementCounts).reduce((a, b) => a + b, 0);
 
 /** Every hex in a player's home zone, in the map's own column-major order. */
 function homeZoneHexes(player: PlayerId, width = 16): Hex[] {
@@ -105,7 +111,7 @@ describe('validatePlacement() — roster and order', () => {
     ).toEqual({ legal: false, reason: 'ALREADY_PLACED' });
   });
 
-  it('rejects a third interceptor base', () => {
+  it('rejects a second interceptor base', () => {
     expect(
       validatePlacement(makeMap(), 'p1', 'interceptor', at(8, 13), LEGAL_SETUP),
     ).toEqual({ legal: false, reason: 'ALREADY_PLACED' });
@@ -305,19 +311,6 @@ describe('validatePlacement() — the interceptor exclusion', () => {
       legal: true,
     });
   });
-
-  it('measures the exclusion from the site, not from the other base', () => {
-    // Two bases may sit next to each other — the rule names the sites only.
-    const neighbourOfBase = at(0, 15);
-    expect(distance(BASE_A, neighbourOfBase)).toBe(1);
-
-    expect(
-      validatePlacement(makeMap(), 'p1', 'interceptor', neighbourOfBase, [
-        ...SITES,
-        place('interceptor', BASE_A),
-      ]),
-    ).toEqual({ legal: true });
-  });
 });
 
 // --- the UI's highlight list ------------------------------------------------
@@ -412,14 +405,15 @@ describe('validateSetup()', () => {
 
   it('names the placement that failed', () => {
     const broken = [
+      place('interceptor', at(5, 14)), // 1 hex from the bunker, checked when it lands
       ...SITES,
-      place('interceptor', at(5, 14)), // 1 hex from the bunker
-      place('interceptor', BASE_B),
     ];
 
+    // The base arrives first and passes vacuously; the bunker is the placement
+    // that breaks the pair, so it is the one named (§12's symmetric check).
     expect(validateSetup(makeMap(), 'p1', broken)).toEqual({
       legal: false,
-      index: 2,
+      index: 1,
       reason: 'EXCLUSION_ZONE',
     });
   });
@@ -437,18 +431,13 @@ describe('validateSetup()', () => {
 
     expect(validateSetup(makeMap(), 'p1', tooMany)).toEqual({
       legal: false,
-      index: 4,
+      index: LEGAL_SETUP.length,
       reason: 'ALREADY_PLACED',
     });
   });
 
   it('holds P2 to the same rules in their own zone', () => {
-    const mirrored: PlayerSetup = [
-      place('bunker', at(5, 5)),
-      place('decoy', at(5, 0)),
-      place('interceptor', at(0, 2)),
-      place('interceptor', at(11, 2)),
-    ];
+    const mirrored = P2_SETUP;
 
     expect(validateSetup(makeMap(), 'p2', mirrored)).toEqual({ legal: true });
     expect(validateSetup(makeMap(), 'p1', mirrored)).toEqual({
@@ -465,18 +454,13 @@ describe('startMatch()', () => {
   const map = makeMap();
   const setups: Record<PlayerId, PlayerSetup> = {
     p1: LEGAL_SETUP,
-    p2: [
-      place('bunker', at(5, 5)),
-      place('decoy', at(5, 0)),
-      place('interceptor', at(0, 2)),
-      place('interceptor', at(11, 2)),
-    ],
+    p2: P2_SETUP,
   };
 
-  it('fields 8 assets per player, and nothing else (§2)', () => {
+  it('fields 7 assets per player, and nothing else (§2)', () => {
     const state = startMatch(map, setups);
 
-    expect(state.units).toHaveLength(16);
+    expect(state.units).toHaveLength(2 * ASSETS_PER_PLAYER);
     for (const player of ['p1', 'p2'] as const) {
       const mine = state.units.filter((u) => u.owner === player);
       const kinds = mine.map((u) => u.kind);
@@ -484,7 +468,7 @@ describe('startMatch()', () => {
       expect(kinds.filter((k) => k === 'drone')).toHaveLength(1);
       expect(kinds.filter((k) => k === 'bunker')).toHaveLength(1);
       expect(kinds.filter((k) => k === 'decoy')).toHaveLength(1);
-      expect(kinds.filter((k) => k === 'interceptor')).toHaveLength(2);
+      expect(kinds.filter((k) => k === 'interceptor')).toHaveLength(1);
     }
   });
 
@@ -553,7 +537,7 @@ describe('startMatch()', () => {
       p2: derivedSetup(real, 'p2'),
     });
 
-    expect(state.units).toHaveLength(16);
+    expect(state.units).toHaveLength(2 * ASSETS_PER_PLAYER);
   });
 });
 
@@ -564,7 +548,7 @@ describe('startMatch()', () => {
 describe('nextPlacementKind', () => {
   const map = makeMap();
 
-  // Four widely-spaced hexes in P1's home zone, clear of every spawn row and far
+  // Widely-spaced hexes in P1's home zone, clear of every spawn row and far
   // enough apart that the ≥3 exclusion rule never fires — this describe is about
   // the *order* of placement, so nothing else should be able to reject a hex.
   const SPOTS = [at(0, 14), at(4, 14), at(9, 14), at(14, 14)];
@@ -573,14 +557,14 @@ describe('nextPlacementKind', () => {
     const steps: (Placement['kind'] | null)[] = [];
     const placed: Placement[] = [];
 
-    // Four placements, so five answers: one before each and one after the last.
-    for (let i = 0; i <= SPOTS.length; i++) {
+    // Three placements, so four answers: one before each and one after the last.
+    for (let i = 0; i <= 3; i++) {
       const kind = nextPlacementKind(placed);
       steps.push(kind);
       if (kind) placed.push(place(kind, SPOTS[i]));
     }
 
-    expect(steps).toEqual(['bunker', 'decoy', 'interceptor', 'interceptor', null]);
+    expect(steps).toEqual(['bunker', 'decoy', 'interceptor', null]);
   });
 
   it('only ever suggests a kind validatePlacement would accept', () => {
@@ -589,7 +573,7 @@ describe('nextPlacementKind', () => {
     // highlight ground for an asset the validator then rejects.
     const placed: Placement[] = [];
 
-    for (const spot of SPOTS) {
+    for (const spot of SPOTS.slice(0, 3)) {
       const kind = nextPlacementKind(placed);
       expect(kind).not.toBeNull();
       expect(validatePlacement(map, 'p1', kind!, spot, placed)).toEqual({
@@ -651,19 +635,13 @@ describe('startMatch() — unit order is a function of the setup, not of the cli
     const map = makeMap();
     const forward: Record<PlayerId, PlayerSetup> = {
       p1: LEGAL_SETUP,
-      p2: [
-        place('bunker', at(5, 5)),
-        place('decoy', at(5, 0)),
-        place('interceptor', at(0, 2)),
-        place('interceptor', at(11, 2)),
-      ],
+      p2: P2_SETUP,
     };
     const shuffled: Record<PlayerId, PlayerSetup> = {
       // Bases first, then the decoy, then the bunker — legal now, and the exact
       // sequence the old OUT_OF_ORDER rule existed to forbid.
       p1: [
         place('interceptor', BASE_A),
-        place('interceptor', BASE_B),
         place('decoy', DECOY),
         place('bunker', BUNKER),
       ],
@@ -673,27 +651,5 @@ describe('startMatch() — unit order is a function of the setup, not of the cli
     expect(startMatch(map, shuffled).units).toEqual(
       startMatch(map, forward).units,
     );
-  });
-
-  it('still numbers the two bases in the order the player placed them', () => {
-    // The one ordering the player keeps: which base is 1 and which is 2.
-    const map = makeMap();
-    const swapped: PlayerSetup = [
-      ...SITES,
-      place('interceptor', BASE_B),
-      place('interceptor', BASE_A),
-    ];
-    const units = startMatch(map, {
-      p1: swapped,
-      p2: [
-        place('bunker', at(5, 5)),
-        place('decoy', at(5, 0)),
-        place('interceptor', at(0, 2)),
-        place('interceptor', at(11, 2)),
-      ],
-    }).units;
-
-    const base1 = units.find((u) => u.id === 'p1-interceptor-1');
-    expect(base1?.position).toEqual(BASE_B);
   });
 });
