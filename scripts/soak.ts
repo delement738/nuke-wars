@@ -41,8 +41,9 @@ import {
   type Outcome,
   type PlayerId,
   type UnitId,
+  type VisibleEvent,
 } from '../src/sim/types';
-import { filterForPlayer } from '../src/sim/visibility';
+import { filterEventsForPlayer, filterForPlayer } from '../src/sim/visibility';
 import { cpuOrders, type CpuDifficulty } from '../src/state/cpu';
 import { sandboxSetup } from '../src/state/sandbox';
 
@@ -77,6 +78,16 @@ interface PlayerStats {
   /** Round a bunker-or-decoy site first entered their intel, or null. */
   firstSiteRound: number | null;
   droneDeaths: number;
+  /**
+   * Drone deaths on a hex where this player's drone had ALREADY died.
+   *
+   * The harness's own honesty check. Every death is a public `DRONE_DOWNED` in
+   * the owner's log, so a player dying twice on one hex is a player ignoring
+   * what it was told. Before the CPU read its log (2026-09-27) this was 66% of
+   * all HARD drone deaths, and every recon number above it was measuring that
+   * rather than the game. It should now sit near zero for MEDIUM and HARD.
+   */
+  repeatDroneDeaths: number;
   missilesFired: number;
   missilesIntercepted: number;
   /**
@@ -118,6 +129,7 @@ function emptyStats(): PlayerStats {
     sweptFraction: 0,
     firstSiteRound: null,
     droneDeaths: 0,
+    repeatDroneDeaths: 0,
     missilesFired: 0,
     missilesIntercepted: 0,
     missilesAtSites: 0,
@@ -185,6 +197,12 @@ function playMatch(seed: number, difficulty: Record<PlayerId, CpuDifficulty>): M
   };
   const swept: Record<PlayerId, Set<string>> = { p1: new Set(), p2: new Set() };
   const stats: Record<PlayerId, PlayerStats> = { p1: emptyStats(), p2: emptyStats() };
+  const deathHexes: Record<PlayerId, Set<string>> = { p1: new Set(), p2: new Set() };
+  // Each seat's permanent log, exactly as the store keeps it: every event run
+  // through `filterEventsForPlayer` on the way in. This is what a CPU seat is
+  // allowed to remember (see `cpuOrders`), so the harness hands over this and
+  // never the raw log.
+  const history: Record<PlayerId, VisibleEvent[]> = { p1: [], p2: [] };
 
   let rounds = 0;
   let guard = 0;
@@ -223,11 +241,15 @@ function playMatch(seed: number, difficulty: Record<PlayerId, CpuDifficulty>): M
         difficulty[player],
         player,
         makeRng(seed * 100000 + round * 2 + (player === 'p1' ? 0 : 1)),
+        history[player],
       );
     }
 
     const result = resolve(state, orders.p1, orders.p2, seed);
-    tally(result.events, stats, swept, enemyZone, sitesKnown, launcherAt, ownerOf);
+    tally(result.events, stats, swept, enemyZone, sitesKnown, launcherAt, ownerOf, deathHexes);
+    for (const player of PLAYERS) {
+      history[player].push(...filterEventsForPlayer(result.events, player));
+    }
 
     state = result.state;
 
@@ -263,6 +285,7 @@ function tally(
   sitesKnown: Record<PlayerId, Set<string>>,
   launcherAt: ReadonlyMap<string, PlayerId>,
   ownerOf: ReadonlyMap<UnitId, PlayerId>,
+  deathHexes: Record<PlayerId, Set<string>>,
 ): void {
   // Missiles carry no owner (§6 withholds it deliberately), so attribution runs
   // origin hex -> firing player for the launch, then missile id -> player for
@@ -278,9 +301,13 @@ function tally(
         break;
       }
 
-      case 'DRONE_DOWNED':
+      case 'DRONE_DOWNED': {
         stats[event.owner].droneDeaths += 1;
+        const key = hexKey(event.hex);
+        if (deathHexes[event.owner].has(key)) stats[event.owner].repeatDroneDeaths += 1;
+        deathHexes[event.owner].add(key);
         break;
+      }
 
       // Unlike `LAUNCH_DETECTED`, this one names its owner (§6) — both sides can
       // already derive it, so withholding it would buy nothing — which makes the
@@ -365,6 +392,7 @@ function report(difficulty: CpuDifficulty, matches: readonly MatchStats[]): stri
     `    sides that ever found a site   ${sawSite.length}/${sides.length}`,
     `    mean round of first site       ${sawSite.length ? mean(sawSite.map((s) => s.firstSiteRound!)).toFixed(1) : '—'}`,
     `    drone deaths per side          ${mean(sides.map((s) => s.droneDeaths)).toFixed(1)}`,
+    `    ... on a hex it died on before ${mean(sides.map((s) => s.repeatDroneDeaths)).toFixed(1)}`,
     ``,
     `  OFFENSE (per side, per match)`,
     `    missiles fired                 ${mean(sides.map((s) => s.missilesFired)).toFixed(1)}`,
