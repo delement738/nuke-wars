@@ -1,9 +1,10 @@
 // CLIENT STATE — not simulation code, and deliberately not in `src/sim/`.
 //
 // The sandbox opponent's secret setup (build-order step 9). A match cannot start
-// without two complete setups (§12), so this file invents one — for the CPU
-// always, and for the human when they press Auto-place instead of placing their
-// four assets by hand (step 10b).
+// without two complete setups (§12), so this file invents one — for an EASY or
+// MEDIUM CPU (via `cpuSetup`, which places HARD's base deliberately instead),
+// and for the human when they press Auto-place instead of placing their assets
+// by hand (step 10b). Auto-place stays on this plain fixture at every difficulty.
 //
 // It is a *fixture*, not an AI and not a rule. Everything here is a placement
 // choice a human makes on the setup screen, which is exactly why it lives

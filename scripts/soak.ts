@@ -45,7 +45,7 @@ import {
 } from '../src/sim/types';
 import { filterEventsForPlayer, filterForPlayer } from '../src/sim/visibility';
 import { cpuOrders, type CpuDifficulty } from '../src/state/cpu';
-import { sandboxSetup } from '../src/state/sandbox';
+import { cpuSetup } from '../src/state/cpuSetup';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -187,11 +187,14 @@ function playMatch(seed: number, difficulty: Record<PlayerId, CpuDifficulty>): M
   // would have measured how well the CPU finds one spot rather than how well it
   // searches; step 10b made the fixture seeded-random for exactly that reason, so
   // the two are now the same function and only one of them should exist.
+  // Since 2026-09-27 the harness goes through `cpuSetup`, which is that same
+  // fixture for EASY and MEDIUM and adds a deliberate base placement for HARD —
+  // so each side is set up the way its tier would set up in a real match.
   const setupRng = makeRng(seed);
 
   let state: GameState = startMatch(map, {
-    p1: sandboxSetup(map, 'p1', setupRng),
-    p2: sandboxSetup(map, 'p2', setupRng),
+    p1: cpuSetup(map, 'p1', difficulty.p1, setupRng),
+    p2: cpuSetup(map, 'p2', difficulty.p2, setupRng),
   });
 
   // Fixed for the whole match: units are never added or removed, only flagged
