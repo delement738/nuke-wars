@@ -11,6 +11,7 @@ import {
   buildTimeline,
   captionAt,
   frameAt,
+  hiddenMissileIds,
   hiddenUnitIds,
 } from './timeline';
 
@@ -164,5 +165,15 @@ describe('hiddenUnitIds', () => {
 
   it('does not hide a destroyed unit — the X is drawn over it', () => {
     expect(hiddenUnitIds(frameAt(timeline, 1e9)).has('p1-launcher-2')).toBe(false);
+  });
+});
+
+describe('hiddenMissileIds', () => {
+  const timeline = buildTimeline([launch(1), impact(1)]);
+  const [shot, hit] = timeline.beats;
+
+  it('keeps a parked missile on the board until its own impact clip starts', () => {
+    expect(hiddenMissileIds(frameAt(timeline, shot.start)).size).toBe(0);
+    expect([...hiddenMissileIds(frameAt(timeline, hit.start))]).toEqual(['m1']);
   });
 });

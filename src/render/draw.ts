@@ -28,6 +28,7 @@ import { tileAt, type MapData, type Terrain } from '../sim/map';
 import { reconSwath } from '../sim/recon';
 import type {
   MaskedStaticKind,
+  PlayerId,
   Unit,
   UnitKind,
   VisibleGameState,
@@ -38,6 +39,7 @@ import type {
 // what is in one.
 import type { DraftEntry, OrderDraft, OrderMode } from '../state/orders';
 import type { PlacementSlot } from '../state/placement';
+import { missileMarkers, warningLine } from './flights';
 import { HEX, hexCenter, hexCorners } from './geometry';
 
 // --- palette ----------------------------------------------------------------
@@ -765,5 +767,112 @@ export function drawIntel(layer: Container, intel: VisiblePlayerIntel): void {
     label.alpha = ring.alpha;
 
     layer.addChild(ring, label);
+  }
+}
+
+// --- missiles in the air (presentation phase, session 2) --------------------
+//
+// Shared by the static board below and the replay (`./playbackDraw`), so a
+// missile parked at the end of a launch clip is the same picture the board
+// settles on.
+
+/** Your missiles in the launch amber, the enemy's in red. */
+export function missileColor(mine: boolean): number {
+  return mine ? COLOR.launch : COLOR.enemy;
+}
+
+/** A dashed straight line — Pixi v8 has no native dash. */
+export function dashedLine(
+  g: Graphics,
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  style: { width: number; color: number; alpha?: number },
+  dash = 7,
+  gap = 5,
+): void {
+  const length = Math.hypot(b.x - a.x, b.y - a.y);
+  if (length === 0) return;
+  const ux = (b.x - a.x) / length;
+  const uy = (b.y - a.y) / length;
+  for (let d = 0; d < length; d += dash + gap) {
+    const end = Math.min(length, d + dash);
+    g.moveTo(a.x + ux * d, a.y + uy * d).lineTo(a.x + ux * end, a.y + uy * end);
+  }
+  g.stroke(style);
+}
+
+/** The missile itself: a bright core in a soft glow of its side's colour. */
+export function missileHead(g: Graphics, x: number, y: number, color: number): void {
+  g.circle(x, y, 10).fill({ color, alpha: 0.25 });
+  g.circle(x, y, 6).fill(color);
+  g.circle(x, y, 2.5).fill(0xffffff);
+}
+
+/**
+ * The warning on a hex a missile will land on: a heavy hex outline, a light
+ * wash, and a crosshair. Drawn identically whatever stands there — the warning
+ * is about where the missile is aimed, which both players already know.
+ */
+export function inboundWarning(g: Graphics, target: Hex, color: number): void {
+  const { x, y } = centerOf(target);
+  g.poly(hexCorners(x, y, HEX * 0.9))
+    .fill({ color, alpha: 0.16 })
+    .stroke({ width: 3, color });
+  const r = HEX * 0.35;
+  g.moveTo(x - r, y).lineTo(x + r, y).moveTo(x, y - r).lineTo(x, y + r).stroke({ width: 2, color });
+  g.circle(x, y, r * 0.7).stroke({ width: 2, color });
+}
+
+const WARNING_TEXT = {
+  fontFamily: 'monospace',
+  fontSize: 11,
+  fontWeight: 'bold',
+  stroke: { color: 0x0b0f14, width: 3 },
+} as const;
+
+/**
+ * The words under a warned hex. Under, not above, because every replay label
+ * ("IMPACT", "LAUNCH", …) sits above its hex, and a long shot aimed at a hex
+ * being hit in the same replay would otherwise print over it. `line` stacks a
+ * second, different warning on the same hex (your strike and theirs).
+ */
+export function warningLabel(target: Hex, text: string, color: number, line = 0): Text {
+  const { x, y } = centerOf(target);
+  const label = new Text({ text, style: new TextStyle({ ...WARNING_TEXT, fill: color }) });
+  label.anchor.set(0.5, 0);
+  label.position.set(x, y + HEX * 0.85 + line * 14);
+  return label;
+}
+
+/**
+ * Missiles still in the air between rounds (`VisibleGameState.missiles`, both
+ * players'): the ground already flown, the missile where it is now, a dashed
+ * line to its target, and the warning on the target hex. `hidden` lists the
+ * ones a replay is animating right now, so nothing is drawn twice.
+ */
+export function drawMissiles(
+  layer: Container,
+  missiles: VisibleGameState['missiles'],
+  viewer: PlayerId,
+  hidden: ReadonlySet<string> = new Set(),
+): void {
+  clear(layer);
+  const g = new Graphics();
+  layer.addChild(g);
+  const labelled = new Map<string, string[]>();
+
+  for (const marker of missileMarkers(missiles, viewer)) {
+    if (hidden.has(marker.id)) continue;
+    const color = missileColor(marker.mine);
+    const from = centerOf(marker.origin);
+    const at = centerOf(marker.at);
+    const to = centerOf(marker.target);
+
+    g.moveTo(from.x, from.y).lineTo(at.x, at.y).stroke({ width: 2, color, alpha: 0.35 });
+    dashedLine(g, at, to, { width: 2, color, alpha: 0.9 });
+    inboundWarning(g, marker.target, color);
+    missileHead(g, at.x, at.y, color);
+    const line = warningLine(labelled, marker.target, marker.label);
+    if (line !== null) layer.addChild(warningLabel(marker.target, marker.label, color, line));
   }
 }

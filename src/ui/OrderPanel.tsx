@@ -11,6 +11,7 @@
 // round resolves on its own — see `allDecided` in `src/state/orders.ts` for why
 // Hold has to exist for that to be a rule a player can actually satisfy.
 
+import { RULES } from '../sim/defs';
 import type { Hex } from '../sim/hex';
 import type { Unit } from '../sim/types';
 import {
@@ -166,6 +167,17 @@ export default function OrderPanel() {
               This range is a prediction, not a promise. An enemy you have not
               detected can be standing there — the advance then fails outright
               and the launcher holds. That risk is what the drone is for.
+            </p>
+          )}
+          {orderMode === 'LAUNCH' && (
+            // Spec §3, §10: flight time (RULES.missileSpeed 4 vs missileRange 6).
+            // Deliberately does NOT promise a dodge — a carried missile lands in
+            // the next round's impact phase, before that round's movement.
+            <p className="footnote">
+              Targets 1–{RULES.missileSpeed} hexes away are hit this round. At{' '}
+              {RULES.missileSpeed + 1}–{RULES.missileRange} hexes the missile
+              spends a round in the air and lands next round, before anyone
+              moves. Both sides see it on the map until it lands.
             </p>
           )}
           {orderMode === 'MARCH' && (
