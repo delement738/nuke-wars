@@ -544,6 +544,19 @@ describe('resolve() — phase 2: launch & interception', () => {
     expect(result.state.intel.p2.contacts).toEqual([]);
   });
 
+  it('drops a LAUNCH across a mountain in silence — terrain is public (§10)', () => {
+    const state = openField([makeUnit('a', 'p1', 'launcher', CENTER)]);
+    setTerrain(state.map, north(CENTER, 2), 'mountain');
+
+    const result = resolve(state, [launch('a', north(CENTER, 4))], NO_ORDERS, 0);
+
+    // No LAUNCH_DETECTED (the launcher never fired, so it is not revealed), no
+    // missile in the air, nothing to report.
+    expect(result.events).toEqual([]);
+    expect(result.state.missiles).toEqual([]);
+    expect(result.state.intel.p2.contacts).toEqual([]);
+  });
+
   it('drops a LAUNCH naming the ENEMY’s launcher without a whisper', () => {
     const state = openField([makeUnit('z', 'p2', 'launcher', CENTER)]);
 

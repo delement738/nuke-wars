@@ -3,7 +3,9 @@
 import { ALL_SPAWN_HEXES, RULES, SPAWNS, TERRAIN_DEFS, TERRAIN_GEN } from './defs';
 import {
   axialToOffset,
+  distance,
   hexKey,
+  hexLine,
   hexesInRange,
   neighbors,
   offsetToAxial,
@@ -15,8 +17,10 @@ import {
  * V1 terrain (spec §2). Two types, and that is the whole system:
  *
  * - **plains** — passable, ~85% of the board, the only ground a launcher moves on
- * - **mountain** — impassable to launchers; drones and missiles cross it freely,
- *   and static structures (bunker, decoy, interceptor base) may be *built* on it
+ * - **mountain** — impassable to launchers; blocks line of fire (a LAUNCH may
+ *   not cross one, though one may be the target — spec §10); drones and
+ *   missiles already in flight cross it freely, and static structures (bunker,
+ *   decoy, interceptor base) may be *built* on it
  *
  * The old `urban` type was cut on 2026-08-11: it was flagged "visual flavour
  * only in V1" and carried no rule, so it was a third case every terrain switch
@@ -90,7 +94,8 @@ const RESEED_STRIDE = 0x9e3779b9;
 type MapRejection =
   | 'MOUNTAIN_FRACTION' // outside TERRAIN_GEN.mountainFractionBand
   | 'SPAWNS_DISCONNECTED' // some launcher can never reach the rest of the board
-  | 'APPROACH_TOO_LONG'; // detours break the §7 "first blood ~round 3" premise
+  | 'APPROACH_TOO_LONG' // detours break the §7 "first blood ~round 3" premise
+  | 'NO_FIRING_LANE'; // a home-zone hex no reachable launcher hex can fire on
 
 /**
  * Cheapest ground-travel cost from `start` to every hex reachable from it,
@@ -197,6 +202,32 @@ function validateMap(map: MapData): MapRejection | null {
         if (firingPositions.has(key) && cost < closest) closest = cost;
       }
       if (closest > TERRAIN_GEN.maxApproachCost) return 'APPROACH_TOO_LONG';
+    }
+  }
+
+  // Line of fire (§10, 2026-09-28): every hex a site could be built on must be
+  // hittable from SOMEWHERE an enemy launcher can actually stand. Without this a
+  // bunker walled in by ridges would be invulnerable — the exact trap the
+  // target-hex exemption exists to prevent, reintroduced by the ridges around
+  // it. "Somewhere" means a hex in the spawns' connected region (`fromFirst`),
+  // since a clear lane from a sealed-off pocket is a lane nobody can use.
+  // ~1 in 4 raw maps fails this; they are re-rolled, never carved (gotcha 7c).
+  for (const player of ['p1', 'p2'] as const) {
+    const zone = RULES.homeZoneRows[player];
+    for (let col = 0; col < map.width; col++) {
+      for (let row = zone.min; row <= zone.max; row++) {
+        // `firingPositions` without building the list: one lane is enough, and
+        // this runs for 192 hexes on every attempt. The reachability test goes
+        // first because it is a Set lookup and the line is not.
+        const site = offsetToAxial({ col, row });
+        const hittable = hexesInRange(site, RULES.missileRange).some(
+          (hex) =>
+            fromFirst.has(hexKey(hex)) &&
+            hexKey(hex) !== hexKey(site) &&
+            lineOfFireClear(map, hex, site),
+        );
+        if (!hittable) return 'NO_FIRING_LANE';
+      }
     }
   }
 
@@ -565,4 +596,48 @@ export function tileAt(map: MapData, offset: Offset): TileData | undefined {
     return undefined;
   }
   return map.tiles[col * map.height + row];
+}
+
+/**
+ * Whether a missile may be launched from `origin` at `target` over this map's
+ * terrain (spec §10): no `blocksFire` tile strictly between them.
+ *
+ * **Interior only, and both ends are load-bearing.** The target is exempt so a
+ * bunker, decoy or base built on a mountain (§12) stays hittable — that is the
+ * invulnerability trap §10's old "missiles ignore terrain" rule existed to
+ * prevent, and the reason this rule is interior-only rather than a blanket
+ * terrain filter. The origin is exempt because a launcher can never stand on a
+ * mountain, so it could only ever be a no-op or a bug.
+ *
+ * The line is `hexLine`, the one spec'd primitive (gotcha 12) — never a local
+ * re-derivation, or its pinned epsilon stops guaranteeing that the UI, the CPU
+ * and the validator agree on which hexes a shot crosses. Range is NOT checked
+ * here; that is `validateLaunch`'s job.
+ */
+export function lineOfFireClear(map: MapData, origin: Hex, target: Hex): boolean {
+  return hexLine(origin, target)
+    .slice(1, -1)
+    .every((hex) => {
+      const tile = tileAt(map, axialToOffset(hex));
+      return !tile || !TERRAIN_DEFS[tile.terrain].blocksFire;
+    });
+}
+
+/**
+ * Every hex a launcher could stand on and legally fire at `target` from, on
+ * terrain alone: on the map, `groundPassable`, within `RULES.missileRange` (and
+ * not the target itself), with a clear line (§10). Units are ignored — this is
+ * a question about the board, not about a moment in the match.
+ *
+ * The one enumeration shared by the map generator (`NO_FIRING_LANE`), the CPU's
+ * advance goal and HARD's base placer, so the three cannot disagree about what
+ * a firing lane is. Returned in `hexesInRange` order, which is deterministic.
+ */
+export function firingPositions(map: MapData, target: Hex): Hex[] {
+  return hexesInRange(target, RULES.missileRange).filter((hex) => {
+    if (distance(hex, target) === 0) return false;
+    const tile = tileAt(map, axialToOffset(hex));
+    if (!tile || !TERRAIN_DEFS[tile.terrain].groundPassable) return false;
+    return lineOfFireClear(map, hex, target);
+  });
 }

@@ -4,11 +4,21 @@ import {
   axialToOffset,
   distance,
   hexKey,
+  hexLine,
   hexesInRange,
   neighbors,
   offsetToAxial,
+  type Hex,
 } from './hex';
-import { generateMap, groundCostsFrom, rotate180, tileAt } from './map';
+import {
+  firingPositions,
+  generateMap,
+  groundCostsFrom,
+  lineOfFireClear,
+  rotate180,
+  tileAt,
+  type MapData,
+} from './map';
 
 const WIDTH = 16;
 const HEIGHT = 19;
@@ -271,5 +281,111 @@ describe('generateMap — mountains (spec §2, §7)', () => {
     // connectivity check, and generateMap reports "no playable map" — a
     // thoroughly misleading way to say "there is no spawn table for that size".
     expect(() => generateMap(8, 9)).toThrow(/SPAWNS/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Line of fire (spec §10, §7 — 2026-09-28)
+// ---------------------------------------------------------------------------
+
+/** An all-plains board with the given hexes turned to mountain. */
+function plainsWith(mountains: readonly Hex[]): MapData {
+  const tiles = allCells().map(({ col, row }) => ({ col, row, terrain: 'plains' as const }));
+  const map: MapData = { width: WIDTH, height: HEIGHT, tiles };
+  for (const hex of mountains) {
+    const tile = tileAt(map, axialToOffset(hex));
+    if (!tile) throw new Error('fixture mountain off the map');
+    tile.terrain = 'mountain';
+  }
+  return map;
+}
+
+const MID: Hex = offsetToAxial({ col: 8, row: 9 });
+const up = (steps: number): Hex => offsetToAxial({ col: 8, row: 9 - steps });
+
+describe('lineOfFireClear — interior only', () => {
+  it('is blocked by a mountain strictly between the ends', () => {
+    expect(lineOfFireClear(plainsWith([up(2)]), MID, up(4))).toBe(false);
+  });
+
+  it('is NOT blocked by a mountain on the target — a mountain site stays hittable', () => {
+    expect(lineOfFireClear(plainsWith([up(4)]), MID, up(4))).toBe(true);
+  });
+
+  it('is NOT blocked by a mountain on the origin', () => {
+    expect(lineOfFireClear(plainsWith([MID]), MID, up(4))).toBe(true);
+  });
+
+  it('is symmetric, because hexLine is', () => {
+    const map = plainsWith([up(2), offsetToAxial({ col: 10, row: 6 })]);
+    for (const target of hexesInRange(MID, RULES.missileRange)) {
+      expect(lineOfFireClear(map, target, MID)).toBe(lineOfFireClear(map, MID, target));
+    }
+  });
+});
+
+describe('firingPositions', () => {
+  it('on open plains is every hex within range except the target itself', () => {
+    const lanes = firingPositions(plainsWith([]), MID);
+    expect(lanes).toHaveLength(hexesInRange(MID, RULES.missileRange).length - 1);
+    expect(lanes.some((hex) => hexKey(hex) === hexKey(MID))).toBe(false);
+  });
+
+  it('drops mountain hexes (a launcher cannot stand there) and hexes behind a ridge', () => {
+    const map = plainsWith([up(1)]);
+    const lanes = new Set(firingPositions(map, MID).map(hexKey));
+
+    expect(lanes.has(hexKey(up(1)))).toBe(false); // the mountain itself
+    expect(lanes.has(hexKey(up(2)))).toBe(false); // directly behind it
+    expect(lanes.has(hexKey(up(6)))).toBe(false);
+    // Every returned hex is a legal origin by the validator's own definition.
+    for (const hex of firingPositions(map, MID)) {
+      expect(lineOfFireClear(map, hex, MID)).toBe(true);
+      expect(distance(hex, MID)).toBeLessThanOrEqual(RULES.missileRange);
+    }
+  });
+});
+
+/**
+ * Enough seeds that the rule demonstrably bites: about 1 raw map in 4 has a
+ * home-zone hex with no lane, so over 60 seeds a generator without the check
+ * ships several (mutation-checked 2026-09-28).
+ */
+const LANE_SEEDS = Array.from({ length: 60 }, (_, i) => i + 1);
+
+describe('generateMap — every home-zone hex has a firing lane (§7, NO_FIRING_LANE)', () => {
+  it('from a hex an enemy launcher can actually reach, on every seed', () => {
+    for (const seed of LANE_SEEDS) {
+      const map = generateMap(WIDTH, HEIGHT, seed);
+      const reachable = groundCostsFrom(map, ALL_SPAWN_HEXES[0]);
+
+      for (const player of ['p1', 'p2'] as const) {
+        const zone = RULES.homeZoneRows[player];
+        for (let col = 0; col < WIDTH; col++) {
+          for (let row = zone.min; row <= zone.max; row++) {
+            const site = offsetToAxial({ col, row });
+            const usable = firingPositions(map, site).filter((hex) =>
+              reachable.has(hexKey(hex)),
+            );
+            if (usable.length === 0) {
+              throw new Error(`seed ${seed}: ${col},${row} has no reachable firing lane`);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('the line primitive is hexLine: a blocked shot has a mountain on hexLine’s interior', () => {
+    // Guards against a re-derived line (gotcha 12) creeping into the check.
+    const map = generateMap(WIDTH, HEIGHT, 42);
+    const site = offsetToAxial({ col: 5, row: 2 });
+    for (const origin of hexesInRange(site, RULES.missileRange)) {
+      const interior = hexLine(origin, site).slice(1, -1);
+      const blocked = interior.some(
+        (hex) => tileAt(map, axialToOffset(hex))?.terrain === 'mountain',
+      );
+      expect(lineOfFireClear(map, origin, site)).toBe(!blocked);
+    }
   });
 });

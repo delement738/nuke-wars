@@ -9,7 +9,14 @@ import {
   offsetToAxial,
   type Hex,
 } from '../sim/hex';
-import { generateMap, makeRng, type MapData, type TileData } from '../sim/map';
+import {
+  generateMap,
+  lineOfFireClear,
+  makeRng,
+  tileAt,
+  type MapData,
+  type TileData,
+} from '../sim/map';
 import { validateLaunch as validateLaunchOrder } from '../sim/missiles';
 import {
   groundBudget,
@@ -36,6 +43,7 @@ import {
 import { filterForPlayer } from '../sim/visibility';
 import {
   cpuOrders,
+  dangerHexes,
   doomedLaunchers,
   droneDangerHexes,
   hardFiringSolution,
@@ -43,6 +51,7 @@ import {
   pickAdvanceDestination,
   SAFETY_DETOUR_TOLERANCE,
   selectTarget,
+  siteGoal,
   sweepLanes,
   type AdvanceGoal,
   type CpuDifficulty,
@@ -1111,5 +1120,184 @@ describe('a launcher under an inbound missile gets its last shot (HARD)', () => 
   it('is a HARD behaviour: MEDIUM still walks the doomed launcher forward', () => {
     const orders = cpuOrders(view(), 'medium', player, makeRng(1));
     expect(orders.find((o) => o.unitId === 'L1')?.type).not.toBe('LAUNCH');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Line of fire (spec §10, 2026-09-28) — every tier must know about lanes
+// ---------------------------------------------------------------------------
+
+describe('line of fire — the CPU never plans a shot a mountain blocks', () => {
+  const player: PlayerId = 'p1';
+  const at = (row: number, col = 8): Hex => offsetToAxial({ col, row });
+  const from = at(10);
+
+  /** An all-plains board with these hexes turned to mountain. */
+  function ridge(...hexes: Hex[]): MapData {
+    const map = plainsMap();
+    for (const hex of hexes) {
+      const tile = tileAt(map, axialToOffset(hex));
+      if (!tile) throw new Error('fixture mountain off the map');
+      tile.terrain = 'mountain';
+    }
+    return map;
+  }
+
+  it('HARD: a site behind a ridge is not a firing solution; the next tier is', () => {
+    const map = ridge(at(7));
+    expect(lineOfFireClear(map, from, at(5))).toBe(false); // fixture sanity
+    const view = makeView(map, [makeUnit('L1', player, 'launcher', from)], {
+      staticReveals: [staticReveal(at(5))],
+      contacts: [{ hex: at(11), source: 'RECON' }],
+    });
+    expect(hardFiringSolution(view, from)).toEqual(at(11));
+
+    // Control: the same site on open ground is taken first, as before.
+    const open = makeView(plainsMap(), view.units, view.intel);
+    expect(hardFiringSolution(open, from)).toEqual(at(5));
+  });
+
+  it('MEDIUM: holds fire on a blocked contact and advances instead', () => {
+    const units = [makeUnit('L1', player, 'launcher', from)];
+    const intel = { contacts: [contact(at(8))] };
+
+    const blocked = cpuOrders(makeView(ridge(at(9)), units, intel), 'medium', player, makeRng(1));
+    expect(blocked.find((o) => o.unitId === 'L1')?.type).not.toBe('LAUNCH');
+
+    const open = cpuOrders(makeView(plainsMap(), units, intel), 'medium', player, makeRng(1));
+    expect(open.find((o) => o.unitId === 'L1')).toEqual({
+      type: 'LAUNCH',
+      unitId: 'L1',
+      target: at(8),
+    });
+  });
+
+  it('HARD: walks to a hex with a clear lane, not to the edge of range behind a ridge', () => {
+    // A wall across row 7 in front of the site: most in-range hexes near the
+    // launcher are blind to it, and the old "distance − 6" score called every
+    // one of them a firing position.
+    const wall = [5, 6, 7, 8, 9, 10, 11].map((col) => at(7, col));
+    const map = ridge(...wall);
+    const site = at(4);
+    const launcher = makeUnit('L1', player, 'launcher', from);
+    const believed = believedStateFor(map, [launcher]);
+    const goal = siteGoal(map, site);
+
+    if (goal.kind !== 'site') throw new Error('siteGoal returned a row goal');
+    const toLane = (hex: Hex) => Math.min(...goal.firingHexes.map((f) => distance(hex, f)));
+
+    // Fixture sanity: the launcher starts in range but blind, and the reachable
+    // ground holds hexes that are in range and still blind — the trap.
+    expect(distance(from, site)).toBeLessThanOrEqual(RULES.missileRange);
+    expect(lineOfFireClear(map, from, site)).toBe(false);
+    const reachable = [...reachableHexes(believed, launcher).values()]
+      .map((r) => r.hex)
+      .filter((hex) => hexKey(hex) !== hexKey(from));
+    expect(
+      reachable.some(
+        (hex) => distance(hex, site) <= RULES.missileRange && !lineOfFireClear(map, hex, site),
+      ),
+    ).toBe(true);
+
+    const destination = pickAdvanceDestination(believed, launcher, goal, new Set(), null);
+    expect(destination).not.toBeNull();
+    // It closes on the nearest lane as far as this round allows.
+    expect(toLane(destination!)).toBe(Math.min(...reachable.map(toLane)));
+    expect(toLane(destination!)).toBeLessThan(toLane(from));
+  });
+
+  it('a site goal on open ground scores exactly like the old range-disk score', () => {
+    // Every hex already within range is a firing hex, so HARD still stops at
+    // the edge of its reach on a board with no ridge in the way.
+    const map = plainsMap();
+    const launcher = makeUnit('L1', player, 'launcher', at(16));
+    const believed = believedStateFor(map, [launcher]);
+    const site = at(4);
+    const destination = pickAdvanceDestination(believed, launcher, siteGoal(map, site), new Set(), null);
+    const old = pickAdvanceDestination(
+      believed,
+      launcher,
+      { kind: 'site', site, firingHexes: [] }, // empty: the documented fallback
+      new Set(),
+      null,
+    );
+    expect(destination).toEqual(old);
+  });
+
+  it('baseVolley counts only launchers with a clear line to the base', () => {
+    const base: VisibleStaticReveal = { hex: at(5), kind: 'interceptor', round: 1 };
+    const partner = at(9, 10);
+    const units = [
+      makeUnit('L1', player, 'launcher', from),
+      makeUnit('L2', player, 'launcher', partner),
+    ];
+    const map = ridge(at(7));
+    // Fixture sanity: L1 is blocked, L2 is not, and both are in range.
+    expect(lineOfFireClear(map, from, base.hex)).toBe(false);
+    expect(lineOfFireClear(map, partner, base.hex)).toBe(true);
+    expect(distance(partner, base.hex)).toBeLessThanOrEqual(RULES.missileRange);
+
+    const atBase = (orders: Order[]) =>
+      orders.filter((o) => o.type === 'LAUNCH' && hexKey(o.target) === hexKey(base.hex));
+
+    // One clear launcher cannot saturate a base, so there is no volley at all.
+    const blocked = cpuOrders(makeView(map, units, { staticReveals: [base] }), 'hard', player, makeRng(1));
+    expect(atBase(blocked)).toEqual([]);
+
+    const open = cpuOrders(makeView(plainsMap(), units, { staticReveals: [base] }), 'hard', player, makeRng(1));
+    expect(atBase(open)).toHaveLength(RULES.interceptsPerRound + 1);
+  });
+
+  it('dead hand: never aims at a known site it has no line to', () => {
+    const map = ridge(at(7));
+    const units = [makeUnit('L1', player, 'launcher', from)];
+    const view = makeView(map, units, { staticReveals: [staticReveal(at(5))] }, {
+      phase: 'DEAD_HAND_PHASE',
+      deadHandFor: player,
+    });
+
+    for (const difficulty of ['easy', 'medium', 'hard'] as const) {
+      const [order] = cpuOrders(view, difficulty, player, makeRng(3));
+      expect(order?.type).toBe('LAUNCH');
+      if (order?.type !== 'LAUNCH') continue;
+      expect(hexKey(order.target)).not.toBe(hexKey(at(5)));
+      expect(validateLaunchOrder(believedStateFor(map, units), player, order).legal).toBe(true);
+    }
+  });
+
+  it('HARD’s danger map leaves out hexes a contact has no line to — a ridge is cover', () => {
+    const enemy = at(6);
+    const map = ridge(at(7));
+    const view = makeView(map, [], { contacts: [contact(enemy)] });
+    const danger = dangerHexes(view);
+
+    // Directly behind the ridge from the contact: in reach, but blind.
+    expect(distance(enemy, at(8))).toBeLessThanOrEqual(RULES.missileSpeed);
+    expect(danger.has(hexKey(at(8)))).toBe(false);
+    // In the open beside it: still danger. And on open ground, the old disc.
+    expect(danger.has(hexKey(at(6, 9)))).toBe(true);
+    expect(dangerHexes(makeView(plainsMap(), [], { contacts: [contact(enemy)] })).has(hexKey(at(8)))).toBe(true);
+  });
+
+  it('no tier ever hands the engine a LINE_BLOCKED launch on a real board', () => {
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const map = generateMap(undefined, undefined, seed);
+      for (const difficulty of ['easy', 'medium', 'hard'] as const) {
+        const rng = makeRng(seed);
+        const state = startMatch(map, {
+          p1: sandboxSetup(map, 'p1', rng),
+          p2: sandboxSetup(map, 'p2', rng),
+        });
+        for (const p of PLAYERS) {
+          for (let round = 0; round < 8; round++) {
+            const orders = cpuOrders(filterForPlayer(state, p), difficulty, p, makeRng(seed * 10 + round));
+            for (const order of orders) {
+              if (order.type !== 'LAUNCH') continue;
+              expect(validateLaunchOrder(state, p, order).legal).toBe(true);
+            }
+          }
+        }
+      }
+    }
   });
 });

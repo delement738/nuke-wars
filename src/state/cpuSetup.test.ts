@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { RULES } from '../sim/defs';
-import { axialToOffset, distance, hexLine, offsetToAxial, type Hex } from '../sim/hex';
-import { generateMap, makeRng } from '../sim/map';
+import { axialToOffset, distance, hexKey, hexLine, offsetToAxial, type Hex } from '../sim/hex';
+import { generateMap, lineOfFireClear, makeRng, type MapData } from '../sim/map';
 import { validateSetup } from '../sim/setup';
 import { PLAYERS, type PlayerId } from '../sim/types';
-import { HARD_SITE_GAP_MAX, cpuSetup } from './cpuSetup';
+import { HARD_SITE_GAP_MAX, approachLanes, cpuSetup } from './cpuSetup';
 import { sandboxSetup } from './sandbox';
 
 const SEEDS = Array.from({ length: 200 }, (_, i) => 1000 + i);
@@ -128,5 +128,37 @@ describe('cpuSetup', () => {
       expect(rows.size).toBe(zone.max - zone.min + 1);
       expect(cols.size).toBe(16);
     }
+  });
+});
+
+describe('approachLanes — line of fire (spec §10, 2026-09-28)', () => {
+  function plainsWith(mountain: Hex): MapData {
+    const tiles = [];
+    for (let col = 0; col < 16; col++) {
+      for (let row = 0; row < 19; row++) {
+        const terrain =
+          col === axialToOffset(mountain).col && row === axialToOffset(mountain).row
+            ? ('mountain' as const)
+            : ('plains' as const);
+        tiles.push({ col, row, terrain });
+      }
+    }
+    return { width: 16, height: 19, tiles };
+  }
+
+  it('drops a lane a mountain blocks — no missile can fly it, so covering it defends nothing', () => {
+    const site = offsetToAxial({ col: 8, row: 15 }); // p1's home zone
+    const blocker = offsetToAxial({ col: 8, row: 12 });
+    const crosses = (lane: Hex[]) =>
+      lane.slice(0, -1).some((hex) => hexKey(hex) === hexKey(blocker)); // last hex is the site
+
+    const open = approachLanes(plainsWith(offsetToAxial({ col: 0, row: 0 })), 'p1', site);
+    const map = plainsWith(blocker);
+    const lanes = approachLanes(map, 'p1', site);
+
+    expect(open.some(crosses)).toBe(true); // fixture sanity: the lanes exist
+    expect(lanes.some(crosses)).toBe(false);
+    expect(lanes).toHaveLength(open.filter((lane) => !crosses(lane)).length);
+    expect(lineOfFireClear(map, offsetToAxial({ col: 8, row: 9 }), site)).toBe(false);
   });
 });
