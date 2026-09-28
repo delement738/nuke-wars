@@ -20,7 +20,7 @@ import type { CpuDifficulty } from './cpu';
 import type { Hex } from '../sim/hex';
 import type { MapData } from '../sim/map';
 import type { PlayerId, UnitId, VisibleGameState } from '../sim/types';
-import { matchStore, type LogEntry } from './match';
+import { matchStore, type LogEntry, type Replay } from './match';
 import type { OrderDraft, OrderMode } from './orders';
 import { placementComplete, type PlacementDraft } from './placement';
 import type { BattleReport } from './reports';
@@ -88,6 +88,15 @@ export function useLog(): readonly LogEntry[] {
  */
 export function useReport(): BattleReport | null {
   return useStore(matchStore, (state) => state.reports[state.viewer][0] ?? null);
+}
+
+/**
+ * The viewer's pending replay of the last resolution, or null (presentation
+ * phase, session 1). Keyed on `viewer` inside the hook like every selector here
+ * (gotcha 36): the other seat's replay waits for its own player.
+ */
+export function useReplay(): Replay | null {
+  return useStore(matchStore, (state) => state.replay[state.viewer]);
 }
 
 /** Whose view is on screen. */

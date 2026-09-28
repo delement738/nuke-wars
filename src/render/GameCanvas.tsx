@@ -20,15 +20,25 @@
 //      any one match: it is drawn on the setup screen too;
 //   3. **pieces**, on every state change — units, intel and the selection;
 //   4. **the order overlay** and 5. **the setup overlay**, both hover-driven and
-//      therefore redrawn far more often than the board is.
+//      therefore redrawn far more often than the board is;
+//   6. **the replay** (presentation phase, session 1): while the viewer has an
+//      unwatched resolution, the board shows the view from *before* it and a
+//      function on Pixi's ticker plays the round's events over it, frame by
+//      frame, from `./timeline`. When it ends — or is skipped — the store
+//      clears the replay and effect 3 settles on the current view.
+//
+// **Nothing plays during a hotseat handoff, and that is structural** (gotchas
+// 58, 62): `App` unmounts this whole component while the screen is blanked, so
+// there is no ticker to run. Each player's replay waits in the store until they
+// take the screen.
 //
 // Exactly one of (3, 4) and (5) has anything to draw at a time: `useView()` is
 // null while the human is still placing their assets, because a `GameState`
 // only exists on the far side of `startMatch` (build-order step 10b).
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Application, Container } from 'pixi.js';
-import { hoverHex, pickHex } from '../state/match';
+import { Application, Container, type Ticker } from 'pixi.js';
+import { finishReplay, hoverHex, pickHex } from '../state/match';
 import { targetsFor } from '../state/orders';
 import {
   exclusionHexes,
@@ -42,11 +52,21 @@ import {
   useMap,
   useOrderMode,
   usePlaced,
+  useReplay,
   useSelected,
   useSelectedSlot,
   useSelectedUnitId,
   useView,
+  useViewer,
 } from '../state/useMatch';
+import {
+  drawCaption,
+  drawReplayLabels,
+  drawReplayShapes,
+  labelKey,
+  verdictBanner,
+} from './playbackDraw';
+import { buildTimeline, captionAt, frameAt, hiddenUnitIds } from './timeline';
 import {
   clearLayer,
   drawCoverage,
@@ -91,6 +111,12 @@ interface Scene {
   orders: Container;
   intel: Container;
   units: Container;
+  /** The replay's moving effects and their words — above the units, because an
+   *  impact or a sliding launcher is the thing to look at while it plays. */
+  fxShapes: Container;
+  fxLabels: Container;
+  /** Screen-space, outside `world`: the replay caption stays put when panning. */
+  caption: Container;
 }
 
 export default function GameCanvas() {
@@ -136,8 +162,13 @@ export default function GameCanvas() {
       const orders = new Container();
       const intel = new Container();
       const units = new Container();
-      world.addChild(terrain, coverage, placement, selection, orders, intel, units);
-      app.stage.addChild(world);
+      const fxShapes = new Container();
+      const fxLabels = new Container();
+      world.addChild(
+        terrain, coverage, placement, selection, orders, intel, units, fxShapes, fxLabels,
+      );
+      const caption = new Container();
+      app.stage.addChild(world, caption);
 
       attachCamera(app, world, dragRef);
       setScene({
@@ -150,6 +181,9 @@ export default function GameCanvas() {
         orders,
         intel,
         units,
+        fxShapes,
+        fxLabels,
+        caption,
       });
     })();
 
@@ -176,6 +210,8 @@ export default function GameCanvas() {
   const orderMode = useOrderMode();
   const hovered = useHovered();
   const draft = useDraft();
+  const replay = useReplay();
+  const viewer = useViewer();
 
   // The unit being ordered, and the hexes it may legally be sent to. Computed
   // here rather than in `draw.ts` because deciding what is legal is state's job
@@ -232,6 +268,7 @@ export default function GameCanvas() {
         // `pickHex`, not `selectHex`: what a click *means* depends on whether an
         // order is being composed, and that is a state decision. The render
         // layer reports where the player clicked and nothing else.
+        // During a replay the store reads the click as "skip".
         if (dragRef.current.moved <= DRAG_SLOP) pickHex(hex);
       },
       hoverHex,
@@ -253,10 +290,14 @@ export default function GameCanvas() {
       clearLayer(scene.units);
       return;
     }
-    drawCoverage(scene.coverage, view);
-    drawIntel(scene.intel, view.intel);
-    drawUnits(scene.units, view.units);
-  }, [scene, view]);
+    // While a replay is pending the board is the view from BEFORE the round —
+    // the backdrop its events play over. Effect 6 animates on top; when it
+    // finishes, `replay` goes null and this redraws the current view: the settle.
+    const board = replay ? replay.from : view;
+    drawCoverage(scene.coverage, board);
+    drawIntel(scene.intel, board.intel);
+    drawUnits(scene.units, board.units);
+  }, [scene, view, replay]);
 
   useEffect(() => {
     if (!scene) return;
@@ -268,7 +309,7 @@ export default function GameCanvas() {
   // board does — redrawing units and intel at that rate would be waste.
   useEffect(() => {
     if (!scene) return;
-    if (!view) {
+    if (!view || replay) {
       clearLayer(scene.orders);
       return;
     }
@@ -279,7 +320,7 @@ export default function GameCanvas() {
       hovered,
       draft,
     });
-  }, [scene, view, orderUnit, orderMode, targets, hovered, draft]);
+  }, [scene, view, replay, orderUnit, orderMode, targets, hovered, draft]);
 
   // --- 5. the setup overlay (build-order step 10b) ---------------------------
   // Also hover-driven, and also cleared on the transition — here the other way
@@ -298,6 +339,75 @@ export default function GameCanvas() {
       hovered,
     });
   }, [scene, view, setupTargets, setupExclusion, setupSlots, setupSelectedHex, hovered]);
+
+  // --- 6. the replay (presentation phase, session 1) -------------------------
+  // Pixi's ticker calls `tick` once per frame with the time since the last one.
+  // The timeline turns elapsed time into "which clips are on screen and how far
+  // through", and the draw functions paint exactly that — so the only state this
+  // effect owns is a clock. Skipping and finishing are the same act: ask the
+  // store to clear the viewer's replay.
+  useEffect(() => {
+    if (!scene || !replay) return;
+
+    const timeline = buildTimeline(replay.events);
+    const ctx = { own: replay.from.units };
+    let elapsed = 0;
+    let hiddenKey = '';
+    let labelsKey = '';
+    let captionKey = '';
+
+    const tick = (ticker: Ticker) => {
+      elapsed += ticker.deltaMS;
+      if (elapsed >= timeline.duration) {
+        finishReplay();
+        return;
+      }
+      const frames = frameAt(timeline, elapsed);
+
+      drawReplayShapes(scene.fxShapes, frames, ctx);
+
+      // The static pieces are redrawn only when the set a clip is standing in
+      // for changes — a launcher starts sliding, the drone takes off.
+      const hidden = hiddenUnitIds(frames);
+      const nextHidden = [...hidden].join(',');
+      if (nextHidden !== hiddenKey) {
+        hiddenKey = nextHidden;
+        drawUnits(scene.units, replay.from.units.filter((unit) => !hidden.has(unit.id)));
+      }
+
+      const nextLabels = labelKey(frames);
+      if (nextLabels !== labelsKey) {
+        labelsKey = nextLabels;
+        drawReplayLabels(scene.fxLabels, frames, ctx);
+      }
+
+      const caption = captionAt(timeline, elapsed);
+      const banner = verdictBanner(frames, viewer);
+      const { width, height } = scene.app.screen;
+      const nextCaption = `${caption}|${banner}|${width}x${height}`;
+      if (nextCaption !== captionKey) {
+        captionKey = nextCaption;
+        drawCaption(scene.caption, { width, height }, replay.round, caption, banner);
+      }
+    };
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === ' ' || event.key === 'Escape') {
+        event.preventDefault();
+        finishReplay();
+      }
+    };
+
+    scene.app.ticker.add(tick);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      scene.app.ticker.remove(tick);
+      window.removeEventListener('keydown', onKey);
+      clearLayer(scene.fxShapes);
+      clearLayer(scene.fxLabels);
+      clearLayer(scene.caption);
+    };
+  }, [scene, replay, viewer]);
 
   return <div ref={hostRef} className="canvas-host" />;
 }

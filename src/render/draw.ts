@@ -47,7 +47,7 @@ import { HEX, hexCenter, hexCorners } from './geometry';
 // enemy's own colours, because nothing on this map is ever the enemy's state —
 // it is your intel about them (spec §11).
 
-const COLOR = {
+export const COLOR = {
   own: 0x5aa9ff,
   ownDestroyed: 0x4a5563,
   enemy: 0xff5f4a,
@@ -92,7 +92,7 @@ const FILL: Record<Terrain, number> = {
  * play. `MaskedStaticKind` never contains 'decoy', so an enemy site can only
  * ever be drawn 'B'.
  */
-const GLYPH: Record<UnitKind, string> = {
+export const GLYPH: Record<UnitKind, string> = {
   launcher: 'L',
   interceptor: 'I',
   drone: 'D',
@@ -100,14 +100,14 @@ const GLYPH: Record<UnitKind, string> = {
   decoy: 'X',
 };
 
-const GLYPH_STYLE = new TextStyle({
+export const GLYPH_STYLE = new TextStyle({
   fontFamily: 'monospace',
   fontSize: 15,
   fontWeight: 'bold',
   fill: COLOR.glyph,
 });
 
-const INTEL_STYLE = new TextStyle({
+export const INTEL_STYLE = new TextStyle({
   fontFamily: 'monospace',
   fontSize: 15,
   fontWeight: 'bold',
@@ -134,12 +134,12 @@ export function clearLayer(layer: Container): void {
   clear(layer);
 }
 
-function centerOf(hex: Hex): { x: number; y: number } {
+export function centerOf(hex: Hex): { x: number; y: number } {
   const { col, row } = axialToOffset(hex);
   return hexCenter(col, row);
 }
 
-function glyphAt(text: string, x: number, y: number, style: TextStyle): Text {
+export function glyphAt(text: string, x: number, y: number, style: TextStyle): Text {
   const label = new Text({ text, style });
   label.anchor.set(0.5);
   label.position.set(x, y);

@@ -27,6 +27,7 @@ import { opponentOf } from '../sim/types';
 import type { CpuDifficulty } from '../state/cpu';
 import {
   endTurn,
+  finishReplay,
   newMatch,
   resign,
   setDifficulty,
@@ -37,6 +38,7 @@ import {
 import {
   useDifficulty,
   useIsHotseat,
+  useReplay,
   useSeed,
   useView,
   useViewer,
@@ -55,6 +57,7 @@ export default function Hud() {
   const seed = useSeed();
   const difficulty = useDifficulty();
   const hotseat = useIsHotseat();
+  const replay = useReplay();
 
   // `App` only mounts this once a match exists, so a null view is unreachable —
   // but `useView()` is nullable because the setup screen legitimately has no
@@ -68,6 +71,28 @@ export default function Hud() {
   return (
     <div className="hud">
       <div className="column left">
+        {/* While the viewer's replay plays, the board is last round's picture,
+            so the order controls and the new round's status would be talking
+            about a board that is not on screen (and would spoil the outcome).
+            They come back the moment the replay ends or is skipped. */}
+        {replay ? (
+          <section className="panel">
+            <h2>
+              Replaying round {replay.round}
+              <span className="viewing">viewing {viewer.toUpperCase()}</span>
+            </h2>
+            <p className="muted">
+              Watch what happened, then give your orders. The log fills in when
+              the replay ends.
+            </p>
+            <div className="buttons">
+              <button type="button" onClick={() => finishReplay()}>
+                Skip replay (Space)
+              </button>
+            </div>
+          </section>
+        ) : (
+        <>
         <section className="panel">
           <h2>
             Round {view.round}
@@ -119,6 +144,8 @@ export default function Hud() {
         <OrderPanel />
 
         <SelectionPanel />
+        </>
+        )}
 
         <section className="panel">
           <h2>{hotseat ? 'Match' : 'Sandbox'}</h2>
