@@ -2,7 +2,16 @@
 
 *Written 2026-08-15, after the first two-human playtest. Measured against commit `88ff6ad` (end of build-order step 10c).*
 
-**This is a design study, not a backlog.** `docs/v2-backlog.md` is deferred-feature reference and must never be implemented from; this file is the opposite — it is a set of proposals meant to be built, one per session, with a `npm run soak` before and after each. Nothing here is implemented yet.
+> **STATUS 2026-09-28 — CLOSED. Do not build anything further from this file.**
+> This was a set of proposals, and every one of them has now been decided:
+> - **01 Mountains block line of fire: BUILT** (2026-09-28, spec §10). The spec is the source of truth for it; the section below is history.
+> - **02 Bunker repair: SET ASIDE** by the designer. It would raise Armistice and slow the endgame, and the "race" it targeted was mostly fixed by other changes.
+> - **03 Dug-in launchers: SET ASIDE.** The problem it solves barely shows up in measurement.
+> - **04 Knobs / "cheaper knobs": not scheduled.** Hard mirror Armistice of ~13–18% was accepted as is. The only knob changed was `droneRespawnDelay` 2 → 1, for its own reasons (spec amendment of 2026-09-28).
+>
+> 02 and 03 are recorded in `docs/v2-backlog.md` under "Considered and set aside" as **optional ideas, not V2 work items**. They get built only if the designer explicitly picks one after human playtesting. The V1 rules layer is frozen (spec §8). The analysis below is kept for its reasoning, and its numbers are from 2026-08-15, before the interceptor redesign, flight time and line of fire.
+
+**This was a design study, not a backlog.** It was written as a set of proposals meant to be built one per session, with a `npm run soak` before and after each. See the status box above for what became of each one.
 
 ---
 
@@ -95,6 +104,8 @@ All three are sim-layer rules of a few lines. None adds an asset type (§2 roste
 
 ### 01 — Mountains block line of fire
 
+> **BUILT 2026-09-28** (spec §10, §7 `NO_FIRING_LANE`). The spec wins wherever it differs from this section.
+
 **Rule:** a LAUNCH is illegal if any hex *strictly between* origin and target is a mountain. Interior only.
 
 **Being in range stops meaning you can fire.** Driving a launcher within 6 of a known site is no longer sufficient — you need range *and* a clear lane, and half of all lanes are blocked. Firing positions become terrain you maneuver for; ridges become shields; placing your bunker *behind* a ridge becomes genuine geographic defense, the first defensive decision in the game that is not just hope. Recon acquires a second job: scouting for lanes, not only for sites.
@@ -106,6 +117,8 @@ All three are sim-layer rules of a few lines. None adds an asset type (§2 roste
 Cost: ~10 lines in `missiles.ts`, one validator rule in `map.ts`, one `TERRAIN_GEN` constant.
 
 ### 02 — The bunker repairs between strikes
+
+> **SET ASIDE 2026-09-28. Not built, not scheduled** (see the status box at the top).
 
 **Rule:** at the end of any round in which a bunker **or decoy** took no hits, it returns to full HP. Written to name both kinds, exactly as `BUNKER_HIT` already is (§6) — free at 1 HP, and it keeps §12's "raise the decoy to 2 HP" lever symmetric by construction.
 
@@ -125,6 +138,8 @@ This promotes a tactic the spec **already describes** — the two-missile alpha 
 Cost: ~6 lines in `resolve.ts` phase 3, one `defs.ts` field.
 
 ### 03 — Dug-in launchers
+
+> **SET ASIDE 2026-09-28. Not built, not scheduled** (see the status box at the top).
 
 **Rule:** a launcher that receives **no order** for a full round is dug in, and is not revealed by an enemy recon swath. Moving, marching or firing un-digs it immediately. **Emission detection is untouched** — going loud still finds you.
 
@@ -170,6 +185,8 @@ One per soak run.
 ---
 
 ## Session plan
+
+> **Historical. Only session 01 ran.** 02 and 03 were set aside and 04 was not needed (see the status box at the top).
 
 Project workflow already has the right shape: one system per session, `npm run soak` before and after anything touching `defs.ts` or `cpu.ts`. All three fixes touch balance, so all three need it. Use `SOAK_MATCHES=100` for numbers tight enough to trust.
 

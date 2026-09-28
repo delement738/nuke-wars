@@ -6,6 +6,28 @@ Use this only as a reference for future features after V1 ships.
 
 ---
 
+## Considered and set aside (2026-09-28) — OPTIONAL, not part of any V2 plan
+
+> **Read this before planning V2.** The items in this section are **not scheduled,
+> not V2 scope, and must never be built by default** when V2 work starts. They
+> are ideas that were designed, argued for and then deliberately set aside when
+> the V1 rules were frozen. Each is here only so the reasoning is not lost. One
+> of them gets built only if the designer **explicitly picks it** in a
+> later session, normally because human playtesting showed the problem it
+> solves. A V2 roadmap that lists them as work items is wrong.
+
+The full design case for the first two is in `docs/v2-gameplay-analysis.md`
+(proposals 02 and 03). Each would be a rules change, with its own spec amendment
+and a before/after `npm run soak`.
+
+| Idea | What it would do | Why it was set aside | Revisit only if... |
+|---|---|---|---|
+| **Bunker repair** | A bunker (and decoy, per §12) that takes no hits in a round returns to full HP, so a kill needs two hits landing in the same round. | Its own brief listed "Armistice ↑" as its main risk. Hard mirror Armistice was already 16–17%, and the designer judged that a longer, stickier endgame was not worth it. Most of the "race" it was meant to fix went away after the interceptor redesign, flight time and line of fire (matches ~4–5 rounds in the 2026-08-15 playtest, ~13.5 now). | Human games show a found bunker dies too easily, i.e. finding the site still ends the match with nothing left to play. |
+| **Dug-in launchers** | A launcher given no order for a full round is not revealed by an enemy recon swath (emission detection unchanged). Rewards holding a firing lane. | The problem it solves barely appears in measurement: at HARD, launchers killed is ~0.23 per side per match. It adds a flag, a recon filter and CPU retuning for little change. | Human games show launchers being picked off by drone sightings feels unfair, or holding a lane never feels worth doing. |
+| **Defender "hold fire" order** | An interceptor base may be told not to engage for a round, so it stays hidden (no `BASE_EXPOSED`). | A new order kind (sim, UI, CPU) for a defence that already works: bases exposed ~0.5 and killed ~0.1 per side per match at HARD. | Human games show the defence feels passive, or exposure feels like a forced penalty. |
+
+---
+
 ## Cut in the 2026-08-11 V1 pivot
 
 These systems were in the *pre-pivot* V1 spec and were cut to shrink scope and

@@ -321,9 +321,10 @@ export interface GameState {
   intel: Record<PlayerId, PlayerIntel>;
   /**
    * Rounds until a downed drone returns (spec §11). 0 = the drone is alive.
-   * Set to 2 on death, decremented at the start of each order phase, and the
-   * replacement spawns at the fixed drone spawn hex when it reaches 0 — which
-   * gives exactly one full blind round in between. Respawns are unlimited.
+   * Set to `RULES.droneRespawnDelay` (1) on death, decremented at the start of
+   * each order phase, and the replacement spawns at the fixed drone spawn hex
+   * when it reaches 0 — so at 1 there is no blind round: the drone is back for
+   * the very next order phase. Respawns are unlimited.
    */
   droneRespawnIn: Record<PlayerId, number>;
   /** Whose final retaliation round is running, when phase is DEAD_HAND_PHASE. */

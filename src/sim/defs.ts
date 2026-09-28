@@ -342,11 +342,17 @@ export const RULES = {
   interceptsPerRound: 1,
 
   /**
-   * Rounds from a drone's death to its replacement, which gives exactly one
-   * full blind round in between (spec §11). Set on death, decremented at the
-   * start of each order phase, respawn at 0. Respawns are unlimited.
+   * Rounds from a drone's death to its replacement (spec §11). Set on death,
+   * decremented at the start of each order phase, respawn at 0. Respawns are
+   * unlimited.
+   *
+   * 1 = no blind round: a drone downed in round N is back at its spawn hex for
+   * round N+1. Lowered from 2 on 2026-09-28 (sim freeze) — losing the drone's
+   * forward position and flying back out from the home edge is cost enough;
+   * a whole round with no recon on top of that was judged too harsh. 2 would
+   * restore the old full blind round.
    */
-  droneRespawnDelay: 2,
+  droneRespawnDelay: 1,
 
   /**
    * Minimum distance from an interceptor base to its owner's bunker AND decoy
