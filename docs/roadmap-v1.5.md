@@ -29,7 +29,7 @@ When a session finishes: tick it here, add its dated entry to `docs/history.md`,
 ### Part 1 — cosmetics (the game as it is today, looking finished)
 
 1. ✅ **Live on Vercel + CI + docs skeleton** (2026-09-29). The current game (CPU + hotseat) deployed from `main`, with a preview link on every pull request. GitHub Actions runs lint, test and build on every PR. This roadmap, `docs/history.md` (the build history moved out of `CLAUDE.md`), and skeletons for `deploy.md`, `art-direction.md`, `protocol.md` and `playtests.md`.
-2. **Identity: title screen and art direction.** Name treatment, palette, type, the title screen built around the designer's artwork. Writes `docs/art-direction.md`, which Sessions 3–4 follow.
+2. ✅ **Identity: title screen and art direction** (2026-09-29). A title screen with the stencilled name and tagline over a war map that slides left at 20 px/s, drawn from the game's own emblems in the style of the designer's reference art; favicon and page title; `docs/art-direction.md` written for Sessions 3–4. The phone notice was pulled forward from Session 7 onto the title screen.
 3. **Board art, event log and end screen.** Terrain and piece styling to the art direction; the event log restyled; a proper end-of-match screen on top of the existing final reveal (gotcha 73). Presentation only; nothing new may leak (gotchas 20, 31, 60).
 4. **Sound and settings.** Launch, intercept, impact and UI sounds; a settings panel (volume, mute, replay speed if wanted). Settings are per-browser, no accounts.
 
@@ -39,6 +39,6 @@ When a session finishes: tick it here, add its dated entry to `docs/history.md`,
 
 5. **Authority split refactor.** Separate "who resolves the match" from "who draws it", so the client can be fed by either the local store (CPU, hotseat) or a server. No behaviour change: CPU and hotseat play exactly as before, and the test suite proves it.
 6. **Server, protocol and rooms** (spec step 11). A Node WebSocket server: create/join a room by link, collect both players' orders, run `resolve()` authoritatively, send each player only their filtered view. Writes `docs/protocol.md`.
-7. **Order timer, reconnect and lobby UI** (spec step 12). The 25 s timer and ready-up, reconnect by token after a dropped connection, the lobby and "waiting for opponent" screens, the phone notice.
+7. **Order timer, reconnect and lobby UI** (spec step 12). The 25 s timer and ready-up, reconnect by token after a dropped connection, the lobby and "waiting for opponent" screens. (The phone notice was done early, in Session 2.)
 8. **Railway deploy and hardening** (spec step 13). The server live on Railway, the Vercel client pointed at it; message validation, rate limits, room cleanup, basic logging. Extends `docs/deploy.md`.
 9. **Beta and launch.** Play with invited testers, fix what they find, write it up in `docs/playtests.md`, tag `v1.5`.

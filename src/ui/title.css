@@ -1,0 +1,230 @@
+/* UI LAYER — the title screen (V1.5 Session 2). Palette and type are named in
+ * docs/art-direction.md; the map colours match MAP_INK in titleBackdrop.ts.
+ *
+ * Three layers, bottom to top:
+ *   .title-drift  the map tile, repeated, sliding left at 20 px/s
+ *   .title-lamp   the bunker: dark edges, a lamp pooled on the table, scanlines
+ *   .title-card   the name, the tagline and the buttons
+ */
+
+.title {
+  --paper: #e9e4d0;
+  --red: #b3362a;
+  --red-hot: #d0412f;
+  --ink: #29251f;
+  --bunker: #0b0f14;
+
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bunker);
+  color: var(--ink);
+  font-family: 'Oswald', 'Arial Narrow', ui-sans-serif, system-ui, sans-serif;
+}
+
+/* One tile wider than the screen, sliding left by exactly one tile per period
+ * and then jumping back: because the background repeats every tile, the jump
+ * lands on an identical picture and the loop has no visible seam. A transform
+ * (not background-position) keeps it on the GPU. */
+.title-drift {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(100% + var(--tile-w));
+  height: 100%;
+  background-repeat: repeat;
+  background-size: var(--tile-w) var(--tile-h);
+  background-position: 0 50%;
+  animation: title-drift var(--drift-period) linear infinite;
+  will-change: transform;
+}
+
+@keyframes title-drift {
+  from { transform: translateX(0); }
+  to { transform: translateX(calc(-1 * var(--tile-w))); }
+}
+
+/* The command bunker: a lamp over the plotting table, the room falling away to
+ * dark at the edges, and a faint scanline like a situation-room monitor. */
+.title-lamp {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.05) 0 1px,
+      transparent 1px 3px
+    ),
+    radial-gradient(
+      ellipse 75% 70% at 50% 45%,
+      rgba(255, 244, 214, 0.08) 0%,
+      rgba(11, 15, 20, 0) 45%,
+      rgba(11, 15, 20, 0.55) 80%,
+      rgba(11, 15, 20, 0.9) 100%
+    );
+}
+
+.title-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  padding: 24px 16px;
+}
+
+.title-card > * {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+/* A sheet of paper laid over the moving map so the name always reads. */
+.title-plate {
+  max-width: 100%;
+  padding: 18px clamp(20px, 4vw, 56px) 20px;
+  text-align: center;
+  background: rgba(233, 228, 208, 0.9);
+  border-top: 4px solid var(--ink);
+  border-bottom: 4px solid var(--ink);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(3px);
+}
+
+.title-name {
+  margin: 0;
+  font-family: 'Saira Stencil One', 'Impact', 'Arial Black', sans-serif;
+  font-weight: 400;
+  font-size: clamp(36px, 11vw, 156px);
+  line-height: 0.95;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--red);
+}
+
+.title-tagline {
+  margin: 10px 0 0;
+  font-weight: 700;
+  font-size: clamp(15px, 2.4vw, 32px);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+/* The console under the name: a dark strip of bunker so the small lettering
+ * reads over the moving map. */
+.title-console {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 16px clamp(16px, 3vw, 32px) 14px;
+  background: rgba(11, 15, 20, 0.84);
+  border: 1px solid rgba(233, 228, 208, 0.25);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+/* "—— STRATEGIC ASSETS DEPLOYED ——", as in the reference art. */
+.title-rule {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: min(560px, 100%);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--paper);
+}
+
+.title-rule::before,
+.title-rule::after {
+  content: '';
+  flex: 1;
+  height: 2px;
+  background: var(--paper);
+}
+
+.title-menu {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* Stencilled plates: ink with paper lettering; the main way in is red. */
+.title-btn {
+  min-width: 190px;
+  padding: 12px 20px;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--paper);
+  background: var(--ink);
+  border: 2px solid var(--paper);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background 120ms, transform 120ms;
+}
+
+.title-btn.primary { background: var(--red); }
+
+.title-btn:hover,
+.title-btn:focus-visible {
+  background: var(--red-hot);
+  transform: translateY(-1px);
+}
+
+.title-btn:focus-visible {
+  outline: 3px solid var(--paper);
+  outline-offset: 3px;
+}
+
+.title-press {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--paper);
+  animation: title-blink 1.6s steps(1, end) infinite;
+}
+
+@keyframes title-blink {
+  50% { opacity: 0.25; }
+}
+
+.title-notice {
+  max-width: 420px;
+  padding: 16px 18px;
+  text-align: center;
+  font-size: 16px;
+  color: var(--paper);
+  background: rgba(11, 15, 20, 0.88);
+  border: 2px solid var(--paper);
+}
+
+.title-notice p { margin: 0 0 10px; }
+
+.title-link {
+  font: inherit;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--paper);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Anyone who has asked their system for less motion gets a still map. */
+@media (prefers-reduced-motion: reduce) {
+  .title-drift,
+  .title-press { animation: none; }
+}
