@@ -87,9 +87,7 @@ import {
   drawTerrain,
   drawUnits,
 } from './draw';
-
-/** Zoom limits, shared by the wheel handler and the initial fit. */
-const ZOOM = { min: 0.5, max: 2.5 } as const;
+import { wheelZoomFactor, ZOOM, zoomAt } from './camera';
 
 /** Pointer travel (px) past which a drag is a pan, not a click on a tile. */
 const DRAG_SLOP = 4;
@@ -484,7 +482,7 @@ function fitToScreen(scene: Scene): void {
 }
 
 /**
- * Drag to pan, wheel to zoom.
+ * Drag to pan, wheel (or pinch) to zoom about the cursor.
  *
  * Listeners go on the canvas element rather than the Pixi stage so a drag that
  * starts on a tile still pans — the tiles are interactive (they are the click
@@ -519,10 +517,20 @@ function attachCamera(
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointerleave', release);
 
+  // Zoom about the cursor, like a map app. Trackpad pinch arrives here too, as
+  // a wheel event with ctrlKey set; preventDefault stops the browser zooming
+  // the whole page instead. Two-finger scroll zooms as well — see
+  // `wheelZoomFactor` for why the step follows deltaY.
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
-    const factor = e.deltaY < 0 ? 1.1 : 0.9;
-    const next = Math.min(ZOOM.max, Math.max(ZOOM.min, world.scale.x * factor));
-    world.scale.set(next);
+    const rect = canvas.getBoundingClientRect();
+    const cam = zoomAt(
+      { x: world.x, y: world.y, scale: world.scale.x },
+      e.clientX - rect.left,
+      e.clientY - rect.top,
+      wheelZoomFactor(e.deltaY, e.deltaMode, e.ctrlKey),
+    );
+    world.scale.set(cam.scale);
+    world.position.set(cam.x, cam.y);
   }, { passive: false });
 }
