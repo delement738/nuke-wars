@@ -8,7 +8,8 @@
 // The unfiltered `GameState` lives in a module-private variable in `./match`
 // with no accessor, so there is no hook that could return one (CLAUDE.md gotcha
 // 34) — the type flowing into `src/render/` and `src/ui/` is `VisibleGameState`
-// and nothing else.
+// and nothing else. The one exception is `useFinalReveal`, which is null until
+// the match is over (gotcha 73).
 //
 // Each selector returns a value already stored in the state rather than deriving
 // a new object or array. That matters with `useSyncExternalStore` underneath: a
@@ -20,7 +21,7 @@ import { useStore } from 'zustand';
 import type { CpuDifficulty } from './cpu';
 import type { Hex } from '../sim/hex';
 import type { MapData } from '../sim/map';
-import type { PlayerId, UnitId, VisibleGameState } from '../sim/types';
+import type { PlayerId, Unit, UnitId, VisibleGameState } from '../sim/types';
 import { intelOverlay, type IntelOverlay } from './inference';
 import { matchStore, type LogEntry, type Replay } from './match';
 import type { OrderDraft, OrderMode } from './orders';
@@ -35,6 +36,15 @@ import { isHotseat, nextSeat } from './seats';
  */
 export function useView(): VisibleGameState | null {
   return useStore(matchStore, (state) => state.views?.[state.viewer] ?? null);
+}
+
+/**
+ * The viewer's opponent's pieces, where they really were — **only once the
+ * match is over**, and null until then (see `MatchState.finalReveal`, gotcha
+ * 73). Keyed on `viewer` like every other per-player read (gotcha 36).
+ */
+export function useFinalReveal(): readonly Unit[] | null {
+  return useStore(matchStore, (state) => state.finalReveal?.[state.viewer] ?? null);
 }
 
 /**

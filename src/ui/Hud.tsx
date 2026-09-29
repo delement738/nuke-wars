@@ -25,7 +25,13 @@
 
 import { opponentOf } from '../sim/types';
 import { endTurn, finishReplay, newMatch, resign } from '../state/match';
-import { useIsHotseat, useReplay, useView, useViewer } from '../state/useMatch';
+import {
+  useFinalReveal,
+  useIsHotseat,
+  useReplay,
+  useView,
+  useViewer,
+} from '../state/useMatch';
 import EventLog from './EventLog';
 import HelpButton from './HelpButton';
 import OrderPanel from './OrderPanel';
@@ -43,6 +49,7 @@ export default function Hud({ onHelp }: Props) {
   const viewer = useViewer();
   const hotseat = useIsHotseat();
   const replay = useReplay();
+  const reveal = useFinalReveal();
 
   // `App` only mounts this once a match exists, so a null view is unreachable —
   // but `useView()` is nullable because the setup screen legitimately has no
@@ -102,6 +109,13 @@ export default function Hud({ onHelp }: Props) {
 
           {view.outcome && (
             <p className="outcome">{describeOutcome(view.outcome, viewer)}</p>
+          )}
+
+          {reveal && (
+            <p className="muted">
+              Enemy positions revealed: every enemy piece is on the board in red,
+              where it really was.
+            </p>
           )}
 
           <p className="muted">
