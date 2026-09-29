@@ -289,6 +289,20 @@ export interface MatchState {
    * (gotchas 58, 62); this field only says what is *waiting* to play.
    */
   replay: Record<PlayerId, Replay | null>;
+  /**
+   * **The end-of-match reveal**: every enemy piece where it actually stood when
+   * the match ended — keyed by the *viewing* player, so `finalReveal.p1` is
+   * p2's units. **Null for the whole match and non-null only once the phase is
+   * GAME_OVER**, which is the one moment hidden information stops being hidden:
+   * the outcome is public (§4) and nothing more can be decided with it.
+   *
+   * Straight from `truth`, including `kind: 'decoy'` — the decoy mask protects a
+   * living secret, and the point of the reveal is "that was the decoy; the real
+   * bunker was over there". Set only by `publish`, so both endings (the engine's
+   * verdict and `resign`) get it without a special case. This is the single
+   * piece of `truth` that ever reaches the store, and gotcha 73 says why it may.
+   */
+  finalReveal: Record<PlayerId, Unit[]> | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -390,6 +404,7 @@ export const matchStore = createStore<MatchState>()(() => ({
   logs: { p1: [], p2: [] },
   reports: { p1: [], p2: [] },
   replay: { p1: null, p2: null },
+  finalReveal: null,
 }));
 
 /**
@@ -431,7 +446,20 @@ function publish(round: number, events: readonly GameEvent[]): void {
       p1: replayOf(before?.p1, round, seen.p1),
       p2: replayOf(before?.p2, round, seen.p2),
     },
+    finalReveal: finalRevealOf(truth),
   });
+}
+
+/**
+ * Each player's end-of-match reveal of their opponent's pieces, or null while
+ * the match is still being played (see `MatchState.finalReveal`).
+ */
+function finalRevealOf(state: GameState): Record<PlayerId, Unit[]> | null {
+  if (state.phase !== 'GAME_OVER') return null;
+  return {
+    p1: state.units.filter((unit) => unit.owner === opponentOf('p1')),
+    p2: state.units.filter((unit) => unit.owner === opponentOf('p2')),
+  };
 }
 
 /**
@@ -524,6 +552,7 @@ export function newMatch(seed: number = DEFAULT_SEED): void {
     logs: { p1: [], p2: [] },
     reports: { p1: [], p2: [] },
     replay: { p1: null, p2: null },
+    finalReveal: null,
   });
 }
 

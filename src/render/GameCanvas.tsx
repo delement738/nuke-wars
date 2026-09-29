@@ -48,6 +48,7 @@ import {
 import {
   useActiveSeat,
   useDraft,
+  useFinalReveal,
   useHovered,
   useIntelOverlay,
   useMap,
@@ -83,6 +84,7 @@ import {
   drawMissiles,
   drawOrders,
   drawPlacement,
+  drawReveal,
   drawSelection,
   drawTerrain,
   drawUnits,
@@ -233,6 +235,7 @@ export default function GameCanvas() {
   const replay = useReplay();
   const viewer = useViewer();
   const inference = useIntelOverlay();
+  const reveal = useFinalReveal();
 
   // The unit being ordered, and the hexes it may legally be sent to. Computed
   // here rather than in `draw.ts` because deciding what is legal is state's job
@@ -319,11 +322,18 @@ export default function GameCanvas() {
     const board = replay ? replay.from : view;
     drawCoverage(scene.coverage, board);
     // Already describes `board` — the hook swaps in the pre-round picture too.
-    drawIntelOverlay(scene.inferred, inference);
-    drawIntel(scene.intel, board.intel);
+    // Once the match is over and its last replay has played, the enemy's real
+    // positions replace everything the viewer had deduced or spotted (gotcha 73).
+    if (reveal && !replay) {
+      clearLayer(scene.inferred);
+      drawReveal(scene.intel, reveal);
+    } else {
+      drawIntelOverlay(scene.inferred, inference);
+      drawIntel(scene.intel, board.intel);
+    }
     drawUnits(scene.units, board.units);
     drawMissiles(scene.missiles, board.missiles, viewer);
-  }, [scene, view, replay, viewer, inference]);
+  }, [scene, view, replay, viewer, inference, reveal]);
 
   useEffect(() => {
     if (!scene) return;

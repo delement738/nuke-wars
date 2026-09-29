@@ -860,6 +860,33 @@ export function drawIntel(layer: Container, intel: VisiblePlayerIntel): void {
   }
 }
 
+/**
+ * **The end-of-match reveal**: every enemy piece where it really stood when the
+ * match ended (gotcha 73). Drawn *instead of* the intel layer, not over it —
+ * once the truth is on the board, a stale contact or a masked site beside it
+ * would only be the map saying two things about one hex.
+ *
+ * A red plate rather than the bare outline a sighting gets, so a revealed piece
+ * never reads as something the viewer found. The decoy is drawn as the decoy:
+ * the mask protects a living secret, and "that was the decoy" is the whole point
+ * of showing it. Wrecks dim, as the viewer's own do.
+ */
+export function drawReveal(layer: Container, units: readonly Unit[]): void {
+  clear(layer);
+
+  for (const unit of units) {
+    const { x, y } = centerOf(unit.position);
+    const plate = new Graphics()
+      .poly(hexCorners(x, y, HEX * 0.62))
+      .fill({ color: COLOR.enemy, alpha: 0.28 })
+      .stroke({ width: 2, color: COLOR.enemy });
+    const emblem = emblemAt(unit.kind, x, y, COLOR.enemy, INTEL_EMBLEM_SIZE);
+    plate.alpha = emblem.alpha = unit.destroyed ? 0.45 : 1;
+
+    layer.addChild(plate, emblem);
+  }
+}
+
 // --- missiles in the air (presentation phase, session 2) --------------------
 //
 // Shared by the static board below and the replay (`./playbackDraw`), so a
