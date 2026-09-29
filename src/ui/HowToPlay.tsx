@@ -15,6 +15,9 @@
 // report underneath. The replay keeps playing behind it (designer's call).
 
 import { useEffect, useRef } from 'react';
+// Shape data only: `emblems.ts` imports no Pixi, so the legend draws the very
+// shapes the board does without pulling the renderer into the UI.
+import { EMBLEM_BOX, emblemPaths } from '../render/emblems';
 import { HOW_TO_PLAY, type HelpBlock } from './helpContent';
 import { LEGEND, type LegendSwatch } from './legend';
 
@@ -110,7 +113,11 @@ function Block({ block }: { block: HelpBlock }) {
         <ul className="help-legend">
           {LEGEND.map((entry) => (
             <li key={entry.text} className={entry.tone}>
-              <Swatch swatch={entry.swatch} />
+              <span className={entry.swatches.length > 2 ? 'help-swatches many' : 'help-swatches'}>
+                {entry.swatches.map((swatch, i) => (
+                  <Swatch key={i} swatch={swatch} />
+                ))}
+              </span>
               <span>{entry.text}</span>
             </li>
           ))}
@@ -123,8 +130,11 @@ function Block({ block }: { block: HelpBlock }) {
 function Swatch({ swatch }: { swatch: LegendSwatch }) {
   const stroke = swatch.border ?? 'none';
   const fill = swatch.fill ?? 'none';
+  // Dark ink on a solid plate, as on the board; otherwise the outline's red.
+  const ink = swatch.fill && !swatch.fill.startsWith('rgba') ? '#0b0f14' : stroke;
   return (
-    <svg className="help-swatch" viewBox="-12 -12 24 24" aria-hidden="true">
+    <svg className="help-swatch" viewBox="-12 -12 24 24" opacity={swatch.opacity} aria-hidden="true">
+      {swatch.label && <title>{swatch.label}</title>}
       {swatch.shape === 'hex' && (
         <polygon
           points="-10,0 -5,-8.7 5,-8.7 10,0 5,8.7 -5,8.7"
@@ -143,17 +153,35 @@ function Swatch({ swatch }: { swatch: LegendSwatch }) {
           <path d="M-6 0H6M0 -6V6" />
         </g>
       )}
-      {swatch.glyph && (
-        <text
-          y={4}
-          textAnchor="middle"
-          fontSize={swatch.glyph.length > 1 ? 9 : 11}
-          fontWeight={700}
-          fill={swatch.fill && !swatch.fill.startsWith('rgba') ? '#0b0f14' : stroke}
-        >
-          {swatch.glyph}
-        </text>
+      {swatch.emblem && swatch.guess && (
+        <>
+          <Emblem kind={swatch.emblem} x={-2.5} size={9} fill={ink} opacity={0.6} />
+          <text x={5} y={3.5} textAnchor="middle" fontSize={9} fontWeight={700} fill={ink}>
+            ?
+          </text>
+        </>
+      )}
+      {swatch.emblem && !swatch.guess && (
+        <Emblem kind={swatch.emblem} size={swatch.shape === 'ring' ? 11 : 13} fill={ink} />
       )}
     </svg>
+  );
+}
+
+/** A unit emblem, `size` wide, centred on (x, 0) — one path per shape, as `emblemPaths` asks. */
+function Emblem(props: {
+  kind: NonNullable<LegendSwatch['emblem']>;
+  size: number;
+  fill: string;
+  x?: number;
+  opacity?: number;
+}) {
+  const { kind, size, fill, x = 0, opacity } = props;
+  return (
+    <g transform={`translate(${x} 0) scale(${size / EMBLEM_BOX})`} fill={fill} opacity={opacity}>
+      {emblemPaths(kind).map((d) => (
+        <path key={d} d={d} fillRule="evenodd" />
+      ))}
+    </g>
   );
 }

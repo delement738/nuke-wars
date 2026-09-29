@@ -508,10 +508,26 @@
   align-items: flex-start;
 }
 
+.help-legend li:has(.help-swatches.many) {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.help-swatches {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+/* A line naming a whole row of marks puts the row above its words. */
+.help-swatches.many {
+  flex-basis: 100%;
+}
+
 .help-swatch {
-  flex: 0 0 22px;
-  width: 22px;
-  height: 22px;
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
   margin-top: 1px;
   background: #1f3d2b; /* plains, so washes read as they do on the board */
   border-radius: 3px;

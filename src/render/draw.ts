@@ -28,7 +28,6 @@ import {
 import { tileAt, type MapData, type Terrain } from '../sim/map';
 import { reconSwath } from '../sim/recon';
 import type {
-  MaskedStaticKind,
   PlayerId,
   Unit,
   UnitKind,
@@ -41,6 +40,7 @@ import type {
 import type { IntelOverlay } from '../state/inference';
 import type { DraftEntry, OrderDraft, OrderMode } from '../state/orders';
 import type { PlacementSlot } from '../state/placement';
+import { EMBLEM, EMBLEM_BOX } from './emblems';
 import { missileMarkers, warningLine } from './flights';
 import { HEX, hexCenter, hexCorners } from './geometry';
 
@@ -92,40 +92,49 @@ const FILL: Record<Terrain, number> = {
   mountain: 0x4a4f57, // slate gray
 };
 
+// --- emblems ----------------------------------------------------------------
+
+/** Emblem width in pixels at zoom 1: sized to fill the 0.62 plate a piece sits on. */
+export const EMBLEM_SIZE = HEX * 0.8;
+/** A red emblem inside an enemy site's outline. */
+export const INTEL_EMBLEM_SIZE = EMBLEM_SIZE * 0.92;
+/** A red launcher inside a contact ring, which is a little smaller than a plate. */
+const CONTACT_EMBLEM_SIZE = EMBLEM_SIZE * 0.85;
+/** The faint base emblem in a candidate hex: smaller than a sighting's. */
+const CANDIDATE_EMBLEM_SIZE = EMBLEM_SIZE * 0.62;
+
 /**
- * One letter per unit kind. The viewer's own decoy is drawn as an X because they
- * know which of their two sites is the fake — the mask is for the enemy (§12),
+ * One piece's emblem (`./emblems`), centred on `x`, `y`.
+ *
+ * The only thing it is told about the piece is its kind, so no caller can size
+ * or shade an emblem from damage, a kill or anything else in the log (gotcha
+ * 69). The viewer's own decoy has its own emblem (a hollow bunker) because they
+ * know which of their two sites is the fake; the mask is for the enemy (§12),
  * and a player who cannot tell their own bunker from their own decoy cannot
- * play. `MaskedStaticKind` never contains 'decoy', so an enemy site can only
- * ever be drawn 'B'.
+ * play. Enemy intel is typed `MaskedStaticKind`/`SpottedKind`, neither of which
+ * contains 'decoy', so an enemy site can only ever be drawn as a bunker.
  */
-export const GLYPH: Record<UnitKind, string> = {
-  launcher: 'L',
-  interceptor: 'I',
-  drone: 'D',
-  bunker: 'B',
-  decoy: 'X',
-};
+export function emblemAt(
+  kind: UnitKind,
+  x: number,
+  y: number,
+  color: number,
+  size = EMBLEM_SIZE,
+): Graphics {
+  const g = new Graphics();
+  for (const shape of EMBLEM[kind]) {
+    g.poly([...shape.poly]).fill(color);
+    if (shape.hole) g.poly([...shape.hole]).cut();
+  }
+  g.position.set(x, y);
+  g.scale.set(size / EMBLEM_BOX);
+  return g;
+}
 
-export const GLYPH_STYLE = new TextStyle({
-  fontFamily: 'monospace',
-  fontSize: 15,
-  fontWeight: 'bold',
-  fill: COLOR.glyph,
-});
-
-export const INTEL_STYLE = new TextStyle({
-  fontFamily: 'monospace',
-  fontSize: 15,
-  fontWeight: 'bold',
-  fill: COLOR.enemy,
-});
-
-/** "I?" on a hex where the enemy base could be — smaller and fainter than a
- *  sighting's letter, because it is a deduction, not a sighting. */
+/** The "?" beside a candidate's faint base emblem: a deduction, not a sighting. */
 const CANDIDATE_STYLE = new TextStyle({
   fontFamily: 'monospace',
-  fontSize: 12,
+  fontSize: 13,
   fontWeight: 'bold',
   fill: COLOR.enemy,
 });
@@ -153,13 +162,6 @@ export function clearLayer(layer: Container): void {
 export function centerOf(hex: Hex): { x: number; y: number } {
   const { col, row } = axialToOffset(hex);
   return hexCenter(col, row);
-}
-
-export function glyphAt(text: string, x: number, y: number, style: TextStyle): Text {
-  const label = new Text({ text, style });
-  label.anchor.set(0.5);
-  label.position.set(x, y);
-  return label;
 }
 
 // --- terrain ----------------------------------------------------------------
@@ -254,11 +256,12 @@ export function drawCoverage(layer: Container, view: VisibleGameState): void {
  *     move, so ground under it holds no bunker or decoy that is not already on
  *     the map; it says nothing about launchers.
  *   - **Where the enemy base could be**, a red wash with a red border round the
- *     region and a faint "I?" in each hex. Red because it is intel about them; a
- *     wash and not a ring because it is a *possibility*, where a solid ring
- *     (`drawIntel`) is a sighting. The "I?" was added on 2026-09-28 (Session 4)
- *     because a region narrowed to ONE hex is just a red outline, and a
- *     playtester could not tell what it meant.
+ *     region and, in each hex, a small faded base emblem with a "?". Red
+ *     because it is intel about them; a wash and not a ring because it is a
+ *     *possibility*, where a solid ring (`drawIntel`) is a sighting. The mark
+ *     (first "I?", an emblem since the unit-emblems session) was added on
+ *     2026-09-28 because a region narrowed to ONE hex is just a red outline,
+ *     and a playtester could not tell what it meant.
  *
  * The two never overlap in practice: a candidate is more than
  * `interceptorCoverageRadius` from every hex the drone transmitted from, and
@@ -291,9 +294,13 @@ export function drawIntelOverlay(layer: Container, overlay: IntelOverlay | null)
 
   for (const hex of overlay.candidates) {
     const { x, y } = centerOf(hex);
-    const label = glyphAt('I?', x, y, CANDIDATE_STYLE);
-    label.alpha = 0.8;
-    layer.addChild(label);
+    const emblem = emblemAt('interceptor', x - HEX * 0.14, y, COLOR.enemy, CANDIDATE_EMBLEM_SIZE);
+    emblem.alpha = 0.6;
+    const mark = new Text({ text: '?', style: CANDIDATE_STYLE });
+    mark.anchor.set(0.5);
+    mark.position.set(x + HEX * 0.3, y + HEX * 0.05);
+    mark.alpha = 0.75;
+    layer.addChild(emblem, mark);
   }
 }
 
@@ -776,7 +783,7 @@ export function drawPlacement(layer: Container, overlay: PlacementOverlay): void
         .poly(hexCorners(x, y, HEX * 0.62))
         .fill(COLOR.own)
         .stroke({ width: 2, color: COLOR.outline }),
-      glyphAt(GLYPH[kind], x, y, GLYPH_STYLE),
+      emblemAt(kind, x, y, COLOR.glyph),
     );
   }
 }
@@ -799,9 +806,10 @@ export function drawUnits(layer: Container, units: readonly Unit[]): void {
       .poly(hexCorners(x, y, HEX * 0.62))
       .fill(color)
       .stroke({ width: 2, color: COLOR.outline });
-    body.alpha = unit.destroyed ? 0.55 : 1;
+    const emblem = emblemAt(unit.kind, x, y, COLOR.glyph);
+    body.alpha = emblem.alpha = unit.destroyed ? 0.55 : 1;
 
-    layer.addChild(body, glyphAt(GLYPH[unit.kind], x, y, GLYPH_STYLE));
+    layer.addChild(body, emblem);
   }
 }
 
@@ -814,7 +822,7 @@ export function drawUnits(layer: Container, units: readonly Unit[]): void {
  *
  *   - **Static reveals are permanent.** A bunker site or interceptor base cannot
  *     move, so the sighting stays true until the asset is publicly destroyed.
- *     Solid ring. A site is always labelled 'B' — nothing in the game can tell
+ *     Solid ring. A site always shows the bunker emblem — nothing in the game can tell
  *     the real bunker from the decoy (§12).
  *   - **Launcher contacts last one order phase.** They are gone the moment the
  *     round resolves, because a launcher relocates. A launch origin is drawn
@@ -825,18 +833,14 @@ export function drawUnits(layer: Container, units: readonly Unit[]): void {
 export function drawIntel(layer: Container, intel: VisiblePlayerIntel): void {
   clear(layer);
 
-  const siteGlyph: Record<MaskedStaticKind, string> = {
-    bunker: GLYPH.bunker,
-    interceptor: GLYPH.interceptor,
-  };
-
   for (const reveal of intel.staticReveals) {
     const { x, y } = centerOf(reveal.hex);
     layer.addChild(
       new Graphics()
         .poly(hexCorners(x, y, HEX * 0.62))
         .stroke({ width: 3, color: COLOR.enemy }),
-      glyphAt(siteGlyph[reveal.kind], x, y, INTEL_STYLE),
+      // `reveal.kind` is a MaskedStaticKind: a decoy arrives here as 'bunker'.
+      emblemAt(reveal.kind, x, y, COLOR.enemy, INTEL_EMBLEM_SIZE),
     );
   }
 
@@ -849,7 +853,7 @@ export function drawIntel(layer: Container, intel: VisiblePlayerIntel): void {
       .stroke({ width: fresh ? 3 : 2, color: COLOR.enemy });
     ring.alpha = fresh ? 1 : 0.65;
 
-    const label = glyphAt(GLYPH.launcher, x, y, INTEL_STYLE);
+    const label = emblemAt('launcher', x, y, COLOR.enemy, CONTACT_EMBLEM_SIZE);
     label.alpha = ring.alpha;
 
     layer.addChild(ring, label);

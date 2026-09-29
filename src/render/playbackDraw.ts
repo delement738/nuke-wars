@@ -26,12 +26,10 @@ import { reconSwath } from '../sim/recon';
 import type { MissileId, Unit, UnitId, VisibleEvent } from '../sim/types';
 import {
   COLOR,
-  GLYPH,
-  GLYPH_STYLE,
-  INTEL_STYLE,
+  INTEL_EMBLEM_SIZE,
   centerOf,
   dashedLine,
-  glyphAt,
+  emblemAt,
   inboundWarning,
   missileColor,
   missileHead,
@@ -337,9 +335,9 @@ function downedDrones(frames: readonly ClipFrame[]): Set<UnitId> {
  * Everything that moves. Rebuilt from scratch each frame, like every other layer
  * in this directory — at this size that is cheap and cannot drift.
  *
- * Tokens that carry a letter (the sliding launcher, the flying drone) put the
- * letter here too, since it must move with them; `GLYPH_STYLE` text is small
- * and there are at most a handful in flight.
+ * Tokens that carry an emblem (the sliding launcher, the flying drone) put the
+ * emblem here too, since it must move with them; there are at most a handful
+ * in flight.
  */
 export function drawReplayShapes(
   layer: Container,
@@ -381,7 +379,7 @@ export function drawReplayShapes(
         }
         if (!downed.has(event.unitId)) {
           token(g, reached.x, reached.y, COLOR.own);
-          layer.addChild(glyphAt(GLYPH.drone, reached.x, reached.y, GLYPH_STYLE));
+          layer.addChild(emblemAt('drone', reached.x, reached.y, COLOR.glyph));
         }
         break;
       }
@@ -472,7 +470,7 @@ export function drawReplayShapes(
         g.moveTo(a.x, a.y).lineTo(x, y).stroke({ width: 2, color: COLOR.move, alpha: 0.6 });
         token(g, x, y, COLOR.own);
         const kind = ownUnit(ctx, event.unitId)?.kind ?? 'launcher';
-        layer.addChild(glyphAt(GLYPH[kind], x, y, GLYPH_STYLE));
+        layer.addChild(emblemAt(kind, x, y, COLOR.glyph));
         break;
       }
       case 'MOVE_FAILED': {
@@ -493,9 +491,9 @@ export function drawReplayShapes(
         g.poly(hexCorners(x, y, HEX * 0.62))
           .fill({ color: COLOR.own, alpha: p })
           .stroke({ width: 2, color: COLOR.outline, alpha: p });
-        const glyph = glyphAt(GLYPH.drone, x, y, GLYPH_STYLE);
-        glyph.alpha = p;
-        layer.addChild(glyph);
+        const emblem = emblemAt('drone', x, y, COLOR.glyph);
+        emblem.alpha = p;
+        layer.addChild(emblem);
         break;
       }
       case 'DEAD_HAND_TRIGGERED':
@@ -617,11 +615,12 @@ export function drawReplayLabels(
       layer.addChild(rule);
     }
 
-    // A spotted or exposed asset gets its letter too, in the intel red.
+    // A spotted or exposed asset gets its emblem too, in the intel red. A
+    // spotted decoy arrives as 'bunker' (`SpottedKind` has no 'decoy').
     if (clip.event.type === 'ASSET_SPOTTED') {
-      layer.addChild(glyphAt(GLYPH[clip.event.kind], x, y, INTEL_STYLE));
+      layer.addChild(emblemAt(clip.event.kind, x, y, COLOR.enemy, INTEL_EMBLEM_SIZE));
     } else if (clip.event.type === 'BASE_EXPOSED') {
-      layer.addChild(glyphAt(GLYPH.interceptor, x, y, INTEL_STYLE));
+      layer.addChild(emblemAt('interceptor', x, y, COLOR.enemy, INTEL_EMBLEM_SIZE));
     }
   }
 }

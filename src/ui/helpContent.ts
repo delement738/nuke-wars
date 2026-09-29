@@ -139,7 +139,7 @@ export const HOW_TO_PLAY: readonly HelpSection[] = [
         'Launches and forced marches reveal the hex they came from, for one round. A launcher that fired is still there; one that marched has gone.',
         'An interceptor base that stops a missile is revealed for good.',
       ]),
-      p(`${BASES_UNPHOTOGRAPHABLE ? 'Drones never photograph the base; it shoots them down first, without revealing itself. ' : ''}The board marks where it could be with I?, within ${COVER} hexes of the wreck. ${respawnText(RULES.droneRespawnDelay)}`),
+      p(`${BASES_UNPHOTOGRAPHABLE ? 'Drones never photograph the base; it shoots them down first, without revealing itself. ' : ''}The board marks where it could be in red, within ${COVER} hexes of the wreck. ${respawnText(RULES.droneRespawnDelay)}`),
       p(`Real or decoy? Fire one missile at a site. A destroyed decoy is announced. If yours lands and nothing is announced, it was the real bunker, now on ${hits(BUNKER_HP - DAMAGE)} — the attacker sees only an impact, as on empty ground. ${BUNKER_HP} missiles landing in one round kill it outright.`),
     ],
   },
