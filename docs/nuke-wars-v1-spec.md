@@ -277,6 +277,8 @@ Victory conditions are evaluated only after a full resolution completes — neve
 12. Countdown timer, ready-up, reconnect handling.
 13. Deploy: static client (Vercel/Netlify) + socket server (Fly.io/Railway).
 
+These three steps are expanded into nine sessions, with a cosmetics pass first, in `docs/roadmap-v1.5.md` (agreed 2026-09-29; client on Vercel, server on Railway).
+
 Do not start V2 features until two humans have played V1 to completion multiple times.
 
 ---
