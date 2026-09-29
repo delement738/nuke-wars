@@ -20,7 +20,6 @@ import {
   holdUnit,
   selectUnit,
   setOrderMode,
-  SANDBOX_PLAYER,
 } from '../state/match';
 import {
   decidedCount,
@@ -30,6 +29,7 @@ import {
   type OrderMode,
 } from '../state/orders';
 import {
+  useActiveSeat,
   useDraft,
   useOrderMode,
   useSelectedUnitId,
@@ -60,6 +60,7 @@ const MODE_HINT: Record<OrderMode, string> = {
 export default function OrderPanel() {
   const view = useView();
   const viewer = useViewer();
+  const activeSeat = useActiveSeat();
   const selectedUnitId = useSelectedUnitId();
   const orderMode = useOrderMode();
   const draft = useDraft();
@@ -68,18 +69,21 @@ export default function OrderPanel() {
   // `useView()` is nullable because the setup screen has no board (step 10b).
   if (!view) return null;
 
-  // The viewer switch is a sandbox control, and orders always belong to the
-  // human. Drafting while looking at the CPU's board would be queueing orders
-  // for a side you are only spectating, so entry is switched off rather than
-  // silently pointed at the wrong player. (The store refuses such an order
-  // anyway — the two guards are independent on purpose.)
-  if (viewer !== SANDBOX_PLAYER) {
+  // Orders belong to whoever's turn it is — `activeSeat`, the seat
+  // `orderingView` drafts for (gotcha 55). If the board on screen is someone
+  // else's, entry is switched off rather than silently pointed at the wrong
+  // player. (The store refuses such an order anyway — the two guards are
+  // independent on purpose.)
+  //
+  // This used to compare against SANDBOX_PLAYER, step 10a's "the human is P1",
+  // which left hotseat P2 permanently "spectating" their own turn.
+  if (viewer !== activeSeat) {
     return (
       <section className="panel">
         <h2>Orders</h2>
         <p className="muted">
           Spectating {viewer.toUpperCase()}. Switch back to{' '}
-          {SANDBOX_PLAYER.toUpperCase()} to give orders — anything you had queued
+          {activeSeat.toUpperCase()} to give orders — anything you had queued
           is still waiting.
         </p>
       </section>
