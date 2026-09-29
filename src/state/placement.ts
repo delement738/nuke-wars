@@ -78,8 +78,8 @@ export function emptyPlacementDraft(): PlacementDraft {
  * One asset on the player's roster, and where it stands if it has been placed.
  *
  * This is what the setup panel lists and what the player selects. The roster is
- * fixed — four slots, always the same four — so the list never changes shape as
- * the setup is built; only the `hex` on each entry does.
+ * fixed — one slot per placed asset, always the same ones — so the list never
+ * changes shape as the setup is built; only the `hex` on each entry does.
  */
 export interface PlacementSlot {
   /** Index into the roster. What the UI selects by, stable for a whole match. */

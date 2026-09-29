@@ -65,7 +65,7 @@ export type PlayerSetup = readonly Placement[];
  * it is the order `startingUnits` adds a player's placed assets to
  * `GameState.units`, which §9 makes the log's order and therefore has to be a
  * function of the setup rather than of the clicks that produced it; and it is
- * the order the setup UI lists the four slots in.
+ * the order the setup UI lists the roster slots in.
  *
  * It used to be an *enforced* sequence, with `validatePlacement` rejecting
  * anything else as OUT_OF_ORDER, because the ≥3 exclusion rule was only checked

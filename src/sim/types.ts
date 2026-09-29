@@ -47,7 +47,7 @@ export function opponentOf(player: PlayerId): PlayerId {
 
 export type UnitId = string;
 
-/** The five unit kinds in V1's roster (spec §2). 8 assets per player total. */
+/** The five unit kinds in V1's roster (spec §2). 7 assets per player total. */
 export type UnitKind =
   | 'launcher'
   | 'interceptor'

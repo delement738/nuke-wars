@@ -928,10 +928,11 @@ export function endTurn(): void {
 /**
  * The board every drafted order is judged against.
  *
- * Deliberately `SANDBOX_PLAYER`'s view and NOT the current `viewer`'s. The
- * viewer switch is a debug control, so flipping it to look at the CPU's picture
- * must not turn the order builder into a way to order the CPU's units. Because a
- * `VisibleGameState` holds only its owner's units (spec §6), an order naming any
+ * Deliberately the `activeSeat`'s view and NOT the current `viewer`'s (gotcha
+ * 55; step 10a used `SANDBOX_PLAYER`, the hotseat handoff made it the seat).
+ * The viewer switch is a debug control, so flipping it to look at the CPU's
+ * picture must not turn the order builder into a way to order the CPU's units.
+ * Because a `VisibleGameState` holds only its owner's units (spec §6), an order naming any
  * unit but the human's fails validation at the `find` — "you may only order your
  * own pieces" is structural rather than a check that could be forgotten.
  *

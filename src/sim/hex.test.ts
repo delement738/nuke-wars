@@ -217,7 +217,9 @@ describe('hexLine', () => {
     }
 
     expect(pairsChecked).toBeGreaterThan(9000);
-  });
+    // ~9,000 pairs and ~100,000 expects: ~5 s alone, over Vitest's default
+    // 5 s timeout under load (the suite's rare flake, 2026-09-28).
+  }, 30_000);
 
   it('is reversible for every pair within missile range', () => {
     // Guaranteed by nudging both endpoints by the same offset (spec §10): the
