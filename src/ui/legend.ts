@@ -10,6 +10,7 @@
 // 70). In particular a spotted site is always "a bunker site": the legend may
 // never suggest the board can tell the real bunker from the decoy.
 
+import { css } from '../render/palette';
 import { RULES } from '../sim/defs';
 import type { UnitKind } from '../sim/types';
 
@@ -17,8 +18,8 @@ import type { UnitKind } from '../sim/types';
 export type LegendTone = 'own' | 'enemy' | 'muted';
 
 /**
- * A small picture of the mark, for the how-to-play screen. Colours match
- * `COLOR` in `src/render/draw.ts` — a sample that names a colour has to be
+ * A small picture of the mark, for the how-to-play screen. Colours come from
+ * `PALETTE` in `src/render/palette.ts`, as the board's `COLOR` does — a sample that names a colour has to be
  * drawn in it, or it is just a sentence. The emblem is drawn from the same
  * shapes as the board (`src/render/emblems.ts`), never a copy.
  */
@@ -42,9 +43,9 @@ export interface LegendEntry {
   text: string;
 }
 
-const OWN = '#5aa9ff';
-const OWN_DESTROYED = '#4a5563';
-const ENEMY = '#ff5f4a';
+const OWN = css('own');
+const OWN_DESTROYED = css('ownDestroyed');
+const ENEMY = css('enemy');
 
 const own = (emblem: UnitKind, label: string): LegendSwatch => ({
   shape: 'hex',
@@ -71,8 +72,8 @@ export const LEGEND: readonly LegendEntry[] = [
   },
   {
     tone: 'muted',
-    swatches: [{ shape: 'hex', fill: '#4ad991' }],
-    text: 'Orders: green — where a launcher can move (brighter: march). Amber outline — where it can fire. Violet dots — where the drone can fly.',
+    swatches: [{ shape: 'hex', fill: css('move') }],
+    text: 'Orders: green — where a launcher can move (olive: march). Orange outline — where it can fire. Violet dots — where the drone can fly.',
   },
   {
     tone: 'enemy',
@@ -89,22 +90,22 @@ export const LEGEND: readonly LegendEntry[] = [
   },
   {
     tone: 'enemy',
-    swatches: [{ shape: 'hex', fill: 'rgba(255, 95, 74, 0.25)', border: ENEMY }],
+    swatches: [{ shape: 'hex', fill: css('enemy', 0.25), border: ENEMY }],
     text: 'Red hex under your own launcher: its forced march will tell the enemy this hex.',
   },
   {
     tone: 'muted',
     swatches: [{ shape: 'target', border: ENEMY }],
-    text: 'Crosshair and dashed line: a missile in the air and where it lands. Red INBOUND is theirs; amber YOUR STRIKE is yours.',
+    text: 'Crosshair and dashed line: a missile in the air and where it lands. Red INBOUND is theirs; orange YOUR STRIKE is yours.',
   },
   {
     tone: 'muted',
-    swatches: [{ shape: 'hex', fill: 'rgba(90, 169, 255, 0.25)' }],
+    swatches: [{ shape: 'hex', fill: css('own', 0.25) }],
     text: 'Faint blue wash: ground your interceptor base covers.',
   },
   {
     tone: 'muted',
-    swatches: [{ shape: 'hex', fill: 'rgba(255, 255, 255, 0.18)' }],
+    swatches: [{ shape: 'hex', fill: css('seen', 0.55) }],
     text: 'Lighter ground: photographed by your drone, so any site there is already marked.',
   },
   {
@@ -112,7 +113,7 @@ export const LEGEND: readonly LegendEntry[] = [
     swatches: [
       {
         shape: 'hex',
-        fill: 'rgba(255, 95, 74, 0.3)',
+        fill: css('enemy', 0.3),
         border: ENEMY,
         emblem: 'interceptor',
         guess: true,

@@ -18,6 +18,7 @@ import { useEffect, useRef } from 'react';
 // Shape data only: `emblems.ts` imports no Pixi, so the legend draws the very
 // shapes the board does without pulling the renderer into the UI.
 import { EMBLEM_BOX, emblemPaths } from '../render/emblems';
+import { css } from '../render/palette';
 import { HOW_TO_PLAY, type HelpBlock } from './helpContent';
 import { LEGEND, type LegendSwatch } from './legend';
 
@@ -130,8 +131,8 @@ function Block({ block }: { block: HelpBlock }) {
 function Swatch({ swatch }: { swatch: LegendSwatch }) {
   const stroke = swatch.border ?? 'none';
   const fill = swatch.fill ?? 'none';
-  // Dark ink on a solid plate, as on the board; otherwise the outline's red.
-  const ink = swatch.fill && !swatch.fill.startsWith('rgba') ? '#0b0f14' : stroke;
+  // Paper lettering on a solid plate, as on the board; otherwise the outline's red.
+  const ink = swatch.fill && !swatch.fill.startsWith('rgba') ? css('glyph') : stroke;
   return (
     <svg className="help-swatch" viewBox="-12 -12 24 24" opacity={swatch.opacity} aria-hidden="true">
       {swatch.label && <title>{swatch.label}</title>}

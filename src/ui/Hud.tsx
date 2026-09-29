@@ -42,9 +42,11 @@ import './hud.css';
 interface Props {
   /** Opens the how-to-play window, which `App` owns, optionally at a section. */
   onHelp: (section?: string) => void;
+  /** Leaves a finished match for the title screen (V1.5 Session 3). */
+  onTitle: () => void;
 }
 
-export default function Hud({ onHelp }: Props) {
+export default function Hud({ onHelp, onTitle }: Props) {
   const view = useView();
   const viewer = useViewer();
   const hotseat = useIsHotseat();
@@ -146,6 +148,9 @@ export default function Hud({ onHelp }: Props) {
             <div className="buttons">
               <button type="button" onClick={() => newMatch(Date.now() % 100000)}>
                 New game
+              </button>
+              <button type="button" onClick={onTitle}>
+                Title screen
               </button>
             </div>
           )}

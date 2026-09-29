@@ -43,6 +43,7 @@ import type { PlacementSlot } from '../state/placement';
 import { EMBLEM, EMBLEM_BOX } from './emblems';
 import { missileMarkers, warningLine } from './flights';
 import { HEX, hexCenter, hexCorners } from './geometry';
+import { PALETTE } from './palette';
 
 // --- palette ----------------------------------------------------------------
 //
@@ -51,13 +52,18 @@ import { HEX, hexCenter, hexCorners } from './geometry';
 // enemy's own colours, because nothing on this map is ever the enemy's state —
 // it is your intel about them (spec §11).
 
+//
+// The values live in `./palette` (V1.5 Session 3: the paper plotting table of
+// `docs/art-direction.md`), shared with the how-to-play legend.
+
 export const COLOR = {
-  own: 0x5aa9ff,
-  ownDestroyed: 0x4a5563,
-  enemy: 0xff5f4a,
-  selected: 0xffd54a,
-  outline: 0x101820,
-  glyph: 0x0b0f14,
+  own: PALETTE.own,
+  ownDestroyed: PALETTE.ownDestroyed,
+  enemy: PALETTE.enemy,
+  // Ink, not the old gold: on paper a heavy black ring is what stands out.
+  selected: PALETTE.ink,
+  outline: PALETTE.ink,
+  glyph: PALETTE.glyph,
 
   // Order-builder colours. The three modes get three different *visual
   // languages*, not just three hues, because they mean genuinely different
@@ -65,31 +71,31 @@ export const COLOR = {
   // screen: MOVE fills ground you may stand on, LAUNCH outlines reach over
   // ground you will never occupy, FLY dots airspace that ignores the ground
   // entirely.
-  move: 0x4ad991,
+  move: PALETTE.move,
   // A forced march is still ground you may stand on, so it stays in the MOVE
   // family rather than becoming a fourth unrelated hue — the hotter green says
   // "same ground, further, and loud" (spec §9, §11).
-  march: 0x9ee34a,
-  launch: 0xffa54a,
-  fly: 0xb27dff,
-  hold: 0x8496aa,
+  march: PALETTE.march,
+  launch: PALETTE.launch,
+  fly: PALETTE.fly,
+  hold: PALETTE.hold,
 
   // Setup-screen colours (build-order step 10b). Gold for ground you may build
   // on, and the enemy red for ground your own exclusion rule denies you —
   // deliberately the same red as detected enemies, because in both cases it
   // means "not yours to use".
-  place: 0xf2c14e,
-  excluded: 0xff5f4a,
+  place: PALETTE.place,
+  excluded: PALETTE.enemy,
 
   // Intel overlay (session 3): ground the drone has photographed is lit up.
-  seen: 0xffffff,
+  seen: PALETTE.seen,
 } as const;
 
 // Keyed by Terrain rather than by string, so removing or adding a terrain in the
 // sim is a compile error here instead of an undefined fill at runtime.
 const FILL: Record<Terrain, number> = {
-  plains: 0x1f3d2b, // dark green
-  mountain: 0x4a4f57, // slate gray
+  plains: PALETTE.paper,
+  mountain: PALETTE.hill,
 };
 
 // --- emblems ----------------------------------------------------------------
@@ -120,11 +126,21 @@ export function emblemAt(
   y: number,
   color: number,
   size = EMBLEM_SIZE,
+  outline = false,
 ): Graphics {
   const g = new Graphics();
   for (const shape of EMBLEM[kind]) {
     g.poly([...shape.poly]).fill(color);
     if (shape.hole) g.poly([...shape.hole]).cut();
+  }
+  // A red piece standing on bare paper gets the title art's thin ink edge
+  // (`docs/art-direction.md`). Your own sit on a blue plate and need none.
+  if (outline) {
+    for (const shape of EMBLEM[kind]) {
+      g.poly([...shape.poly]);
+      if (shape.hole) g.poly([...shape.hole]);
+    }
+    g.stroke({ width: 0.9, color: PALETTE.ink, alpha: 0.85, join: 'round' });
   }
   g.position.set(x, y);
   g.scale.set(size / EMBLEM_BOX);
@@ -188,7 +204,8 @@ export function drawTerrain(
     const g = new Graphics()
       .poly(hexCorners(x, y))
       .fill(FILL[tile.terrain])
-      .stroke({ width: 1, color: COLOR.outline });
+      .stroke({ width: 1, color: PALETTE.grid });
+    if (tile.terrain === 'mountain') contours(g, x, y, tile.col * 31 + tile.row * 17);
 
     g.eventMode = 'static';
     g.cursor = 'pointer';
@@ -205,6 +222,22 @@ export function drawTerrain(
 
     layer.addChild(g);
   }
+}
+
+/**
+ * A hill's contour lines inside a mountain hex, like the title screen's map.
+ * Two slightly lopsided rings; `salt` turns each one a little so a range of
+ * mountains reads as ground rather than a stamped pattern. Pure decoration —
+ * derived from the tile's position, which is public (spec §11).
+ */
+function contours(g: Graphics, x: number, y: number, salt: number): void {
+  const turn = (salt % 12) * (Math.PI / 6);
+  const dx = Math.cos(turn) * HEX * 0.06;
+  const dy = Math.sin(turn) * HEX * 0.06;
+  g.ellipse(x, y, HEX * 0.66, HEX * 0.54)
+    .ellipse(x + dx, y + dy, HEX * 0.42, HEX * 0.33)
+    .ellipse(x + dx * 2, y + dy * 2, HEX * 0.18, HEX * 0.14)
+    .stroke({ width: 1.2, color: PALETTE.contour, alpha: 0.9 });
 }
 
 // --- highlights -------------------------------------------------------------
@@ -236,7 +269,7 @@ export function drawCoverage(layer: Container, view: VisibleGameState): void {
       layer.addChild(
         new Graphics()
           .poly(hexCorners(x, y))
-          .fill({ color: COLOR.own, alpha: 0.09 }),
+          .fill({ color: COLOR.own, alpha: 0.16 }),
       );
     }
   }
@@ -274,7 +307,7 @@ export function drawIntelOverlay(layer: Container, overlay: IntelOverlay | null)
   const g = new Graphics();
   for (const hex of overlay.photographed) {
     const { x, y } = centerOf(hex);
-    g.poly(hexCorners(x, y)).fill({ color: COLOR.seen, alpha: 0.07 });
+    g.poly(hexCorners(x, y)).fill({ color: COLOR.seen, alpha: 0.32 });
   }
 
   const inRegion = new Set(overlay.candidates.map(hexKey));
@@ -328,7 +361,7 @@ export function drawSelection(layer: Container, selected: Hex | null): void {
   layer.addChild(
     new Graphics()
       .poly(hexCorners(x, y))
-      .stroke({ width: 3, color: COLOR.selected }),
+      .stroke({ width: 3.5, color: COLOR.selected }),
   );
 }
 
@@ -431,8 +464,8 @@ function targetMark(mode: OrderMode, hex: Hex): Graphics {
     case 'MOVE':
       return new Graphics()
         .poly(hexCorners(x, y))
-        .fill({ color: COLOR.move, alpha: 0.18 })
-        .stroke({ width: 1, color: COLOR.move, alpha: 0.35 });
+        .fill({ color: COLOR.move, alpha: 0.22 })
+        .stroke({ width: 1, color: COLOR.move, alpha: 0.5 });
 
     // Also ground you may stand on, so also filled — but harder-edged, because
     // the extra reach is bought with a public reveal of the hex you leave. The
@@ -440,15 +473,15 @@ function targetMark(mode: OrderMode, hex: Hex): Graphics {
     case 'MARCH':
       return new Graphics()
         .poly(hexCorners(x, y))
-        .fill({ color: COLOR.march, alpha: 0.14 })
-        .stroke({ width: 2, color: COLOR.march, alpha: 0.55 });
+        .fill({ color: COLOR.march, alpha: 0.18 })
+        .stroke({ width: 2, color: COLOR.march, alpha: 0.7 });
 
     // Reach, not ground: the missile passes over these and lands on one. An
     // outline says "within range" without implying the launcher goes there.
     case 'LAUNCH':
       return new Graphics()
         .poly(hexCorners(x, y, HEX * 0.9))
-        .stroke({ width: 1.5, color: COLOR.launch, alpha: 0.45 });
+        .stroke({ width: 1.5, color: COLOR.launch, alpha: 0.65 });
 
     // Airspace. A dot floating over the tile, because the drone's range has
     // nothing to do with the ground under it — it crosses mountains and units
@@ -456,7 +489,7 @@ function targetMark(mode: OrderMode, hex: Hex): Graphics {
     case 'FLY':
       return new Graphics()
         .circle(x, y, HEX * 0.16)
-        .fill({ color: COLOR.fly, alpha: 0.5 });
+        .fill({ color: COLOR.fly, alpha: 0.6 });
   }
 }
 
@@ -759,8 +792,8 @@ export function drawPlacement(layer: Container, overlay: PlacementOverlay): void
     layer.addChild(
       new Graphics()
         .poly(hexCorners(x, y))
-        .fill({ color: COLOR.place, alpha: isHovered ? 0.42 : 0.16 })
-        .stroke({ width: isHovered ? 2.5 : 1, color: COLOR.place, alpha: isHovered ? 1 : 0.4 }),
+        .fill({ color: COLOR.place, alpha: isHovered ? 0.45 : 0.22 })
+        .stroke({ width: isHovered ? 2.5 : 1, color: COLOR.place, alpha: isHovered ? 1 : 0.55 }),
     );
   }
 
@@ -840,7 +873,7 @@ export function drawIntel(layer: Container, intel: VisiblePlayerIntel): void {
         .poly(hexCorners(x, y, HEX * 0.62))
         .stroke({ width: 3, color: COLOR.enemy }),
       // `reveal.kind` is a MaskedStaticKind: a decoy arrives here as 'bunker'.
-      emblemAt(reveal.kind, x, y, COLOR.enemy, INTEL_EMBLEM_SIZE),
+      emblemAt(reveal.kind, x, y, COLOR.enemy, INTEL_EMBLEM_SIZE, true),
     );
   }
 
@@ -853,7 +886,7 @@ export function drawIntel(layer: Container, intel: VisiblePlayerIntel): void {
       .stroke({ width: fresh ? 3 : 2, color: COLOR.enemy });
     ring.alpha = fresh ? 1 : 0.65;
 
-    const label = emblemAt('launcher', x, y, COLOR.enemy, CONTACT_EMBLEM_SIZE);
+    const label = emblemAt('launcher', x, y, COLOR.enemy, CONTACT_EMBLEM_SIZE, true);
     label.alpha = ring.alpha;
 
     layer.addChild(ring, label);
@@ -880,7 +913,7 @@ export function drawReveal(layer: Container, units: readonly Unit[]): void {
       .poly(hexCorners(x, y, HEX * 0.62))
       .fill({ color: COLOR.enemy, alpha: 0.28 })
       .stroke({ width: 2, color: COLOR.enemy });
-    const emblem = emblemAt(unit.kind, x, y, COLOR.enemy, INTEL_EMBLEM_SIZE);
+    const emblem = emblemAt(unit.kind, x, y, COLOR.enemy, INTEL_EMBLEM_SIZE, true);
     plate.alpha = emblem.alpha = unit.destroyed ? 0.45 : 1;
 
     layer.addChild(plate, emblem);
@@ -944,7 +977,7 @@ const WARNING_TEXT = {
   fontFamily: 'monospace',
   fontSize: 11,
   fontWeight: 'bold',
-  stroke: { color: 0x0b0f14, width: 3 },
+  stroke: { color: PALETTE.glyph, width: 3 },
 } as const;
 
 /**

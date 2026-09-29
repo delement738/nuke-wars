@@ -72,8 +72,8 @@ export interface BattleReport {
 /**
  * Spec §4's outcomes as a banner, from the reader's point of view.
  *
- * Exported for its own tests and because the outcome banner is the one report
- * whose text a future end-of-match screen will want to reuse.
+ * Exported for its own tests. Its headline and detail are also the text of
+ * the end-of-match screen (V1.5 Session 3), which is this report drawn large.
  *
  * The switch is exhaustive over `Outcome` with a `never` fallthrough, so adding
  * an outcome to the engine is a build error here rather than a silent blank
