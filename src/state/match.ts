@@ -11,9 +11,11 @@
 // placements and drafts while they are being made, whose turn it is at the
 // screen, the handoff blank, the logs, banners and replays built from updates.
 // It talks to the authority through three calls (setup, orders, resign) and
-// receives updates through `receive`. Today the authority is the in-process
-// `createLocalAuthority`; in Session 6 it becomes a server, and this file is not
-// supposed to notice.
+// receives updates through `receive`. The authority is either the in-process
+// `createLocalAuthority` (solo, hotseat) or, since V1.5 Session 6, a server at
+// the end of a WebSocket (`src/net/connection.ts`) — and the same actions drive
+// both. The one thing that differs online is timing: the answer to a submission
+// arrives later, so `online.submitted` locks the board while it is on its way.
 //
 // In hotseat one machine necessarily holds both players' redacted views (that is
 // what a pass-the-screen handoff *is*, spec §6). The store therefore keeps both,
@@ -40,8 +42,11 @@ import {
   createLocalAuthority,
   setupRng,
   type LocalAuthority,
+  type MatchAuthority,
   type MatchUpdates,
 } from './authority';
+import { connectOnline, type Joined } from '../net/connection';
+import type { ErrorCode } from '../net/protocol';
 import type { CpuDifficulty } from './cpu';
 import {
   allDecided,
@@ -72,7 +77,9 @@ import { sandboxSetup } from './sandbox';
 import {
   humanSeats,
   isHotseat,
+  isOnline,
   nextSeat,
+  onlineSeats,
   openingSeat,
   SOLO_SEATS,
   type Seating,
@@ -129,6 +136,33 @@ export interface Replay {
   round: number;
   from: VisibleGameState;
   events: readonly VisibleEvent[];
+}
+
+/**
+ * Where an online match stands, from this browser's side (V1.5 Session 6).
+ * Null for a local game. None of it is match state — that still arrives only
+ * as `MatchUpdate`s — it is the connection, the room and the waiting.
+ */
+export interface OnlineState {
+  /** `connecting` until the server gives us a seat; `closed` once the link is gone. */
+  status: 'connecting' | 'open' | 'closed';
+  /** The room code, once joined — what the shareable link carries. */
+  room: string | null;
+  /** Which player this browser is, once joined. */
+  seat: PlayerId | null;
+  /** Whether the other seat has someone in it right now. */
+  opponentPresent: boolean;
+  /** Whether anyone has ever taken the other seat — "waiting for them to join"
+   *  and "they have gone" are different messages. */
+  opponentJoined: boolean;
+  /**
+   * This seat has sent its setup or this round's orders and is waiting for the
+   * server's answer. The board is locked meanwhile: what was sent is final, and
+   * editing a draft the server already has would only mislead the player.
+   */
+  submitted: boolean;
+  /** The last thing the server refused, if any. */
+  error: ErrorCode | null;
 }
 
 /**
@@ -304,6 +338,8 @@ export interface MatchState {
    * store, and gotcha 73 says why it may.
    */
   finalReveal: Partial<Record<PlayerId, readonly Unit[]>> | null;
+  /** The online match's connection and room — null for a local game. */
+  online: OnlineState | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -320,11 +356,16 @@ export interface MatchState {
  * authority holds the unfiltered state, and nothing outside this file may hold
  * a handle that could ask it anything.
  *
- * Typed as the local kind because it is the only kind until Session 6; the
- * store uses nothing of it beyond `MatchAuthority` except `advance`, which only
- * a seating with no human seat needs.
+ * Local or online, the store uses nothing of it beyond `MatchAuthority` except
+ * the local kind's `advance`, which only a seating with no human seat needs.
+ * An online match holds one from the moment it connects, because the setup is
+ * submitted to the server rather than kept here until everyone is ready.
  */
-let authority: LocalAuthority | null = null;
+let authority: (MatchAuthority & Partial<Pick<LocalAuthority, 'advance'>>) | null = null;
+
+/** The online connection, when there is one — the same object as `authority`,
+ *  kept under a second name only so it can be closed. */
+let connection: { close(): void } | null = null;
 
 /**
  * A fresh board for `seed`.
@@ -385,6 +426,7 @@ export const matchStore = createStore<MatchState>()(() => ({
   reports: { p1: [], p2: [] },
   replay: { p1: null, p2: null },
   finalReveal: null,
+  online: null,
 }));
 
 /**
@@ -518,6 +560,10 @@ function appendLog(
  * cleared, because none of it means anything on a new board.
  */
 export function newMatch(seed: number = DEFAULT_SEED): void {
+  // A new board is a new, local game: an online match's board is the server's,
+  // so rolling one here leaves the room (and "back to title" goes through here).
+  disconnect();
+  if (isOnline(matchStore.getState().seats)) matchStore.setState({ seats: SOLO_SEATS });
   const { seats } = matchStore.getState();
   authority = null;
 
@@ -545,7 +591,109 @@ export function newMatch(seed: number = DEFAULT_SEED): void {
     reports: { p1: [], p2: [] },
     replay: { p1: null, p2: null },
     finalReveal: null,
+    online: null,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Online play (V1.5 Session 6)
+// ---------------------------------------------------------------------------
+
+/** Close any online connection, quietly: no handler fires after this. */
+function disconnect(): void {
+  connection?.close();
+  connection = null;
+}
+
+/** Merge into `online`, if there still is one. */
+function setOnline(patch: Partial<OnlineState>): void {
+  const { online } = matchStore.getState();
+  if (online) matchStore.setState({ online: { ...online, ...patch } });
+}
+
+/**
+ * Play online: connect to the server at `url` and open a new room (`room`
+ * null) or take the free seat in `room` — the code in a shared link.
+ *
+ * Nothing is playable until the server answers with a seat and a board
+ * (`joined`); from then on it is the setup screen as usual, with the setup going
+ * to the server when the player commits it (`beginMatch`).
+ */
+export function playOnline(url: string, room: string | null): void {
+  // Out of any hotseat first, so the fresh board below opens without a handoff.
+  matchStore.setState({ seats: SOLO_SEATS });
+  newMatch(matchStore.getState().seed);
+  matchStore.setState({
+    online: {
+      status: 'connecting',
+      room: null,
+      seat: null,
+      opponentPresent: false,
+      opponentJoined: false,
+      submitted: false,
+      error: null,
+    },
+  });
+
+  const remote = connectOnline(url, room, {
+    joined: onJoined,
+    opponent: (present) =>
+      setOnline(present ? { opponentPresent: true, opponentJoined: true } : { opponentPresent: false }),
+    update(update) {
+      const seat = matchStore.getState().online?.seat;
+      if (!seat) return;
+      setOnline({ submitted: false, error: null });
+      receive({ [seat]: update });
+      submitIfNothingToOrder();
+    },
+    error(code) {
+      // A refused setup is the one refusal the player can fix, so it unlocks
+      // the board again. The rest end the attempt to play.
+      setOnline(code === 'ILLEGAL_SETUP' ? { error: code, submitted: false } : { error: code });
+    },
+    closed: () => setOnline({ status: 'closed' }),
+  });
+  authority = remote;
+  connection = remote;
+}
+
+/** The server has given us a seat and the board: a fresh setup screen on it. */
+function onJoined({ room, seat, seed, map }: Joined): void {
+  matchStore.setState({
+    seed,
+    map,
+    seats: onlineSeats(seat),
+    ...freshDrafts(),
+    activeSeat: seat,
+    viewer: seat,
+    handoff: null,
+    selected: null,
+    selectedUnitId: null,
+    hovered: null,
+    orderMode: null,
+  });
+  setOnline({ status: 'open', room, seat });
+}
+
+/**
+ * Hand in an empty turn when this seat has nothing to order — the opponent's
+ * dead-hand round (spec §3). The server waits for both seats every round, and
+ * a player with zero orderable units has no draft that could ever complete
+ * (gotcha 41c), so without this the match would stall on them.
+ */
+function submitIfNothingToOrder(): void {
+  const view = orderingView();
+  if (view && inPlay() && orderableUnits(view).length === 0) resolveRound();
+}
+
+/**
+ * Whether this browser must wait: online, and either not yet seated, no longer
+ * connected, or already waiting on the server's answer. Every action that
+ * changes a placement or a draft checks it.
+ */
+function locked(): boolean {
+  const { online } = matchStore.getState();
+  return online !== null && (online.status !== 'open' || online.submitted);
 }
 
 // ---------------------------------------------------------------------------
@@ -643,11 +791,20 @@ function passTo(player: PlayerId): void {
  */
 function beginMatch(): void {
   const { seed, map, seats, placed, difficulty } = matchStore.getState();
+  if (isOnline(seats)) {
+    // The server's authority already exists; it starts the match when the
+    // other seat's setup is in too. Its opening update arrives later.
+    for (const player of humanSeats(seats)) {
+      authority?.submitSetup(player, placementSetup(placed[player]));
+    }
+    setOnline({ submitted: true, error: null });
+    return;
+  }
   authority = createLocalAuthority({ map, seed, seats, difficulty }, receive);
   for (const player of humanSeats(seats)) {
     authority.submitSetup(player, placementSetup(placed[player]));
   }
-  authority.advance(); // a no-op unless no seat is human (see `advance`)
+  authority.advance?.(); // a no-op unless no seat is human (see `advance`)
 }
 
 /**
@@ -659,7 +816,7 @@ function beginMatch(): void {
  * have picked up.
  */
 export function selectSlot(slotId: number): void {
-  if (matchStarted()) return;
+  if (matchStarted() || locked()) return;
 
   const { activeSeat, placed, selectedSlot } = matchStore.getState();
   const slot = placementSlots(placed[activeSeat])[slotId];
@@ -691,7 +848,7 @@ export function selectSlot(slotId: number): void {
  * `startPlacedMatch` is the explicit commitment instead.
  */
 export function placeHex(hex: Hex): void {
-  if (matchStarted()) return; // placement is over
+  if (matchStarted() || locked()) return; // placement is over
 
   const { map, activeSeat, placed, selectedSlot } = matchStore.getState();
   const mine = placed[activeSeat];
@@ -716,7 +873,7 @@ export function placeHex(hex: Hex): void {
 /** Take the selected slot's asset back off the board. Refused once the match has
  *  started — a setup is secret and final the moment the board is built (§12). */
 export function clearSlot(slotId: number): void {
-  if (matchStarted()) return;
+  if (matchStarted() || locked()) return;
   const { activeSeat, placed, selectedSlot } = matchStore.getState();
   const next = withoutSlot(placed[activeSeat], slotId);
   if (next === placed[activeSeat]) return;
@@ -731,7 +888,7 @@ export function clearSlot(slotId: number): void {
 /** Take everything back off the board and start the setup over. Clears only the
  *  active seat's roster — in hotseat the other player's is not yours to reset. */
 export function clearPlacements(): void {
-  if (matchStarted()) return;
+  if (matchStarted() || locked()) return;
   const { activeSeat, placed, selectedSlot } = matchStore.getState();
   matchStore.setState({
     placed: { ...placed, [activeSeat]: emptyPlacementDraft() },
@@ -748,7 +905,7 @@ export function clearPlacements(): void {
  * bug — the same reasoning as `resolveRound` on a finished match.
  */
 export function startPlacedMatch(): void {
-  if (matchStarted()) return;
+  if (matchStarted() || locked()) return;
 
   const { seats, activeSeat, placed } = matchStore.getState();
   if (!placementComplete(placed[activeSeat])) return;
@@ -779,7 +936,7 @@ export function startPlacedMatch(): void {
  * special case that could quietly diverge from the rules.
  */
 export function autoPlace(): void {
-  if (matchStarted()) return;
+  if (matchStarted() || locked()) return;
 
   const { seed, map, seats, placed, selectedSlot } = matchStore.getState();
 
@@ -829,11 +986,16 @@ function inPlay(): boolean {
 export function resolveRound(): void {
   if (!authority || !inPlay()) return;
 
+  if (locked()) return;
+
   const { seats, draft } = matchStore.getState();
   for (const player of humanSeats(seats)) {
     authority.submitOrders(player, draftOrders(draft[player]));
   }
-  authority.advance(); // a no-op unless no seat is human (see `advance`)
+  // Online, the answer comes back later (gotcha 77d); lock the board until it
+  // does. Locally it has already arrived, and `receive` left nothing to lock.
+  if (isOnline(seats)) setOnline({ submitted: true });
+  authority.advance?.(); // a no-op unless no seat is human (see `advance`)
 }
 
 /**
@@ -850,7 +1012,7 @@ export function resolveRound(): void {
  * player has not decided simply holds (§3).
  */
 export function endTurn(): void {
-  if (!inPlay()) return;
+  if (!inPlay() || locked()) return;
 
   const { seats, activeSeat } = matchStore.getState();
   const waiting = nextSeat(seats, activeSeat, hasOrdersToGive);
@@ -879,6 +1041,7 @@ export function endTurn(): void {
  * being *offered*.
  */
 function orderingView(): VisibleGameState | null {
+  if (locked()) return null; // online and waiting: nothing may be drafted
   const { views, activeSeat } = matchStore.getState();
   return views?.[activeSeat] ?? null;
 }
@@ -1014,7 +1177,10 @@ export function resign(player: PlayerId): void {
  * same pairing `orderingView` uses.
  */
 export function setViewer(viewer: PlayerId): void {
-  if (isHotseat(matchStore.getState().seats)) return;
+  // Online there is only one view to show: the other seat's never reaches this
+  // browser at all, which is the whole point of the server.
+  const { seats } = matchStore.getState();
+  if (isHotseat(seats) || isOnline(seats)) return;
 
   matchStore.setState({
     viewer,

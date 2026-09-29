@@ -161,6 +161,11 @@ export function createLocalAuthority(
 ): LocalAuthority {
   const { map, seed, seats, difficulty } = config;
   const humans = humanSeats(seats);
+  // A remote seat is played on another machine, through a server that runs its
+  // own authority. Here it would be silently answered as a CPU.
+  if (PLAYERS.some((player) => seats[player] === 'remote')) {
+    throw new Error('a local authority cannot host a remote seat');
+  }
 
   /** Null until every seat has set up — there is no board to hold before then. */
   let truth: GameState | null = null;

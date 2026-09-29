@@ -8,7 +8,8 @@ How the game gets from GitHub to the internet. Part 1 (the client on Vercel) is 
 - **Production:** every push (or merge) to `main` builds and deploys the site on Vercel. Nothing to run by hand.
 - **Previews:** every pull request gets its own temporary copy of the site at a unique link. Vercel's bot posts it as a comment on the PR. Use it to try a change before merging.
 - **CI:** GitHub Actions (`.github/workflows/ci.yml`) runs `npm run lint`, `npm test` and `npm run build` on every pull request and every push to `main`. A red ✗ on a PR means one failed; click **Details** to see which.
-- The client is a plain static site (Vite builds it into `dist/`). There is no server yet, so CPU and hotseat run entirely in the player's browser.
+- The client is a plain static site (Vite builds it into `dist/`). CPU and hotseat run entirely in the player's browser.
+- **The match server exists since Session 6 (`server/`, `npm run server`) but is not deployed yet.** Without `VITE_SERVER_URL` a production build hides the online button, so the live site is unaffected. Session 8 puts the server on Railway and sets that variable on Vercel. How to run it locally: `docs/protocol.md`, "Running it locally".
 
 ## Part 1 — the client on Vercel
 

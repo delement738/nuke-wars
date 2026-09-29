@@ -24,7 +24,7 @@ import { PLAYERS, type PlayerId } from '../sim/types';
  * to re-interpret ("in solo, which one is the human?"), and the answer would be
  * written down in several places. A seating says it once.
  */
-export type SeatKind = 'human' | 'cpu';
+export type SeatKind = 'human' | 'cpu' | 'remote';
 
 /** Who fills both seats. */
 export type Seating = Readonly<Record<PlayerId, SeatKind>>;
@@ -34,6 +34,22 @@ export const SOLO_SEATS: Seating = { p1: 'human', p2: 'cpu' };
 
 /** Two humans passing one screen (build-order step 10c). */
 export const HOTSEAT_SEATS: Seating = { p1: 'human', p2: 'human' };
+
+/**
+ * An online match as this browser sees it (V1.5 Session 6): the human here in
+ * `seat`, and someone on another machine in the other. `'remote'` is not a
+ * `'human'` on purpose — every rule above about *this screen* (who drafts, who
+ * is handed the screen, whether there is a handoff at all) is about the humans
+ * at this keyboard, and the remote player is never one of them.
+ */
+export function onlineSeats(seat: PlayerId): Seating {
+  return seat === 'p1' ? { p1: 'human', p2: 'remote' } : { p1: 'remote', p2: 'human' };
+}
+
+/** Whether this seating is an online match. */
+export function isOnline(seats: Seating): boolean {
+  return PLAYERS.some((player) => seats[player] === 'remote');
+}
 
 /**
  * The human seats, in `PLAYERS` order.

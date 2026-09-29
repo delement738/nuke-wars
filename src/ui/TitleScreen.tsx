@@ -17,11 +17,12 @@
 // tablet only), with a way past it for anyone who wants to try anyway.
 
 import { useEffect, useState, type CSSProperties } from 'react';
+import { SERVER_URL } from '../net/config';
 import SoundButton from './SoundButton';
 import { DRIFT_PERIOD_S, TILE_H, TILE_W, titleTileCss } from './titleBackdrop';
 import './title.css';
 
-export type PlayMode = 'solo' | 'hotseat';
+export type PlayMode = 'solo' | 'hotseat' | 'online';
 
 interface Props {
   onPlay: (mode: PlayMode) => void;
@@ -110,6 +111,13 @@ export default function TitleScreen({ onPlay, onHelp }: Props) {
               <button type="button" className="title-btn" onClick={() => onPlay('hotseat')}>
                 Two players (hotseat)
               </button>
+              {/* Only when there is a server to talk to (V1.5 Session 6):
+                  in development, or once Session 8 configures one. */}
+              {SERVER_URL && (
+                <button type="button" className="title-btn" onClick={() => onPlay('online')}>
+                  Play online (test)
+                </button>
+              )}
               <button type="button" className="title-btn" onClick={() => onHelp()}>
                 How to play
               </button>

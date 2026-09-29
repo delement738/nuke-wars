@@ -27,4 +27,11 @@ export default defineConfig([
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
+  {
+    // The match server (V1.5 Session 6) runs in Node, not a browser.
+    files: ['server/**/*.ts'],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
 ])
