@@ -54,7 +54,7 @@ describe('solo', () => {
 
   it('queues a replay for both players: their own log slice, over their previous view', () => {
     const before = { p1: viewFor('p1'), p2: viewFor('p2') };
-    const round = state().views!.p1.round;
+    const round = viewFor('p1')!.round;
 
     resolveRound();
 
@@ -87,7 +87,7 @@ describe('solo', () => {
 
   it('replaces an unwatched replay with the newer round rather than queueing it', () => {
     resolveRound();
-    const second = state().views!.p1.round;
+    const second = viewFor('p1')!.round;
     resolveRound();
     expect(replayFor('p1')!.round).toBe(second);
   });
@@ -133,8 +133,8 @@ describe('solo', () => {
     setDifficulty('hard');
     let launches = 0;
 
-    for (let i = 0; i < 12 && state().views!.p1.outcome === null; i++) {
-      const deadHand = state().views!.p1.phase === 'DEAD_HAND_PHASE';
+    for (let i = 0; i < 12 && viewFor('p1')!.outcome === null; i++) {
+      const deadHand = viewFor('p1')!.phase === 'DEAD_HAND_PHASE';
       resolveRound();
       for (const player of PLAYERS) {
         const replay = replayFor(player);
@@ -170,7 +170,7 @@ describe('hotseat', () => {
   }
 
   function playOneRound(): number {
-    const round = state().views!.p1.round;
+    const round = viewFor('p1')!.round;
     takeScreen(); // p1
     holdEverything();
     takeScreen(); // p2
