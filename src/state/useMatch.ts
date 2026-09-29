@@ -23,7 +23,7 @@ import type { Hex } from '../sim/hex';
 import type { MapData } from '../sim/map';
 import type { PlayerId, Unit, UnitId, VisibleGameState } from '../sim/types';
 import { intelOverlay, type IntelOverlay } from './inference';
-import { matchStore, type LogEntry, type Replay } from './match';
+import { matchStore, type LogEntry, type OnlineState, type Replay } from './match';
 import type { OrderDraft, OrderMode } from './orders';
 import { placementComplete, type PlacementDraft } from './placement';
 import type { BattleReport } from './reports';
@@ -227,4 +227,12 @@ export function useSeed(): number {
 /** How the CPU (`SANDBOX_DUMMY`) currently plays. */
 export function useDifficulty(): CpuDifficulty {
   return useStore(matchStore, (state) => state.difficulty);
+}
+
+/**
+ * The online match's connection, room and waiting state, or null for a local
+ * game (V1.5 Session 6). Nothing in it is about the board.
+ */
+export function useOnline(): OnlineState | null {
+  return useStore(matchStore, (state) => state.online);
 }

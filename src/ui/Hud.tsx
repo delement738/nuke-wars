@@ -28,12 +28,14 @@ import { endTurn, finishReplay, newMatch, resign } from '../state/match';
 import {
   useFinalReveal,
   useIsHotseat,
+  useOnline,
   useReplay,
   useView,
   useViewer,
 } from '../state/useMatch';
 import EventLog from './EventLog';
 import HelpButton from './HelpButton';
+import OnlinePanel from './OnlinePanel';
 import OrderPanel from './OrderPanel';
 import SelectionPanel from './SelectionPanel';
 import SoundButton from './SoundButton';
@@ -53,6 +55,11 @@ export default function Hud({ onHelp, onTitle }: Props) {
   const hotseat = useIsHotseat();
   const replay = useReplay();
   const reveal = useFinalReveal();
+  // Online (V1.5 Session 6): orders are *sent*, and the answer comes back once
+  // the opponent has sent theirs.
+  const online = useOnline();
+  const sent = online?.submitted === true;
+  const cut = online !== null && online.status !== 'open';
 
   // `App` only mounts this once a match exists, so a null view is unreachable —
   // but `useView()` is nullable because the setup screen legitimately has no
@@ -130,17 +137,21 @@ export default function Hud({ onHelp, onTitle }: Props) {
           </p>
 
           <div className="buttons">
-            <button type="button" onClick={() => endTurn()} disabled={over}>
+            <button type="button" onClick={() => endTurn()} disabled={over || sent || cut}>
               {/* In hotseat this ends YOUR turn and passes the screen; only the
                   second player's turn ending resolves the round, which is what
                   keeps orders simultaneous (§3). */}
-              {hotseat
+              {sent
+                ? 'Orders sent — waiting for your opponent'
+                : online
+                ? 'Send orders'
+                : hotseat
                 ? `Done — pass to ${opponentOf(viewer).toUpperCase()}`
                 : deadHand
                   ? 'Resolve final volley'
                   : 'Resolve round'}
             </button>
-            <button type="button" onClick={() => resign(viewer)} disabled={over}>
+            <button type="button" onClick={() => resign(viewer)} disabled={over || cut}>
               Resign
             </button>
           </div>
@@ -163,6 +174,8 @@ export default function Hud({ onHelp, onTitle }: Props) {
             drone with no order hovers and watches its own corridor.
           </p>
         </section>
+
+        {online && <OnlinePanel />}
 
         <OrderPanel />
 

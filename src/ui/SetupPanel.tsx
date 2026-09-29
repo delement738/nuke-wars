@@ -43,12 +43,14 @@ import {
   useAwaitingSetup,
   useDifficulty,
   useIsHotseat,
+  useOnline,
   usePlaced,
   useSeed,
   useSelectedSlot,
 } from '../state/useMatch';
 import { hexLabel } from './eventText';
 import HelpButton from './HelpButton';
+import OnlinePanel from './OnlinePanel';
 import SoundButton from './SoundButton';
 
 const DIFFICULTIES: readonly CpuDifficulty[] = ['easy', 'medium', 'hard'];
@@ -98,6 +100,11 @@ export default function SetupPanel({ onHelp }: Props) {
   const seat = useActiveSeat();
   const hotseat = useIsHotseat();
   const awaiting = useAwaitingSetup();
+  // Online (V1.5 Session 6): the seating and the board are the server's, so the
+  // panel that chooses them gives way to the room's, and the setup is *sent*.
+  const online = useOnline();
+  const sent = online?.submitted === true;
+  const canPlace = !online || (online.status === 'open' && !sent);
   const difficulty = useDifficulty();
 
   const slots = placementSlots(placed);
@@ -111,6 +118,9 @@ export default function SetupPanel({ onHelp }: Props) {
   return (
     <div className="hud">
       <div className="column left">
+        {online && <OnlinePanel />}
+        {!online && (
+        <>
         {/* Everything that decides WHAT GAME this is lives here, before a
             match exists — the in-game HUD offers none of it (designer's call,
             2026-09-28). Difficulty in particular is locked once the match
@@ -173,6 +183,8 @@ export default function SetupPanel({ onHelp }: Props) {
             Map seed {seed}. Changing players or the map clears your placements.
           </p>
         </section>
+        </>
+        )}
 
         <section className="panel setup">
           <h2>
@@ -229,25 +241,29 @@ export default function SetupPanel({ onHelp }: Props) {
           )}
 
           <div className="buttons">
-            <button type="button" onClick={() => startPlacedMatch()} disabled={!ready}>
-              {!ready
+            <button type="button" onClick={() => startPlacedMatch()} disabled={!ready || !canPlace}>
+              {sent
+                ? 'Sent — waiting for your opponent'
+                : !ready
                 ? `Place all ${ROSTER_SIZE} to continue`
-                : awaiting
+                : online
+                  ? 'Send setup'
+                  : awaiting
                   ? `Done — pass to ${opponentOf(seat).toUpperCase()}`
                   : 'Start match'}
             </button>
             <button
               type="button"
               onClick={() => clearPlacements()}
-              disabled={done === 0}
+              disabled={done === 0 || !canPlace}
             >
               Start over
             </button>
           </div>
 
           <div className="buttons">
-            <button type="button" onClick={() => autoPlace()}>
-              Auto-place and start
+            <button type="button" onClick={() => autoPlace()} disabled={!canPlace}>
+              {online ? 'Auto-place and send' : 'Auto-place and start'}
             </button>
           </div>
 

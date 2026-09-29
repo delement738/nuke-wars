@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import GameCanvas from './render/GameCanvas';
 import BattleReport from './ui/BattleReport';
 import Hud from './ui/Hud';
@@ -6,7 +6,8 @@ import HandoffScreen from './ui/HandoffScreen';
 import HowToPlay from './ui/HowToPlay';
 import SetupPanel from './ui/SetupPanel';
 import TitleScreen, { type PlayMode } from './ui/TitleScreen';
-import { newMatch, setSeating } from './state/match';
+import { newMatch, playOnline, setSeating } from './state/match';
+import { SERVER_URL, roomInLink } from './net/config';
 import { HOTSEAT_SEATS, SOLO_SEATS } from './state/seats';
 import { useHandoff, useMatchStarted } from './state/useMatch';
 import { toggleMute } from './audio/settings';
@@ -40,9 +41,25 @@ export default function App() {
   // The title screen (V1.5 Session 2). Presentation state like the help window,
   // and deliberately not a store field (gotcha 42: no match yet IS the setup
   // screen). Leaving it picks the seating with the setup panel's own action.
-  const [title, setTitle] = useState(true);
+  //
+  // A room link (`?room=CODE`, V1.5 Session 6) skips the title: whoever opened
+  // it came to join that game.
+  const [linkRoom] = useState(() => (SERVER_URL ? roomInLink() : null));
+  const [title, setTitle] = useState(linkRoom === null);
+  // Once only: StrictMode runs effects twice in development, and a second join
+  // would find the seat the first one took.
+  const joinedLink = useRef(false);
+  useEffect(() => {
+    if (!linkRoom || !SERVER_URL || joinedLink.current) return;
+    joinedLink.current = true;
+    playOnline(SERVER_URL, linkRoom);
+  }, [linkRoom]);
   const play = useCallback((mode: PlayMode) => {
-    setSeating(mode === 'hotseat' ? HOTSEAT_SEATS : SOLO_SEATS);
+    if (mode === 'online') {
+      if (SERVER_URL) playOnline(SERVER_URL, null);
+    } else {
+      setSeating(mode === 'hotseat' ? HOTSEAT_SEATS : SOLO_SEATS);
+    }
     setTitle(false);
   }, []);
   // Back to the title from a finished match (end screen, HUD): a fresh board
