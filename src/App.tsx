@@ -9,6 +9,8 @@ import TitleScreen, { type PlayMode } from './ui/TitleScreen';
 import { newMatch, setSeating } from './state/match';
 import { HOTSEAT_SEATS, SOLO_SEATS } from './state/seats';
 import { useHandoff, useMatchStarted } from './state/useMatch';
+import { toggleMute } from './audio/settings';
+import { installUiClicks } from './audio/synth';
 
 // The two presentation layers, stacked: Pixi draws the board underneath, React
 // draws the panels on top. Neither owns state — both read from the store in
@@ -68,6 +70,21 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [handoff]);
+
+  // Sound (V1.5 Session 4): a teletype click on every button, and M to mute
+  // from any screen. Neither reads the match, so neither cares about handoffs.
+  useEffect(() => installUiClicks(), []);
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== 'm' && event.key !== 'M') return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const tag = (event.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      toggleMute();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Before the board: no match, so no handoff and nobody's news to keep hidden.
   // The help window may open over it; it shows only the rules (gotcha 71).

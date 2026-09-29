@@ -101,6 +101,12 @@ export const CUE_CAPTION: Record<Cue, string> = {
   respawn: 'Drone respawn',
 };
 
+/** The share of an intercept/impact clip spent on a carried missile's final
+ *  dive before its burst. Zero-length when there is no dive to draw. Lives here,
+ *  not in `./playbackDraw`, because the replay's sound (`src/audio/cues.ts`)
+ *  times the burst's thump from it too, and must stay in step with the picture. */
+export const DIVE = 0.35;
+
 /** A pause before the first beat, so the old board registers before it moves. */
 export const LEAD_IN = 300;
 

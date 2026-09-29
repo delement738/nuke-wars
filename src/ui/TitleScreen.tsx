@@ -17,6 +17,7 @@
 // tablet only), with a way past it for anyone who wants to try anyway.
 
 import { useEffect, useState, type CSSProperties } from 'react';
+import SoundButton from './SoundButton';
 import { DRIFT_PERIOD_S, TILE_H, TILE_W, titleTileCss } from './titleBackdrop';
 import './title.css';
 
@@ -79,6 +80,7 @@ export default function TitleScreen({ onPlay, onHelp }: Props) {
         }
       />
       <div className="title-lamp" aria-hidden="true" />
+      <SoundButton className="sound-corner" />
 
       <main className="title-card">
         <div className="title-plate">

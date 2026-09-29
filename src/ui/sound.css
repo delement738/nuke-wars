@@ -1,0 +1,100 @@
+/* UI LAYER — the sound settings button and popover (V1.5 Session 4). A bunker
+ * console like the HUD panels; the button borrows `.help-q` from hud.css on the
+ * setup screen and HUD, and repeats its look here for the title screen, which
+ * does not load hud.css. */
+
+.sound {
+  position: relative;
+  display: inline-flex;
+  font-family: 'Oswald', 'Arial Narrow', ui-sans-serif, system-ui, sans-serif;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.sound-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: #cfc8b0;
+  background: #1d1c19;
+  border: 1px solid #4a463b;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.sound-btn:hover {
+  color: #ffffff;
+  background: #2a2823;
+  border-color: #6a6453;
+}
+
+.sound-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 220px;
+  padding: 10px 12px;
+  color: #e9e4d0;
+  background: #121210;
+  border: 1px solid #4a463b;
+  border-radius: 4px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+}
+
+.sound-title {
+  margin-bottom: 6px;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #a8a18b;
+}
+
+.sound-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  cursor: pointer;
+}
+
+.sound-row input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  accent-color: #b3362a;
+}
+
+.sound-row input[type='checkbox'] {
+  accent-color: #b3362a;
+}
+
+.sound-key,
+.sound-value {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  color: #a8a18b;
+}
+
+.sound-value {
+  width: 3.2em;
+  text-align: right;
+}
+
+/* The title screen has no panel header to sit in, so it takes the top-right
+ * corner, above the lamp and the card. */
+.sound.sound-corner {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 5;
+}
+
+.sound.sound-corner .sound-btn {
+  width: 32px;
+  height: 32px;
+}
