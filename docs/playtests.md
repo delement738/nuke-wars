@@ -18,3 +18,12 @@ A playtest that shows a real rules problem reopens the freeze **on purpose** (sp
 
 ## Games
 <!-- Newest at the bottom. -->
+
+### 2026-09-29 — vs CPU — the designer (several games, the gate)
+- Build: https://nuke-wars.vercel.app/ after Session 4 (ac8b59f)
+- Result: not recorded game by game
+- Felt like a race? not recorded
+- Confusing: nothing reported
+- Bugs: none reported
+- Rules concern: none ("I have play tested that version of the game and it's good")
+- Note: the gate asked for hotseat games; the designer played only against the CPU and judged that enough to start networking. Hotseat itself was last exercised in headless Chrome during Session 5.

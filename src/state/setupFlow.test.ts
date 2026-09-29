@@ -451,9 +451,10 @@ function enemySites(): string[] {
 describe('the setup screen and the visibility filter', () => {
   /**
    * The structural version of gotcha 30: the enemy's setup does not exist yet.
-   * `beginMatch` generates the CPU's placements at match start rather than when
+   * The authority generates the CPU's placements at match start rather than when
    * the board was rolled, so while the human is placing there is nothing in the
-   * client to leak — no filter involved, and nothing to get wrong.
+   * client to leak — no filter involved, and nothing to get wrong. (Since the
+   * authority split they never reach the store at all, even after the start.)
    */
   it('has no opponent setup anywhere in the store while placing', () => {
     placeHex(targets()[0]);
@@ -462,7 +463,7 @@ describe('the setup screen and the visibility filter', () => {
     expect(state.views).toBeNull();
     // The only placements anywhere in the store are the human's own, and there
     // are as many as they have clicked. There is no field an opponent's setup
-    // could live in until `beginMatch` builds one.
+    // could live in until the authority builds one.
     expect(placedCount()).toBe(1);
 
     const zone = RULES.homeZoneRows[SANDBOX_PLAYER];

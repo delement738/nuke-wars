@@ -34,10 +34,12 @@ When a session finishes: tick it here, add its dated entry to `docs/history.md`,
 4. ✅ **Sound and settings** (2026-09-29). Sounds generated in code with Web Audio (designer's pick over sound files): teletype clicks for the UI, a klaxon sting for launches, a muffled thump for impacts, a relay click for intercepts, all timed from the replay. A speaker button beside every `?` and on the title screen opens volume and mute (`M` mutes anywhere); saved per browser. Replay speed was not wanted.
 
 > **Gate: the designer's hotseat playtests** on the live Vercel build. Networking starts only after them. A real rules problem found here reopens the freeze on purpose, before the server is built on top of the rules.
+>
+> ✅ **Passed 2026-09-29** on the designer's games against the CPU on the live build ("it's good"); no hotseat games were played, and no rules problem was found. See `docs/playtests.md`.
 
 ### Part 2 — networking (spec §8 steps 11–13)
 
-5. **Authority split refactor.** Separate "who resolves the match" from "who draws it", so the client can be fed by either the local store (CPU, hotseat) or a server. No behaviour change: CPU and hotseat play exactly as before, and the test suite proves it.
+5. ✅ **Authority split refactor** (2026-09-29). The match now lives in `src/state/authority.ts`: a `MatchAuthority` takes each seat's setup, orders and resignation, runs `startMatch`/`resolve()`/the CPU, and sends each player a filtered `MatchUpdate`. The store only drafts, draws and passes the screen. `createLocalAuthority` serves solo and hotseat today; Session 6 swaps in a server behind the same three calls. No behaviour change: a whole CPU match through the store matches the engine driven directly (and did before the split too).
 6. **Server, protocol and rooms** (spec step 11). A Node WebSocket server: create/join a room by link, collect both players' orders, run `resolve()` authoritatively, send each player only their filtered view. Writes `docs/protocol.md`.
 7. **Order timer, reconnect and lobby UI** (spec step 12). The 25 s timer and ready-up, reconnect by token after a dropped connection, the lobby and "waiting for opponent" screens. (The phone notice was done early, in Session 2.)
 8. **Railway deploy and hardening** (spec step 13). The server live on Railway, the Vercel client pointed at it; message validation, rate limits, room cleanup, basic logging. Extends `docs/deploy.md`.
