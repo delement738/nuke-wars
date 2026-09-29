@@ -5,6 +5,9 @@ import Hud from './ui/Hud';
 import HandoffScreen from './ui/HandoffScreen';
 import HowToPlay from './ui/HowToPlay';
 import SetupPanel from './ui/SetupPanel';
+import TitleScreen, { type PlayMode } from './ui/TitleScreen';
+import { setSeating } from './state/match';
+import { HOTSEAT_SEATS, SOLO_SEATS } from './state/seats';
 import { useHandoff, useMatchStarted } from './state/useMatch';
 
 // The two presentation layers, stacked: Pixi draws the board underneath, React
@@ -32,6 +35,15 @@ export default function App() {
   const openHelp = useCallback((section = '') => setHelp(section), []);
   const closeHelp = useCallback(() => setHelp(null), []);
 
+  // The title screen (V1.5 Session 2). Presentation state like the help window,
+  // and deliberately not a store field (gotcha 42: no match yet IS the setup
+  // screen). Leaving it picks the seating with the setup panel's own action.
+  const [title, setTitle] = useState(true);
+  const play = useCallback((mode: PlayMode) => {
+    setSeating(mode === 'hotseat' ? HOTSEAT_SEATS : SOLO_SEATS);
+    setTitle(false);
+  }, []);
+
   // A handoff closes it, so the next player sits down to their own board rather
   // than to a window the last player left open. Adjusted during render (React's
   // "state from a previous render" pattern) so it is already shut on the frame
@@ -50,6 +62,17 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [handoff]);
+
+  // Before the board: no match, so no handoff and nobody's news to keep hidden.
+  // The help window may open over it; it shows only the rules (gotcha 71).
+  if (title && !started && !handoff) {
+    return (
+      <div className="stage">
+        <TitleScreen onPlay={play} onHelp={openHelp} />
+        {help !== null && <HowToPlay onClose={closeHelp} start={help || undefined} />}
+      </div>
+    );
+  }
 
   if (handoff) {
     return (

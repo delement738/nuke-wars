@@ -54,9 +54,9 @@ A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, dr
 
 ## Current status (update at end of every session)
 
-### ✅ Code and docs agree as of 2026-09-29 (V1.5 Session 1: live on Vercel, CI, docs split) — no known mismatch
+### ✅ Code and docs agree as of 2026-09-29 (V1.5 Session 2: title screen and art direction) — no known mismatch
 
-**Last session (2026-09-29):** V1.5 Session 1. The current game (CPU + hotseat) is live at https://nuke-wars.vercel.app/, deployed by Vercel from `main` (PR #1 merged); GitHub Actions runs lint, test and build on every PR and push to `main`; the build history moved to `docs/history.md`; `docs/roadmap-v1.5.md` holds the agreed 9-session plan, with skeletons for `deploy.md`, `art-direction.md`, `protocol.md` and `playtests.md`. No game code changed. **Next: Session 2, identity and title screen.**
+**Last session (2026-09-29):** V1.5 Session 2. A title screen (`src/ui/TitleScreen.tsx`): the stencilled name and tagline over a seamless war-map tile drawn from the unit emblems (`src/ui/titleBackdrop.ts`), sliding left at 20 px/s; Play vs CPU / hotseat / How to play, Enter plays the CPU, phones get a notice. Favicon and page title; web fonts from Google Fonts. `docs/art-direction.md` is written; the designer's reference art is `public/art/title-inspo.png`. 881 tests. **Next: Session 3, board art, event log and end screen.**
 
 ### Completed
 
@@ -65,13 +65,13 @@ The session-by-session build history (V1 steps 1–10, the V1.1 rules, the sim f
 ### Next up: **V1.5 — networked play, cosmetics first.** Plan: **`docs/roadmap-v1.5.md`** (9 sessions, agreed 2026-09-29). One session each, in order. The sim stays FROZEN throughout: nothing touches `src/sim/` except to fix a bug.
 
 1. ✅ **DONE 2026-09-29.** ~~**Live on Vercel + CI + docs skeleton.**~~ See `docs/history.md` and `docs/deploy.md`.
-2. **NEXT: Identity — title screen and art direction.** The designer supplies the title-screen artwork. Fill in `docs/art-direction.md`.
-3. Board art, event log and end screen.
+2. ✅ **DONE 2026-09-29.** ~~**Identity — title screen and art direction.**~~ See `docs/art-direction.md` and `docs/history.md`.
+3. **NEXT: Board art, event log and end screen**, following `docs/art-direction.md`.
 4. Sound and settings.
    — **Gate: the designer's hotseat playtests** on the deployed build before any networking. —
 5. Authority split refactor (client stops owning the match; no behaviour change).
 6. Server, protocol and rooms (`docs/protocol.md`).
-7. Order timer, reconnect and lobby UI.
+7. Order timer, reconnect and lobby UI (the phone notice is already done).
 8. Railway deploy and hardening.
 9. Beta and launch; tag `v1.5`.
 
@@ -224,6 +224,7 @@ The session-by-session build history (V1 steps 1–10, the V1.1 rules, the sim f
 72. **Every unit emblem comes from `EMBLEM` in `src/render/emblems.ts`, and from a piece's kind alone** (unit-emblems session; gotchas 31, 69, 71). Four rules keep it honest. (a) `emblemAt(kind, …)` takes no hit points, event or unit, so a wreck, a hit bunker or a kill can never change a shape; sizing or tinting one from damage re-opens gotcha 69's detector. (b) There is a `'decoy'` emblem, but enemy intel is typed `MaskedStaticKind`/`SpottedKind`, which have no `'decoy'`, so an enemy site can only be drawn as a bunker. Never widen those to `UnitKind` "to simplify" a call. `legend.test.ts` pins the same for the key. (c) **Shapes within one emblem may touch but never overlap:** Pixi applies a Graphics' alpha shape by shape, so an overlap shows as a darker patch on a faint contact or a wreck. A hole must lie wholly inside its shape, or `cut()` fails silently. `emblems.test.ts` checks both by sampling. (d) `emblems.ts` imports only types. The UI reads it for the legend, and one Pixi import would drag the renderer into `src/ui/`. Board and legend draw the same list: never give the legend its own copy of a shape.
 
 73. **The end-of-match reveal is the one piece of `truth` that reaches the store, and only at `GAME_OVER`** (final-reveal session; gotchas 34, 35, 36; spec §6). `MatchState.finalReveal` holds each player's opponent's units straight from `truth`, decoy included, set only in `publish` via `finalRevealOf`, which returns null unless the phase is `GAME_OVER`. That guard is the whole safety of the feature: dropping it hands the renderer the enemy's positions all match (`finalReveal.test.ts` "does not exist while the match is being played" fails). It is keyed by viewer and read only through `useFinalReveal` (gotcha 36). It lives in `publish` so both endings, the engine's verdict and `resign`, get it with no special case. `src/sim/` is untouched: `filterForPlayer` still drops enemy units, and must keep doing so. The board draws it with `drawReveal` on the intel layer *instead of* intel and the base-candidate shading, and only after the final replay has played, so the reveal never spoils the round that ended the match.
+74. **The title screen is presentation state in `App`, never a store stage** (V1.5 Session 2; gotcha 42). `App` holds a `title` flag and swaps `TitleScreen` in for the board only while no match exists; leaving it calls the setup panel's own `setSeating`, so choosing a mode from the title and from the setup panel are one code path. It reads nothing from the store, so it has nothing to leak. Its background is a generated tile (`src/ui/titleBackdrop.ts`), not the reference picture: each layer is wrapped onto its eight neighbours with `<use>` so the tile loops with no seam — wrap per layer, not the whole picture, or a neighbour's land paints over this tile's grid labels.
 
 ### Open questions
 - **SETTLED 2026-09-29: `roundCap` stays 25** (≈12.5 min at V1.5's ~30 s rounds). The designer's longest playtest games ran ~20 rounds; 25 is the cap they want. See `docs/roadmap-v1.5.md`.
