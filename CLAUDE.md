@@ -53,7 +53,7 @@ A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, dr
 
 ## Current status (update at end of every session)
 
-### ✅ Code and docs agree as of 2026-09-28 (unit emblems) — no known mismatch
+### ✅ Code and docs agree as of 2026-09-28 (end-of-match reveal) — no known mismatch
 
 ### Completed
 - Project scaffold; `src/sim/hex.ts` (axial hex math + odd-q offset↔axial bridge + `hexKey`, unit-tested); `src/sim/map.ts` (symmetric terrain gen with seeded RNG, O(1) `tileAt()` — the mirror became a 180° rotation on 2026-08-11, see below); `src/render/GameCanvas.tsx` (Pixi hex map, flat-top, pan/zoom/hover/select, StrictMode-safe); `src/sim/types.ts` + `src/sim/defs.ts` (pre-pivot versions); `src/sim/movement.ts` (`reachableHexes` cost-aware flood fill + `validateMove`). 47 tests passing. TS `strict` on. Sim layer dependency-free.
