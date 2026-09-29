@@ -16,7 +16,7 @@ Each side fields the entire roster: **3 mobile launchers** (move *or* fire, neve
 
 You can play a full match today: **hide your bunker and decoy**, place your interceptor base at least 3 hexes from both, then fly recon, advance (or force-march) launchers and fire — against a CPU that is hunting your bunker while you hunt its. The board draws your units, your intel and your interceptor coverage, and the log fills. The mouse wheel zooms toward the cursor and dragging pans. Two humans can also play **hotseat** on one machine, with a pass-the-screen handoff between turns.
 
-See the "Current status" section of [CLAUDE.md](CLAUDE.md) for exactly where things stand, [docs/roadmap-v1.5.md](docs/roadmap-v1.5.md) for the plan to networked play, and [docs/history.md](docs/history.md) for how it was built. The current build is deployed on Vercel from `main` ([docs/deploy.md](docs/deploy.md)), and every pull request is checked by GitHub Actions (lint, test, build).
+See the "Current status" section of [CLAUDE.md](CLAUDE.md) for exactly where things stand, [docs/roadmap-v1.5.md](docs/roadmap-v1.5.md) for the plan to networked play, and [docs/history.md](docs/history.md) for how it was built. **Play it at <https://nuke-wars.vercel.app/>**, deployed on Vercel from `main` ([docs/deploy.md](docs/deploy.md)); every pull request is checked by GitHub Actions (lint, test, build).
 
 ## Stack
 

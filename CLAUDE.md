@@ -16,7 +16,7 @@ A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, dr
 - PixiJS v8 for the game map/rendering
 - Zustand for client state
 - Hex math is hand-rolled in `src/sim/hex.ts` (axial coords) — deliberately dependency-free so the sim engine can move server-side unchanged in V1.5
-- Hosting: static client on Vercel (auto-deploys `main`; see `docs/deploy.md`). CI: GitHub Actions (`.github/workflows/ci.yml`)
+- Hosting: static client on Vercel at https://nuke-wars.vercel.app/ (auto-deploys `main`; see `docs/deploy.md`). CI: GitHub Actions (`.github/workflows/ci.yml`)
 - Later (V1.5 Sessions 5–8, `docs/roadmap-v1.5.md`): Node.js WebSocket server on Railway (not yet in the project)
 
 ## Architecture rules (non-negotiable)
@@ -56,7 +56,7 @@ A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, dr
 
 ### ✅ Code and docs agree as of 2026-09-29 (V1.5 Session 1: live on Vercel, CI, docs split) — no known mismatch
 
-**Last session (2026-09-29):** V1.5 Session 1. The current game (CPU + hotseat) deploys to Vercel from `main`; GitHub Actions runs lint, test and build on every PR and push to `main`; the build history moved to `docs/history.md`; `docs/roadmap-v1.5.md` holds the agreed 9-session plan, with skeletons for `deploy.md`, `art-direction.md`, `protocol.md` and `playtests.md`. No game code changed. **Next: Session 2, identity and title screen.**
+**Last session (2026-09-29):** V1.5 Session 1. The current game (CPU + hotseat) is live at https://nuke-wars.vercel.app/, deployed by Vercel from `main` (PR #1 merged); GitHub Actions runs lint, test and build on every PR and push to `main`; the build history moved to `docs/history.md`; `docs/roadmap-v1.5.md` holds the agreed 9-session plan, with skeletons for `deploy.md`, `art-direction.md`, `protocol.md` and `playtests.md`. No game code changed. **Next: Session 2, identity and title screen.**
 
 ### Completed
 

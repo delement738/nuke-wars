@@ -4,6 +4,7 @@ How the game gets from GitHub to the internet. Part 1 (the client on Vercel) is 
 
 ## How it works today
 
+- **Live site:** <https://nuke-wars.vercel.app/> (Vercel project `nuke-wars`).
 - **Production:** every push (or merge) to `main` builds and deploys the site on Vercel. Nothing to run by hand.
 - **Previews:** every pull request gets its own temporary copy of the site at a unique link. Vercel's bot posts it as a comment on the PR. Use it to try a change before merging.
 - **CI:** GitHub Actions (`.github/workflows/ci.yml`) runs `npm run lint`, `npm test` and `npm run build` on every pull request and every push to `main`. A red ✗ on a PR means one failed; click **Details** to see which.
@@ -31,7 +32,7 @@ No `vercel.json` is needed: the game is one page with no URL routes.
 2. Under **Import Git Repository**, find `nuke-wars` and click **Import**. If it isn't listed, click **Adjust GitHub App Permissions →**, choose **Only select repositories**, add `delement738/nuke-wars`, **Save**, and return to the Vercel tab.
 3. Check the settings match the table above. Leave everything else alone.
 4. Click **Deploy**. The build takes about a minute; then click the preview image to open the live game.
-5. The production address is on the project's **Overview** page (`https://<project>.vercel.app`).
+5. The production address is on the project's **Overview** page: <https://nuke-wars.vercel.app/>.
 
 ### If a deploy fails
 
