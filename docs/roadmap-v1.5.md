@@ -16,10 +16,13 @@ When a session finishes: tick it here, add its dated entry to `docs/history.md`,
 | Devices | **Desktop and tablet only.** A phone gets a polite notice, not a squeezed board. |
 | Accounts | **None.** A room is a link; a reconnect token in the browser gets you back into your seat. |
 | Title art | The designer supplies the title-screen artwork (Session 2). |
+| Match length | **`roundCap` stays 25** (≈12.5 min); real games have run up to ~20 rounds. |
 
 ## Open questions
 
-- **Match length.** `RULES.roundCap` is **25** in `src/sim/defs.ts`, so at ~30 s a round the longest match is about 12.5 minutes. The designer assumed 20 (~10 minutes). Changing it is a rules change and would reopen the freeze on purpose; it must be settled before Session 7 builds the timer UI around it.
+- None.
+
+**Settled 2026-09-29: match length stays at `RULES.roundCap` = 25** (≈12.5 minutes at ~30 s a round). The designer's "20" was how long their longest playtest games actually ran, not a different cap. No rules change; Session 7 builds the timer around 25.
 
 ## Sessions
 
