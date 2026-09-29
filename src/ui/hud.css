@@ -31,6 +31,31 @@
   min-height: 0; /* lets the log scroll instead of stretching the column */
 }
 
+/* The menu column scrolls once it is taller than the window. Before this it ran
+ * off the bottom of the page, where `overflow: hidden` on the body (index.css)
+ * cut it off with no way to reach it — on a laptop, the lower panels simply did
+ * not exist.
+ *
+ * - `align-self: flex-start` + `max-height`: only as tall as its content, up to
+ *   the window. A full-height strip would block map drags below a short menu.
+ * - `pointer-events: auto`: `.hud` lets clicks fall through to the map, and a
+ *   scrollbar on a click-through element cannot be grabbed.
+ * - `flex-shrink: 0` on panels: otherwise flexbox squashes them to fit instead
+ *   of letting the column scroll. */
+.hud .column.left {
+  align-self: flex-start;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  pointer-events: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #2c3d55 transparent;
+}
+
+.hud .column > .panel {
+  flex-shrink: 0;
+}
+
 .panel {
   pointer-events: auto;
   background: rgba(12, 18, 26, 0.88);
@@ -60,6 +85,35 @@
 
 .panel p {
   margin: 4px 0;
+}
+
+/* A panel title's right-hand side: a label, then the `?` (HelpButton). */
+.head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.help-q {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  color: #9fb4cc;
+  background: #17222f;
+  border: 1px solid #2c3d55;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.help-q:hover {
+  color: #ffffff;
+  background: #1f2e40;
+  border-color: #3d5470;
 }
 
 .viewing {
@@ -149,6 +203,16 @@
   background: #1f2e40;
   border-color: #3d5470;
 }
+
+/* A choice that is currently selected (CPU difficulty). Not `disabled`: it is
+ * the answer, not an unavailable option, so it should read as lit, not faded. */
+.buttons button.chosen {
+  color: #ffd54a;
+  border-color: #ffd54a;
+  background: #221f14;
+}
+
+.buttons.tight { margin-top: 2px; }
 
 .buttons button:disabled {
   opacity: 0.45;

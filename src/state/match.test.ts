@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { RULES } from '../sim/defs';
 import { distance, hexKey, offsetToAxial, type Hex } from '../sim/hex';
 import {
@@ -316,6 +316,15 @@ describe('view controls', () => {
 });
 
 describe('setDifficulty', () => {
+  // The file's `beforeEach` starts a match, and difficulty is a setup-screen
+  // choice — so each test goes back to setup first, and puts the default back
+  // afterwards because difficulty survives `newMatch`.
+  beforeEach(() => newMatch());
+  afterEach(() => {
+    newMatch();
+    setDifficulty(DEFAULT_DIFFICULTY);
+  });
+
   it('defaults to DEFAULT_DIFFICULTY and can be changed', () => {
     expect(matchStore.getState().difficulty).toBe(DEFAULT_DIFFICULTY);
     setDifficulty('hard');
@@ -326,6 +335,17 @@ describe('setDifficulty', () => {
     setDifficulty('easy');
     newMatch(999);
     expect(matchStore.getState().difficulty).toBe('easy');
+  });
+
+  it('is refused once the match has started, and allowed again after a new match', () => {
+    setDifficulty('easy');
+    autoPlace();
+    setDifficulty('hard');
+    expect(matchStore.getState().difficulty).toBe('easy');
+
+    newMatch(999);
+    setDifficulty('hard');
+    expect(matchStore.getState().difficulty).toBe('hard');
   });
 });
 

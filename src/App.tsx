@@ -27,15 +27,16 @@ export default function App() {
   // The how-to-play window (presentation Session 4). Plain presentation state:
   // it shows the rules, never anything from the match, so it does not belong in
   // the store.
-  const [help, setHelp] = useState(false);
-  const openHelp = useCallback(() => setHelp(true), []);
-  const closeHelp = useCallback(() => setHelp(false), []);
+  // Closed, or open at a section ('' = the top).
+  const [help, setHelp] = useState<string | null>(null);
+  const openHelp = useCallback((section = '') => setHelp(section), []);
+  const closeHelp = useCallback(() => setHelp(null), []);
 
   // A handoff closes it, so the next player sits down to their own board rather
   // than to a window the last player left open. Adjusted during render (React's
   // "state from a previous render" pattern) so it is already shut on the frame
   // the board comes back.
-  if (handoff && help) setHelp(false);
+  if (handoff && help !== null) setHelp(null);
 
   // `?` opens it — only while the board is up; the handoff screen binds nothing.
   useEffect(() => {
@@ -44,7 +45,7 @@ export default function App() {
       if (event.key !== '?') return;
       const tag = (event.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-      setHelp(true);
+      setHelp('');
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -70,7 +71,7 @@ export default function App() {
       <BattleReport />
       {/* Same branch, same reason (gotchas 58, 62): an overlay on the board,
           so there is no path by which it can draw over the handoff screen. */}
-      {help && <HowToPlay onClose={closeHelp} />}
+      {help !== null && <HowToPlay onClose={closeHelp} start={help || undefined} />}
     </div>
   );
 }

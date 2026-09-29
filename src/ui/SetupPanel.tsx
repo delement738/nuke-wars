@@ -20,12 +20,14 @@
 
 import { RULES, UNIT_DEFS, type PlaceableKind } from '../sim/defs';
 import { opponentOf } from '../sim/types';
+import type { CpuDifficulty } from '../state/cpu';
 import {
   autoPlace,
   clearPlacements,
   clearSlot,
   newMatch,
   selectSlot,
+  setDifficulty,
   setSeating,
   startPlacedMatch,
 } from '../state/match';
@@ -39,12 +41,16 @@ import { HOTSEAT_SEATS, SOLO_SEATS } from '../state/seats';
 import {
   useActiveSeat,
   useAwaitingSetup,
+  useDifficulty,
   useIsHotseat,
   usePlaced,
   useSeed,
   useSelectedSlot,
 } from '../state/useMatch';
 import { hexLabel } from './eventText';
+import HelpButton from './HelpButton';
+
+const DIFFICULTIES: readonly CpuDifficulty[] = ['easy', 'medium', 'hard'];
 
 /** What each asset is called on screen. */
 const KIND_LABEL: Record<PlaceableKind, string> = {
@@ -63,11 +69,11 @@ const KIND_LABEL: Record<PlaceableKind, string> = {
  */
 const KIND_BLURB: Record<PlaceableKind, string> = {
   bunker:
-    `${UNIT_DEFS.bunker.hp} hits kill it and you lose. Hide it — you cannot defend it directly, and your interceptor base is forbidden from sitting near it.`,
+    `${UNIT_DEFS.bunker.hp} hits kill it and you lose. Hide it — you cannot defend it directly, and your interceptor base is forbidden from sitting near it (the red wash on the board).`,
   decoy:
     `Empty concrete, identical to your bunker in every way the enemy can observe, but it dies to ${UNIT_DEFS.decoy.hp} hit. Put it somewhere they will believe, and far from the real one: a single drone pass photographs a strip ${2 * RULES.reconSwathRadius + 1} hexes wide, so two sites side by side are found together.`,
   interceptor:
-    `Shoots down at most ${RULES.interceptsPerRound} enemy missile per round anywhere within ${RULES.interceptorCoverageRadius} hexes of it, and kills enemy drones that fly in. Stopping a missile gives its position away to the enemy for good. It must sit at least ${RULES.bunkerExclusionRadius} hexes from BOTH of your sites, so it can only defend an approach, never the bunker itself.`,
+    `Shoots down at most ${RULES.interceptsPerRound} enemy missile per round anywhere within ${RULES.interceptorCoverageRadius} hexes of it, and kills enemy drones that fly in. Stopping a missile gives its position away to the enemy for good. It must sit at least ${RULES.bunkerExclusionRadius} hexes from BOTH of your sites, so it can only defend an approach, never the bunker itself. Red-washed ground is ruled out for that reason.`,
 };
 
 /** "Interceptor base 2" — a kind with several slots is numbered, a single one is not. */
@@ -77,8 +83,8 @@ function slotLabel(slot: PlacementSlot): string {
 }
 
 interface Props {
-  /** Opens the how-to-play window, which `App` owns (presentation Session 4). */
-  onHelp: () => void;
+  /** Opens the how-to-play window, which `App` owns, optionally at a section. */
+  onHelp: (section?: string) => void;
 }
 
 export default function SetupPanel({ onHelp }: Props) {
@@ -91,6 +97,7 @@ export default function SetupPanel({ onHelp }: Props) {
   const seat = useActiveSeat();
   const hotseat = useIsHotseat();
   const awaiting = useAwaitingSetup();
+  const difficulty = useDifficulty();
 
   const slots = placementSlots(placed);
   const active = slots[selectedSlot];
@@ -103,16 +110,64 @@ export default function SetupPanel({ onHelp }: Props) {
   return (
     <div className="hud">
       <div className="column left">
+        {/* Everything that decides WHAT GAME this is lives here, before a
+            match exists — the in-game HUD offers none of it (designer's call,
+            2026-09-28). Difficulty in particular is locked once the match
+            starts: the CPU's hidden setup is built from it. */}
         <section className="panel">
-          <h2>Nuke Wars</h2>
-          <p className="muted">
-            New here? The rules take about three minutes to read.
-          </p>
+          <h2>
+            Nuke Wars
+            <HelpButton onClick={() => onHelp('setup')} />
+          </h2>
+
           <div className="buttons">
-            <button type="button" onClick={onHelp}>
-              How to play (?)
+            <button
+              type="button"
+              onClick={() => setSeating(SOLO_SEATS)}
+              disabled={!hotseat}
+            >
+              One player vs CPU
+            </button>
+            <button
+              type="button"
+              onClick={() => setSeating(HOTSEAT_SEATS)}
+              disabled={hotseat}
+            >
+              Two players (hotseat)
             </button>
           </div>
+
+          {!hotseat && (
+            <>
+              <h3>CPU difficulty</h3>
+              <div className="buttons tight">
+                {DIFFICULTIES.map((level) => (
+                  <button
+                    key={level}
+                    type="button"
+                    onClick={() => setDifficulty(level)}
+                    aria-pressed={difficulty === level}
+                    className={difficulty === level ? 'chosen' : undefined}
+                  >
+                    {level[0].toUpperCase() + level.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          <div className="buttons">
+            <button type="button" onClick={() => newMatch(Date.now() % 100000)}>
+              New map
+            </button>
+            <button type="button" onClick={() => newMatch()}>
+              Reset (seed 42)
+            </button>
+          </div>
+
+          <p className="footnote">
+            Map seed {seed}. Changing players or the map clears your placements.
+          </p>
         </section>
 
         <section className="panel setup">
@@ -125,10 +180,9 @@ export default function SetupPanel({ onHelp }: Props) {
 
           <p className="muted">
             You are {seat.toUpperCase()}, holding the{' '}
-            {seat === 'p1' ? 'south' : 'north'}. Place your assets anywhere
-            in your home zone — rows {RULES.homeZoneRows[seat].min}–
-            {RULES.homeZoneRows[seat].max}, highlighted in gold. Plains or
-            mountain both work: nothing static is driven into position.
+            {seat === 'p1' ? 'south' : 'north'}. Place your assets on the gold
+            rows ({RULES.homeZoneRows[seat].min}–{RULES.homeZoneRows[seat].max}),
+            plains or mountain.
           </p>
 
           <ul className="unit-list">
@@ -147,13 +201,11 @@ export default function SetupPanel({ onHelp }: Props) {
                     </span>
                   </button>
 
-                  {isActive && (
+                  {isActive && slot.hex && (
                     <div className="buttons">
-                      {slot.hex && (
-                        <button type="button" onClick={() => clearSlot(slot.id)}>
-                          Pick back up
-                        </button>
-                      )}
+                      <button type="button" onClick={() => clearSlot(slot.id)}>
+                        Pick back up
+                      </button>
                     </div>
                   )}
                 </li>
@@ -189,76 +241,16 @@ export default function SetupPanel({ onHelp }: Props) {
             </button>
           </div>
 
-          <p className="footnote">
-            Place them in any order, and move any of them as often as you like —
-            nothing is committed until you press the button above. From then on
-            your setup is secret: {opponentOf(seat).toUpperCase()} hides theirs
-            without ever seeing yours, and neither of you sees the other's.
-          </p>
-        </section>
-
-        <section className="panel">
-          <h2>Game</h2>
-
-          <div className="buttons">
-            <button
-              type="button"
-              onClick={() => setSeating(SOLO_SEATS)}
-              disabled={!hotseat}
-            >
-              One player vs CPU
-            </button>
-            <button
-              type="button"
-              onClick={() => setSeating(HOTSEAT_SEATS)}
-              disabled={hotseat}
-            >
-              Two players (hotseat)
-            </button>
-          </div>
-          <p className="footnote">
-            {hotseat
-              ? 'Two humans, one screen: you each hide your assets in turn, then each give orders in turn, with the screen blanked in between. Switching abandons this setup.'
-              : 'You against a CPU that plays from its own redacted view, exactly as a human in that seat would. Switching abandons this setup.'}
-          </p>
-
           <div className="buttons">
             <button type="button" onClick={() => autoPlace()}>
               Auto-place and start
             </button>
           </div>
+
           <p className="footnote">
-            Places {hotseat ? 'both players’ assets' : 'your assets'} for
-            you, using the same function that builds the CPU's setup — handy when
-            you are testing something that is not placement.
-          </p>
-
-          <div className="buttons">
-            <button type="button" onClick={() => newMatch(Date.now() % 100000)}>
-              New map
-            </button>
-            <button type="button" onClick={() => newMatch()}>
-              Reset (seed 42)
-            </button>
-          </div>
-          <p className="footnote">Map seed {seed}. Same seed, same board.</p>
-        </section>
-
-        <section className="panel legend">
-          <h2>Legend</h2>
-          <p className="buildable">
-            Gold — ground the selected asset may stand on. Click one to place or
-            move it. A gold ring marks the asset you have picked up.
-          </p>
-          <p className="enemy">
-            Red wash — denied to the selected asset by the exclusion rule: a base
-            and a site may never be within {RULES.bunkerExclusionRadius} hexes of
-            each other, whichever of the two you are placing.
-          </p>
-          <p className="muted">
-            Blue — what you have placed: B bunker, X decoy, I interceptor base.
-            Your launchers and drone spawn on fixed, publicly-known hexes, so
-            there is nothing to place for them.
+            Move anything as often as you like — nothing is committed until you
+            start. {opponentOf(seat).toUpperCase()} never sees your setup, and
+            you never see theirs.
           </p>
         </section>
       </div>

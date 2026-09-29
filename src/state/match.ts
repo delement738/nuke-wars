@@ -1102,8 +1102,16 @@ export function setViewer(viewer: PlayerId): void {
   });
 }
 
-/** Change how the CPU plays, effective from the next `resolveRound()` call. */
+/**
+ * Choose how the CPU plays — **before the match only.**
+ *
+ * Refused once a match exists: the CPU's hidden setup is built from the
+ * difficulty at match start (`allSetups`), so a mid-match change would leave a
+ * HARD player defending an EASY board. It is a choice about what game to play,
+ * made on the setup screen like the seating (designer's call, 2026-09-28).
+ */
 export function setDifficulty(difficulty: CpuDifficulty): void {
+  if (truth) return;
   matchStore.setState({ difficulty });
 }
 
