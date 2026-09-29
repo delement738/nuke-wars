@@ -410,9 +410,10 @@ describe('autoPlace', () => {
    */
   it('gives a HARD CPU its own placer and leaves Auto-place alone', () => {
     const boards = (difficulty: 'medium' | 'hard') => {
-      setDifficulty(difficulty);
       return [1, 2, 3, 4, 5].map((seed) => {
         newMatch(seed);
+        // Chosen on the setup screen: it is refused once a match exists.
+        setDifficulty(difficulty);
         autoPlace();
         const human = placementSetup(matchStore.getState().placed[SANDBOX_PLAYER]);
         return { human, cpu: enemySites() };
@@ -424,6 +425,7 @@ describe('autoPlace', () => {
       expect(hard.map((b) => b.human)).toEqual(medium.map((b) => b.human));
       expect(hard.map((b) => b.cpu)).not.toEqual(medium.map((b) => b.cpu));
     } finally {
+      newMatch();
       setDifficulty(DEFAULT_DIFFICULTY);
     }
   });

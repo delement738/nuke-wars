@@ -20,10 +20,19 @@ import { LEGEND, type LegendSwatch } from './legend';
 
 interface Props {
   onClose: () => void;
+  /** A section to open at instead of the top — the HUD's `?` opens the legend. */
+  start?: string;
 }
 
-export default function HowToPlay({ onClose }: Props) {
+export default function HowToPlay({ onClose, start }: Props) {
   const bodyRef = useRef<HTMLDivElement>(null);
+
+  // Jump, not smooth-scroll: the window should open already showing the section.
+  useEffect(() => {
+    const body = bodyRef.current;
+    const target = start ? body?.querySelector<HTMLElement>(`#help-${start}`) : null;
+    if (body && target) body.scrollTop = target.offsetTop - body.offsetTop;
+  }, [start]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {

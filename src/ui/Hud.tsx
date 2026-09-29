@@ -16,50 +16,31 @@
 // Auto-place. `App` mounts this component only once that has happened, which is
 // why the board it reads is never null in practice.
 //
-// The viewer switch is a **sandbox control**, not the handoff. It exists to make
-// the visibility filter visible: flip it and the board redraws as the other
-// player's picture — different units, different intel, a different log out of
-// one shared truth. Step 10 replaces it with a proper pass-the-screen sequence.
+// **Only things you can do in this match live here** (designer's call,
+// 2026-09-28): the round's status and its two commitments (resolve / resign),
+// your orders, and what you have selected. Choosing the kind of game — seating,
+// CPU difficulty, the map — happens on the setup screen before a match exists,
+// and the legend is one click away behind `?` in How to play. The sandbox's
+// "view as P2" switch went with them; `setViewer` stays in the store for tests.
 
 import { opponentOf } from '../sim/types';
-import type { CpuDifficulty } from '../state/cpu';
-import {
-  endTurn,
-  finishReplay,
-  newMatch,
-  resign,
-  setDifficulty,
-  setViewer,
-  SANDBOX_DUMMY,
-  SANDBOX_PLAYER,
-} from '../state/match';
-import {
-  useDifficulty,
-  useIsHotseat,
-  useReplay,
-  useSeed,
-  useView,
-  useViewer,
-} from '../state/useMatch';
+import { endTurn, finishReplay, newMatch, resign } from '../state/match';
+import { useIsHotseat, useReplay, useView, useViewer } from '../state/useMatch';
 import EventLog from './EventLog';
-import { LEGEND } from './legend';
+import HelpButton from './HelpButton';
 import OrderPanel from './OrderPanel';
 import SelectionPanel from './SelectionPanel';
 import { describeOutcome } from './eventText';
 import './hud.css';
 
-const DIFFICULTIES: readonly CpuDifficulty[] = ['easy', 'medium', 'hard'];
-
 interface Props {
-  /** Opens the how-to-play window, which `App` owns (presentation Session 4). */
-  onHelp: () => void;
+  /** Opens the how-to-play window, which `App` owns, optionally at a section. */
+  onHelp: (section?: string) => void;
 }
 
 export default function Hud({ onHelp }: Props) {
   const view = useView();
   const viewer = useViewer();
-  const seed = useSeed();
-  const difficulty = useDifficulty();
   const hotseat = useIsHotseat();
   const replay = useReplay();
 
@@ -83,7 +64,10 @@ export default function Hud({ onHelp }: Props) {
           <section className="panel">
             <h2>
               Replaying round {replay.round}
-              <span className="viewing">viewing {viewer.toUpperCase()}</span>
+              <span className="head-right">
+                <span className="viewing">viewing {viewer.toUpperCase()}</span>
+                <HelpButton onClick={() => onHelp('board')} />
+              </span>
             </h2>
             <p className="muted">
               Watch what happened, then give your orders. The log fills in when
@@ -100,7 +84,10 @@ export default function Hud({ onHelp }: Props) {
         <section className="panel">
           <h2>
             Round {view.round}
-            <span className="viewing">viewing {viewer.toUpperCase()}</span>
+            <span className="head-right">
+              <span className="viewing">viewing {viewer.toUpperCase()}</span>
+              <HelpButton onClick={() => onHelp('board')} />
+            </span>
           </h2>
 
           <p className={deadHand ? 'alert' : 'muted'}>
@@ -139,11 +126,15 @@ export default function Hud({ onHelp }: Props) {
             </button>
           </div>
 
-          <div className="buttons">
-            <button type="button" onClick={onHelp}>
-              How to play (?)
-            </button>
-          </div>
+          {/* The one way out of a finished match: back to the setup screen,
+              where the next game's seating, difficulty and map are chosen. */}
+          {over && (
+            <div className="buttons">
+              <button type="button" onClick={() => newMatch(Date.now() % 100000)}>
+                New game
+              </button>
+            </div>
+          )}
 
           <p className="footnote">
             Finishing early is legal: any unit you have not decided holds, and a
@@ -156,87 +147,6 @@ export default function Hud({ onHelp }: Props) {
         <SelectionPanel />
         </>
         )}
-
-        <section className="panel">
-          <h2>{hotseat ? 'Match' : 'Sandbox'}</h2>
-
-          {/* The viewer switch and the difficulty tiers are SOLO controls and
-              are not rendered in hotseat — a button that draws your opponent's
-              hidden board is a debug affordance when the opponent is a CPU and
-              simply a cheat when they are the person beside you. `setViewer`
-              refuses in hotseat too, so hiding the buttons is the second of two
-              independent guards rather than the only one. */}
-          {hotseat ? (
-            <p className="muted">
-              Two players, one screen. You are {viewer.toUpperCase()}; the screen
-              blanks between turns so neither of you sees the other's board,
-              orders or hidden assets.
-            </p>
-          ) : (
-            <>
-              <p className="muted">
-                You are {SANDBOX_PLAYER.toUpperCase()};{' '}
-                {SANDBOX_DUMMY.toUpperCase()} is a CPU opponent that plays from
-                its own redacted view, same as a human in that seat would.
-              </p>
-
-              <div className="buttons">
-                <button
-                  type="button"
-                  onClick={() => setViewer('p1')}
-                  disabled={viewer === 'p1'}
-                >
-                  View as P1
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewer('p2')}
-                  disabled={viewer === 'p2'}
-                >
-                  View as P2
-                </button>
-              </div>
-
-              <div className="buttons">
-                {DIFFICULTIES.map((level) => (
-                  <button
-                    key={level}
-                    type="button"
-                    onClick={() => setDifficulty(level)}
-                    disabled={difficulty === level}
-                  >
-                    {level[0].toUpperCase() + level.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-
-          <div className="buttons">
-            <button type="button" onClick={() => newMatch(Date.now() % 100000)}>
-              New map
-            </button>
-            <button type="button" onClick={() => newMatch()}>
-              Reset (seed 42)
-            </button>
-          </div>
-
-          <p className="footnote">
-            Map seed {seed}. Same seed, same board.
-            {hotseat ? '' : ` CPU difficulty: ${difficulty}.`} Either button
-            abandons this match and returns to secret placement.
-          </p>
-        </section>
-
-        <section className="panel legend">
-          <h2>Legend</h2>
-          {/* One list, shared with the how-to-play screen (`./legend`). */}
-          {LEGEND.map((entry) => (
-            <p key={entry.text} className={entry.tone}>
-              {entry.text}
-            </p>
-          ))}
-        </section>
       </div>
 
       <div className="column right">
