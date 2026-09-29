@@ -45,7 +45,7 @@ Two surfaces carry it:
 ## Board and pieces
 *Built in V1.5 Session 3 (the designer picked "paper map" over a dark board, for one consistent feel with the title).*
 
-- **The board is the plotting table:** plains are map paper, mountains are khaki hills with contour rings, hex edges are a faint grid line, and the bunker-black table shows around the edge. Colours live in **`src/render/palette.ts`**, read by both the Pixi board (`COLOR` in `draw.ts`) and the How-to-play legend, so they cannot drift.
+- **The board is the plotting table:** plains are map paper, mountains are khaki hills marked with small clustered peaks (an old military map's mountain symbol, right faces shaded), hex edges are a faint grid line, and the bunker-black table shows around the edge. Colours live in **`src/render/palette.ts`**, read by both the Pixi board (`COLOR` in `draw.ts`) and the How-to-play legend, so they cannot drift.
 - **Hills are khaki, not the title map's green**, because on the board green means "you may move here"; a green hill beside a green move wash read as the same thing.
 - **Pieces:** yours are blue plates (`#2f6fc4`) with the emblem in paper colour; enemy marks are stencil red (`#b3362a`) with the title art's thin ink outline. Wrecks are warm grey.
 - **Order and setup colours were deepened for paper:** move green `#1f8f55`, march olive `#5f8f00`, fire orange `#d46a12`, drone violet `#7a45c9`, placement gold `#b47a00`; the selection ring is ink. `palette.test.ts` checks every mark still contrasts with both paper and hills.

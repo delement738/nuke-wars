@@ -205,7 +205,7 @@ export function drawTerrain(
       .poly(hexCorners(x, y))
       .fill(FILL[tile.terrain])
       .stroke({ width: 1, color: PALETTE.grid });
-    if (tile.terrain === 'mountain') contours(g, x, y, tile.col * 31 + tile.row * 17);
+    if (tile.terrain === 'mountain') peaks(g, x, y, tile.col * 7 + tile.row * 5);
 
     g.eventMode = 'static';
     g.cursor = 'pointer';
@@ -225,19 +225,34 @@ export function drawTerrain(
 }
 
 /**
- * A hill's contour lines inside a mountain hex, like the title screen's map.
- * Two slightly lopsided rings; `salt` turns each one a little so a range of
- * mountains reads as ground rather than a stamped pattern. Pure decoration —
- * derived from the tile's position, which is public (spec §11).
+ * The mountain symbol of an old military map: a small cluster of peaks, each
+ * an ink-brown outline with its right-hand face shaded, as if lit from the
+ * upper left. `salt` picks one of three arrangements so a range reads as
+ * rugged ground rather than one stamp repeated. Pure decoration, derived from
+ * the tile's position, which is public (spec §11).
  */
-function contours(g: Graphics, x: number, y: number, salt: number): void {
-  const turn = (salt % 12) * (Math.PI / 6);
-  const dx = Math.cos(turn) * HEX * 0.06;
-  const dy = Math.sin(turn) * HEX * 0.06;
-  g.ellipse(x, y, HEX * 0.66, HEX * 0.54)
-    .ellipse(x + dx, y + dy, HEX * 0.42, HEX * 0.33)
-    .ellipse(x + dx * 2, y + dy * 2, HEX * 0.18, HEX * 0.14)
-    .stroke({ width: 1.2, color: PALETTE.contour, alpha: 0.9 });
+const PEAK_LAYOUTS: readonly (readonly [dx: number, dy: number, size: number][])[] = [
+  [[-0.2, 0.02, 1], [0.3, 0.16, 0.62]],
+  [[0.2, 0.02, 1], [-0.3, 0.16, 0.62]],
+  [[-0.32, 0.16, 0.6], [0.02, -0.02, 1], [0.34, 0.18, 0.55]],
+];
+
+function peaks(g: Graphics, x: number, y: number, salt: number): void {
+  for (const [dx, dy, size] of PEAK_LAYOUTS[salt % PEAK_LAYOUTS.length]) {
+    const cx = x + dx * HEX;
+    const base = y + dy * HEX + HEX * 0.24 * size;
+    const top = base - HEX * 0.5 * size;
+    const half = HEX * 0.3 * size;
+    // The shaded face: apex, right foot, and a point just right of centre.
+    g.poly([cx, top, cx + half, base, cx + half * 0.15, base]).fill({
+      color: PALETTE.contour,
+      alpha: 0.35,
+    });
+    g.moveTo(cx - half, base)
+      .lineTo(cx, top)
+      .lineTo(cx + half, base)
+      .stroke({ width: 1.5, color: PALETTE.contour, join: 'round', cap: 'round' });
+  }
 }
 
 // --- highlights -------------------------------------------------------------

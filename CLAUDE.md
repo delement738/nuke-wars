@@ -56,7 +56,7 @@ A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, dr
 
 ### ✅ Code and docs agree as of 2026-09-29 (V1.5 Session 3: board art, log and end screen) — no known mismatch
 
-**Last session (2026-09-29):** V1.5 Session 3. The board is now the paper plotting table (paper plains, khaki contour hills, deeper blue/red, every overlay colour retuned for a light ground) with all colours in `src/render/palette.ts`, shared with the legend; HUD panels, the event log (typewriter face) and the help window restyled as warm bunker consoles; the game-over report is a full end screen (VICTORY/DEFEAT/DRAW, See enemy positions, Play again, Title screen), and a finished match can return to the title. 884 tests. **Next: Session 4, sound and settings.**
+**Last session (2026-09-29):** V1.5 Session 3. The board is now the paper plotting table (paper plains, khaki hills with peak symbols, deeper blue/red, every overlay colour retuned for a light ground) with all colours in `src/render/palette.ts`, shared with the legend; HUD panels, the event log (typewriter face) and the help window restyled as warm bunker consoles; the game-over report is a full end screen (VICTORY/DEFEAT/DRAW, See enemy positions, Play again, Title screen), and a finished match can return to the title. 884 tests. **Next: Session 4, sound and settings.**
 
 ### Completed
 

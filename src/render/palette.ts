@@ -1,7 +1,7 @@
 // RENDER LAYER — the board's colours, as plain data (V1.5 Session 3, board art).
 //
 // The paper plotting table from `docs/art-direction.md`: cream map paper, green
-// contour-lined hills, ink outlines, and the two sides in blue (yours) and
+// hills marked with peak symbols, ink outlines, and the two sides in blue (yours) and
 // stencil red (what you have detected of theirs).
 //
 // Read by two painters, like `./emblems`: the Pixi board (`COLOR` in `./draw`)
@@ -21,7 +21,7 @@ export const PALETTE = {
   // Khaki, not the title map's green: green on this board means "you may move
   // here", and a green hill beside a green move wash read as the same thing.
   hill: 0xd6c7a0, // mountain fill
-  contour: 0x9c8660, // contour lines on a mountain
+  contour: 0x9c8660, // the peak symbols on a mountain
   grid: 0xb4ac8e, // hex edges
   table: 0x0b0f14, // the bunker around the board
 
