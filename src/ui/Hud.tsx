@@ -36,6 +36,7 @@ import EventLog from './EventLog';
 import HelpButton from './HelpButton';
 import OrderPanel from './OrderPanel';
 import SelectionPanel from './SelectionPanel';
+import SoundButton from './SoundButton';
 import { describeOutcome } from './eventText';
 import './hud.css';
 
@@ -75,6 +76,7 @@ export default function Hud({ onHelp, onTitle }: Props) {
               Replaying round {replay.round}
               <span className="head-right">
                 <span className="viewing">viewing {viewer.toUpperCase()}</span>
+                <SoundButton />
                 <HelpButton onClick={() => onHelp('board')} />
               </span>
             </h2>
@@ -95,6 +97,7 @@ export default function Hud({ onHelp, onTitle }: Props) {
             Round {view.round}
             <span className="head-right">
               <span className="viewing">viewing {viewer.toUpperCase()}</span>
+              <SoundButton />
               <HelpButton onClick={() => onHelp('board')} />
             </span>
           </h2>

@@ -44,7 +44,7 @@ import {
   type FlightLeg,
 } from './flights';
 import { HEX, hexCorners } from './geometry';
-import type { ClipFrame } from './timeline';
+import { DIVE, type ClipFrame } from './timeline';
 import { downedOnFirstStep } from '../state/inference';
 
 /** What the drawing needs besides the frames: whose replay this is. */
@@ -72,10 +72,6 @@ const FX = {
   scorch: 0x2a1a10,
   label: PALETTE.ink,
 } as const;
-
-/** The share of an intercept/impact clip spent on a carried missile's final
- *  dive before its burst. Zero-length when there is no dive to draw. */
-const DIVE = 0.35;
 
 const LABEL_STYLE = new TextStyle({
   fontFamily: 'monospace',

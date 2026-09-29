@@ -24,7 +24,8 @@
 //   6. **the replay** (presentation phase, sessions 1–2): while the viewer has an
 //      unwatched resolution, the board shows the view from *before* it and a
 //      function on Pixi's ticker plays the round's events over it, frame by
-//      frame, from `./timeline`. When it ends — or is skipped — the store
+//      frame, from `./timeline` — and, since V1.5 Session 4, their sounds, from
+//      `src/audio/cues`. When it ends — or is skipped — the store
 //      clears the replay and effect 3 settles on the current view.
 //
 // **Nothing plays during a hotseat handoff, and that is structural** (gotchas
@@ -90,6 +91,8 @@ import {
   drawUnits,
 } from './draw';
 import { PALETTE } from './palette';
+import { soundCues } from '../audio/cues';
+import { playSound } from '../audio/synth';
 import { wheelZoomFactor, ZOOM, zoomAt } from './camera';
 
 /** Pointer travel (px) past which a drag is a pan, not a click on a tile. */
@@ -294,7 +297,10 @@ export default function GameCanvas() {
         // order is being composed, and that is a state decision. The render
         // layer reports where the player clicked and nothing else.
         // During a replay the store reads the click as "skip".
-        if (dragRef.current.moved <= DRAG_SLOP) pickHex(hex);
+        if (dragRef.current.moved <= DRAG_SLOP) {
+          playSound('click');
+          pickHex(hex);
+        }
       },
       hoverHex,
     );
@@ -393,6 +399,12 @@ export default function GameCanvas() {
       map: replay.from.map,
       events: replay.events,
     };
+    // The sound track (V1.5 Session 4): timed from the same timeline and the
+    // same filtered events as the picture, so it can say nothing the board does
+    // not. Played by this ticker, so it stops with the replay — a skip or a
+    // handoff unmount leaves nothing queued.
+    const sounds = soundCues(timeline, (id) => ctx.flights.get(id)?.finalLeg != null);
+    let nextSound = 0;
     let elapsed = 0;
     let hiddenKey = '';
     let hiddenMissilesKey = '';
@@ -404,6 +416,10 @@ export default function GameCanvas() {
       if (elapsed >= timeline.duration) {
         finishReplay();
         return;
+      }
+      while (nextSound < sounds.length && sounds[nextSound].at <= elapsed) {
+        playSound(sounds[nextSound].sound);
+        nextSound += 1;
       }
       const frames = frameAt(timeline, elapsed);
 

@@ -49,6 +49,7 @@ import {
 } from '../state/useMatch';
 import { hexLabel } from './eventText';
 import HelpButton from './HelpButton';
+import SoundButton from './SoundButton';
 
 const DIFFICULTIES: readonly CpuDifficulty[] = ['easy', 'medium', 'hard'];
 
@@ -117,7 +118,10 @@ export default function SetupPanel({ onHelp }: Props) {
         <section className="panel">
           <h2>
             Nuke Wars
-            <HelpButton onClick={() => onHelp('setup')} />
+            <span className="head-right">
+              <SoundButton />
+              <HelpButton onClick={() => onHelp('setup')} />
+            </span>
           </h2>
 
           <div className="buttons">
