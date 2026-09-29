@@ -85,7 +85,9 @@ describe('cpuSetup', () => {
       expect(hard / shots).toBeGreaterThan(0.22);
       expect(fixture / shots).toBeLessThan(0.16);
     }
-  });
+    // Generates and places hundreds of boards: ~5 s alone, over Vitest's default
+    // 5 s timeout under load (the suite's rare flake, 2026-09-28).
+  }, 30_000);
 
   /**
    * §12's indistinguishability principle. The base goes public the first time
