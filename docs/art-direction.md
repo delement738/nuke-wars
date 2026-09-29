@@ -30,19 +30,28 @@ Two surfaces carry it:
 | Hot red | `#d0412f` | Button hover/focus |
 | Ink | `#29251f` | Tagline, outlines, dashed tracks, dark buttons |
 | Smoke | `#a6998a` | Mushroom clouds |
-| Bunker | `#0b0f14` | The room: page background, consoles, the in-game board's surround |
+| Bunker | `#0b0f14` | The room: page background, the in-game board's surround |
+| Console | `#121210`–`#1d1c19` | HUD panels, buttons, help window |
 
-**On the board, own = blue (`#5aa9ff`) and enemy = red (`#ff8371`) stay** (established by the board, the legend and the battle reports). The title map is all red because it shows no sides — it is decoration, not a match. Session 3 decides how the board's blue/red sit on the new paper/bunker surfaces; it must not make the two sides harder to tell apart.
+**Own = blue and enemy = red stay.** On the paper board they are deepened (`#2f6fc4`, `#b3362a`; see Board and pieces); in the dark panels the text keeps the brighter `#5aa9ff` / `#ff8371`. The title map is all red because it shows no sides — it is decoration, not a match.
 
 ## Type
 - **Saira Stencil One** — the name only (and any future big stencilled headline, e.g. the end screen's VICTORY / DEFEAT in Session 3).
 - **Oswald** (500/600/700), uppercase with open letter-spacing — taglines, buttons, console labels.
-- **Monospace** (`ui-monospace, Menlo`) — grid references, and a candidate for the event log's round/time stamps in Session 3.
-- The in-game HUD body text stays the system sans for now; Session 3 decides whether panels move to Oswald for headings.
+- **Monospace** (`ui-monospace, Menlo`) — grid references on the title map, the event log, the "viewing P1" tag and the end screen's kicker line.
+- The HUD's body text stays the system sans; headings and buttons are Oswald (Session 3). The end screen's verdict and the hotseat handoff's big player name are Saira Stencil One.
 - Both web fonts load from Google Fonts in `index.html`, with Impact / Arial Narrow as fallbacks if the service is unreachable. Nothing is installed from npm.
 
 ## Board and pieces
-*Session 3.* The unit emblems stay (`src/render/emblems.ts`, gotcha 72): the title screen already shows them in the paper style (red fill, thin ink outline), which is the target look for pieces on a restyled board. Terrain should move toward the paper map: plains as paper, mountains as contour-lined hills.
+*Built in V1.5 Session 3 (the designer picked "paper map" over a dark board, for one consistent feel with the title).*
+
+- **The board is the plotting table:** plains are map paper, mountains are khaki hills marked with small clustered peaks (an old military map's mountain symbol, right faces shaded), hex edges are a faint grid line, and the bunker-black table shows around the edge. Colours live in **`src/render/palette.ts`**, read by both the Pixi board (`COLOR` in `draw.ts`) and the How-to-play legend, so they cannot drift.
+- **Hills are khaki, not the title map's green**, because on the board green means "you may move here"; a green hill beside a green move wash read as the same thing.
+- **Pieces:** yours are blue plates (`#2f6fc4`) with the emblem in paper colour; enemy marks are stencil red (`#b3362a`) with the title art's thin ink outline. Wrecks are warm grey.
+- **Order and setup colours were deepened for paper:** move green `#1f8f55`, march olive `#5f8f00`, fire orange `#d46a12`, drone violet `#7a45c9`, placement gold `#b47a00`; the selection ring is ink. `palette.test.ts` checks every mark still contrasts with both paper and hills.
+- **Replay:** hotter burst yellow and warm smoke so effects show on cream; labels are ink outlined in paper, like notes on a map; the caption stays in a dark console box.
+- **Panels (HUD, log, help, reports) are the bunker's consoles:** warm near-black, paper-coloured text, Oswald headings and buttons in capitals, the event log in a typewriter face under ruled "ROUND n" headers.
+- **End of match:** the game-over report is drawn as the title's paper plate — MATCH OVER · ROUND n, the verdict stencilled big (VICTORY in your blue, DEFEAT in stencil red, DRAW in ink), the report's headline and sentence, then *See enemy positions* (the final reveal), *Play again*, *Title screen*.
 
 ## Motion and sound
 - **Motion:** slow and steady rather than flashy. The title map drifts at 20 px/s; the only other motion on the title is the "Press Enter" blink. In play, a busy round's replay stays 4–6 s (presentation Session 1 ruling).

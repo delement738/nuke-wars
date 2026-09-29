@@ -5,6 +5,15 @@
  * `.hud` is pointer-events: none and each panel turns them back on.
  */
 
+/* V1.5 Session 3: the HUD is the bunker's consoles (docs/art-direction.md) —
+ * warm near-black panels, paper-coloured lettering, Oswald for headings and
+ * buttons, a typewriter face for the log and grid references. The board's own
+ * blue/red text colours (.own, .enemy) are unchanged. */
+:root {
+  --console-head: 'Oswald', 'Arial Narrow', ui-sans-serif, system-ui, sans-serif;
+  --console-type: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
 .hud {
   position: absolute;
   inset: 0;
@@ -14,7 +23,7 @@
   padding: 12px;
   pointer-events: none;
 
-  color: #d7e2ee;
+  color: #e6e1cf;
   font: 13px/1.45 ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -49,7 +58,7 @@
   overscroll-behavior: contain;
   pointer-events: auto;
   scrollbar-width: thin;
-  scrollbar-color: #2c3d55 transparent;
+  scrollbar-color: #4a463b transparent;
 }
 
 .hud .column > .panel {
@@ -58,9 +67,9 @@
 
 .panel {
   pointer-events: auto;
-  background: rgba(12, 18, 26, 0.88);
-  border: 1px solid #223047;
-  border-radius: 8px;
+  background: rgba(18, 18, 16, 0.92);
+  border: 1px solid #37342c;
+  border-radius: 3px;
   padding: 10px 12px;
   backdrop-filter: blur(2px);
 }
@@ -70,17 +79,22 @@
   justify-content: space-between;
   align-items: baseline;
   margin: 0 0 6px;
-  font-size: 14px;
-  letter-spacing: 0.04em;
+  font-family: var(--console-head);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #9fb4cc;
+  color: #cfc8b0;
 }
 
 .panel h3 {
   margin: 8px 0 2px;
-  font-size: 12px;
-  letter-spacing: 0.05em;
-  color: #7f93aa;
+  font-family: var(--console-head);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #a8a18b;
 }
 
 .panel p {
@@ -103,20 +117,21 @@
   font-size: 12px;
   font-weight: 600;
   line-height: 20px;
-  color: #9fb4cc;
-  background: #17222f;
-  border: 1px solid #2c3d55;
+  color: #cfc8b0;
+  background: #1d1c19;
+  border: 1px solid #4a463b;
   border-radius: 50%;
   cursor: pointer;
 }
 
 .help-q:hover {
   color: #ffffff;
-  background: #1f2e40;
-  border-color: #3d5470;
+  background: #2a2823;
+  border-color: #6a6453;
 }
 
 .viewing {
+  font-family: var(--console-type);
   font-size: 11px;
   color: #5aa9ff;
   letter-spacing: 0.06em;
@@ -134,9 +149,9 @@
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: #070b11;
+  background: #0b0f14;
 
-  color: #d7e2ee;
+  color: #e6e1cf;
   font: 13px/1.45 ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -148,8 +163,9 @@
 
 .handoff-to {
   margin: 10px 0 14px;
-  font-size: 40px;
-  font-weight: 600;
+  font-family: 'Saira Stencil One', 'Impact', 'Arial Black', sans-serif;
+  font-size: 48px;
+  font-weight: 400;
   letter-spacing: 0.08em;
   color: #5aa9ff;
 }
@@ -162,7 +178,7 @@
   padding: 8px 14px;
 }
 
-.muted { color: #8496aa; }
+.muted { color: #9c9683; }
 .own { color: #5aa9ff; }
 .enemy { color: #ff8371; }
 /* Matches COLOR.place in src/render/draw.ts — a legend line that names a colour
@@ -178,7 +194,7 @@
 .footnote {
   margin-top: 8px;
   font-size: 11px;
-  color: #6b7c90;
+  color: #8a846f;
 }
 
 .buttons {
@@ -191,17 +207,21 @@
   flex: 1;
   padding: 6px 8px;
   font: inherit;
-  font-size: 12px;
-  color: #d7e2ee;
-  background: #17222f;
-  border: 1px solid #2c3d55;
-  border-radius: 5px;
+  font-family: var(--console-head);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #e6e1cf;
+  background: #1d1c19;
+  border: 1px solid #4a463b;
+  border-radius: 2px;
   cursor: pointer;
 }
 
 .buttons button:hover:not(:disabled) {
-  background: #1f2e40;
-  border-color: #3d5470;
+  background: #2a2823;
+  border-color: #6a6453;
 }
 
 /* A choice that is currently selected (CPU difficulty). Not `disabled`: it is
@@ -220,6 +240,22 @@
 }
 
 /* --- event log --- */
+/* A teletype report: each round under a ruled "ROUND n" header, the lines in
+ * a typewriter face. The words are eventText.ts's, unchanged. */
+
+.log .rounds > li > h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.log .rounds > li > h3::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #37342c;
+}
 
 .log {
   display: flex;
@@ -243,15 +279,18 @@
 
 .log .rounds ul li {
   position: relative;
-  margin: 2px 0;
-  color: #c2d0e0;
+  margin: 3px 0;
+  font-family: var(--console-type);
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #d8d2bf;
 }
 
 .log .rounds ul li::before {
   content: '·';
   position: absolute;
   left: -10px;
-  color: #4a5d75;
+  color: #6b6556;
 }
 
 /* --- unit / roster list ---------------------------------------------------
@@ -269,7 +308,7 @@
 }
 
 .unit {
-  border-top: 1px solid #1c2732;
+  border-top: 1px solid #25231f;
   padding: 2px 0;
 }
 
@@ -279,7 +318,7 @@
   align-items: baseline;
   background: none;
   border: none;
-  color: #d6e2ee;
+  color: #e6e1cf;
   cursor: pointer;
   display: flex;
   font: inherit;
@@ -295,12 +334,12 @@
 .unit.active .unit-name { color: #ffd54a; font-weight: 600; }
 
 .decision {
-  color: #8496aa;
+  color: #9c9683;
   font-size: 12px;
   font-weight: 400;
 }
 
-.unit.active .decision { color: #d6e2ee; }
+.unit.active .decision { color: #e6e1cf; }
 
 
 /* --- battle report banner (V1.1 step 1) -----------------------------------
@@ -314,6 +353,8 @@
  * `.alert` amber for an outcome. A player already reads those three colours as
  * "mine / theirs / pay attention" everywhere else on the screen. */
 .report-scrim {
+  font: 13px/1.45 ui-sans-serif, system-ui, sans-serif;
+  color: #e6e1cf;
   position: absolute;
   inset: 0;
   z-index: 20;
@@ -321,7 +362,7 @@
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(7, 11, 17, 0.72);
+  background: rgba(8, 8, 7, 0.72);
   cursor: pointer;
 }
 
@@ -331,9 +372,9 @@
   padding: 26px 28px 22px;
   text-align: center;
   cursor: default;
-  background: #0d1521;
-  border: 1px solid #24303f;
-  border-top: 3px solid #8496aa;
+  background: #141412;
+  border: 1px solid #37342c;
+  border-top: 3px solid #9c9683;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
   animation: report-in 140ms ease-out;
 }
@@ -342,15 +383,16 @@
 .report-loss { border-top-color: #ff8371; }
 .report-victory { border-top-color: #ffd54a; }
 .report-defeat { border-top-color: #ff8371; }
-.report-draw { border-top-color: #8496aa; }
+.report-draw { border-top-color: #9c9683; }
 
 .report-headline {
   margin: 0 0 8px;
+  font-family: var(--console-head);
   font-size: 30px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #d7e2ee;
+  color: #e6e1cf;
 }
 
 .report-kill .report-headline { color: #5aa9ff; }
@@ -362,20 +404,23 @@
   margin: 0 0 18px;
   font-size: 13px;
   line-height: 1.5;
-  color: #a8b8c8;
+  color: #bdb6a1;
 }
 
 .report-dismiss {
   padding: 7px 20px;
   font: inherit;
-  color: #d7e2ee;
-  background: #16202d;
-  border: 1px solid #2d3a4a;
-  border-radius: 3px;
+  font-family: var(--console-head);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #e6e1cf;
+  background: #1d1c19;
+  border: 1px solid #4a463b;
+  border-radius: 2px;
   cursor: pointer;
 }
 
-.report-dismiss:hover { background: #1e2a39; }
+.report-dismiss:hover { background: #2a2823; }
 .report-dismiss:focus-visible { outline: 2px solid #5aa9ff; outline-offset: 2px; }
 
 @keyframes report-in {
@@ -385,6 +430,103 @@
 
 @media (prefers-reduced-motion: reduce) {
   .report { animation: none; }
+}
+
+/* --- end-of-match screen (V1.5 Session 3) ---------------------------------
+ *
+ * The game-over report, drawn as the title screen's paper plate: the verdict
+ * stencilled big, the report's own headline and sentence under it. Blue for
+ * your victory, stencil red for defeat, ink for a draw — the board's own
+ * "yours / theirs" language. See `BattleReport.tsx`. */
+.endgame-scrim {
+  background: rgba(8, 8, 7, 0.55);
+}
+
+.endgame {
+  width: 560px;
+  max-width: 100%;
+  padding: 22px 28px 24px;
+  text-align: center;
+  cursor: default;
+  color: #29251f;
+  background: #e9e4d0;
+  border-top: 5px solid #29251f;
+  border-bottom: 5px solid #29251f;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  animation: endgame-in 260ms ease-out;
+}
+
+.endgame-kicker {
+  margin: 0;
+  font-family: var(--console-type);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6b6556;
+}
+
+.endgame-verdict {
+  margin: 4px 0 2px;
+  font-family: 'Saira Stencil One', 'Impact', 'Arial Black', sans-serif;
+  font-weight: 400;
+  font-size: clamp(56px, 10vw, 104px);
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #29251f;
+}
+
+.endgame-victory .endgame-verdict { color: #2f6fc4; }
+.endgame-defeat .endgame-verdict { color: #b3362a; }
+
+.endgame-headline {
+  margin: 6px 0 4px;
+  font-family: var(--console-head);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.endgame-detail {
+  margin: 0 0 20px;
+  font-size: 14px;
+  color: #4a463b;
+}
+
+.endgame-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.endgame-btn {
+  padding: 10px 16px;
+  font-family: var(--console-head);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #e9e4d0;
+  background: #29251f;
+  border: 2px solid #29251f;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.endgame-btn.primary { background: #b3362a; border-color: #b3362a; }
+.endgame-btn:hover,
+.endgame-btn:focus-visible { background: #d0412f; border-color: #d0412f; }
+.endgame-btn:focus-visible { outline: 3px solid #29251f; outline-offset: 2px; }
+
+@keyframes endgame-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .endgame { animation: none; }
 }
 
 /* --- how-to-play window (presentation Session 4) ---------------------------
@@ -400,9 +542,9 @@
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(7, 11, 17, 0.78);
+  background: rgba(8, 8, 7, 0.78);
 
-  color: #d7e2ee;
+  color: #e6e1cf;
   font: 13px/1.5 ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -412,8 +554,8 @@
   width: 760px;
   max-width: 100%;
   max-height: 100%;
-  background: #0d1521;
-  border: 1px solid #24303f;
+  background: #141412;
+  border: 1px solid #37342c;
   border-radius: 8px;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
 }
@@ -423,24 +565,26 @@
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid #1c2732;
+  border-bottom: 1px solid #25231f;
 }
 
 .help-head h1 {
   margin: 0;
-  font-size: 16px;
+  font-family: var(--console-head);
+  font-weight: 600;
+  font-size: 18px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #9fb4cc;
+  color: #cfc8b0;
 }
 
 .help-close,
 .help-nav button {
   font: inherit;
   font-size: 12px;
-  color: #d7e2ee;
-  background: #17222f;
-  border: 1px solid #2c3d55;
+  color: #e6e1cf;
+  background: #1d1c19;
+  border: 1px solid #4a463b;
   border-radius: 5px;
   padding: 5px 10px;
   cursor: pointer;
@@ -448,8 +592,8 @@
 
 .help-close:hover,
 .help-nav button:hover {
-  background: #1f2e40;
-  border-color: #3d5470;
+  background: #2a2823;
+  border-color: #6a6453;
 }
 
 .help-main {
@@ -463,7 +607,7 @@
   gap: 4px;
   flex: 0 0 170px;
   padding: 12px;
-  border-right: 1px solid #1c2732;
+  border-right: 1px solid #25231f;
 }
 
 .help-nav button {
@@ -481,7 +625,9 @@
 
 .help-body h2 {
   margin: 16px 0 6px;
-  font-size: 13px;
+  font-family: var(--console-head);
+  font-weight: 600;
+  font-size: 15px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: #ffd54a;
@@ -529,7 +675,7 @@
   width: 26px;
   height: 26px;
   margin-top: 1px;
-  background: #1f3d2b; /* plains, so washes read as they do on the board */
+  background: #e4dec6; /* PALETTE.paper (plains), so washes read as they do on the board */
   border-radius: 3px;
 }
 

@@ -89,6 +89,7 @@ import {
   drawTerrain,
   drawUnits,
 } from './draw';
+import { PALETTE } from './palette';
 import { wheelZoomFactor, ZOOM, zoomAt } from './camera';
 
 /** Pointer travel (px) past which a drag is a pan, not a click on a tile. */
@@ -153,7 +154,7 @@ export default function GameCanvas() {
     let cancelled = false;
 
     (async () => {
-      await app.init({ background: 0x0b0f14, resizeTo: host, antialias: true });
+      await app.init({ background: PALETTE.table, resizeTo: host, antialias: true });
       if (cancelled) {
         // The effect was cleaned up (e.g. React StrictMode's mount/unmount/
         // remount in dev) while init() was still pending. `app` wasn't fully

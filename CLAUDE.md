@@ -54,9 +54,9 @@ A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, dr
 
 ## Current status (update at end of every session)
 
-### ✅ Code and docs agree as of 2026-09-29 (V1.5 Session 2: title screen and art direction) — no known mismatch
+### ✅ Code and docs agree as of 2026-09-29 (V1.5 Session 3: board art, log and end screen) — no known mismatch
 
-**Last session (2026-09-29):** V1.5 Session 2. A title screen (`src/ui/TitleScreen.tsx`): the stencilled name and tagline over a seamless war-map tile drawn from the unit emblems (`src/ui/titleBackdrop.ts`), sliding left at 20 px/s; Play vs CPU / hotseat / How to play, Enter plays the CPU, phones get a notice. Favicon and page title; web fonts from Google Fonts. `docs/art-direction.md` is written; the designer's reference art is `public/art/title-inspo.png`. 881 tests. **Next: Session 3, board art, event log and end screen.**
+**Last session (2026-09-29):** V1.5 Session 3. The board is now the paper plotting table (paper plains, khaki hills with peak symbols, deeper blue/red, every overlay colour retuned for a light ground) with all colours in `src/render/palette.ts`, shared with the legend; HUD panels, the event log (typewriter face) and the help window restyled as warm bunker consoles; the game-over report is a full end screen (VICTORY/DEFEAT/DRAW, See enemy positions, Play again, Title screen), and a finished match can return to the title. 884 tests. **Next: Session 4, sound and settings.**
 
 ### Completed
 
@@ -66,8 +66,8 @@ The session-by-session build history (V1 steps 1–10, the V1.1 rules, the sim f
 
 1. ✅ **DONE 2026-09-29.** ~~**Live on Vercel + CI + docs skeleton.**~~ See `docs/history.md` and `docs/deploy.md`.
 2. ✅ **DONE 2026-09-29.** ~~**Identity — title screen and art direction.**~~ See `docs/art-direction.md` and `docs/history.md`.
-3. **NEXT: Board art, event log and end screen**, following `docs/art-direction.md`.
-4. Sound and settings.
+3. ✅ **DONE 2026-09-29.** ~~**Board art, event log and end screen.**~~ See `docs/art-direction.md` and `docs/history.md`.
+4. **NEXT: Sound and settings**, following `docs/art-direction.md` (Motion and sound).
    — **Gate: the designer's hotseat playtests** on the deployed build before any networking. —
 5. Authority split refactor (client stops owning the match; no behaviour change).
 6. Server, protocol and rooms (`docs/protocol.md`).
@@ -225,6 +225,7 @@ The session-by-session build history (V1 steps 1–10, the V1.1 rules, the sim f
 
 73. **The end-of-match reveal is the one piece of `truth` that reaches the store, and only at `GAME_OVER`** (final-reveal session; gotchas 34, 35, 36; spec §6). `MatchState.finalReveal` holds each player's opponent's units straight from `truth`, decoy included, set only in `publish` via `finalRevealOf`, which returns null unless the phase is `GAME_OVER`. That guard is the whole safety of the feature: dropping it hands the renderer the enemy's positions all match (`finalReveal.test.ts` "does not exist while the match is being played" fails). It is keyed by viewer and read only through `useFinalReveal` (gotcha 36). It lives in `publish` so both endings, the engine's verdict and `resign`, get it with no special case. `src/sim/` is untouched: `filterForPlayer` still drops enemy units, and must keep doing so. The board draws it with `drawReveal` on the intel layer *instead of* intel and the base-candidate shading, and only after the final replay has played, so the reveal never spoils the round that ended the match.
 74. **The title screen is presentation state in `App`, never a store stage** (V1.5 Session 2; gotcha 42). `App` holds a `title` flag and swaps `TitleScreen` in for the board only while no match exists; leaving it calls the setup panel's own `setSeating`, so choosing a mode from the title and from the setup panel are one code path. It reads nothing from the store, so it has nothing to leak. Its background is a generated tile (`src/ui/titleBackdrop.ts`), not the reference picture: each layer is wrapped onto its eight neighbours with `<use>` so the tile loops with no seam — wrap per layer, not the whole picture, or a neighbour's land paints over this tile's grid labels.
+75. **Board colours come from `src/render/palette.ts`, and the end screen IS the game-over battle report** (V1.5 Session 3; gotchas 58, 62, 71, 73). `COLOR` in `draw.ts` and the legend (`legend.ts`, `HowToPlay.tsx`) both read `PALETTE`; never type a hex value into either, or the key drifts from the board. The board is light now: a new mark needs a colour that passes `palette.test.ts`'s contrast check on paper and hills, and green is reserved for "you may move here" (why hills are khaki). The end screen is `BattleReport` rendering a `victory`/`defeat`/`draw` report large — same queue, same hold-back behind the final replay, same mount inside `App`'s board branch — so it inherits the handoff and per-viewer secrecy rules; do not give it a separate trigger (e.g. `view.outcome`) that would skip them.
 
 ### Open questions
 - **SETTLED 2026-09-29: `roundCap` stays 25** (≈12.5 min at V1.5's ~30 s rounds). The designer's longest playtest games ran ~20 rounds; 25 is the cap they want. See `docs/roadmap-v1.5.md`.

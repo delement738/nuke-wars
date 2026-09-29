@@ -6,7 +6,7 @@ import HandoffScreen from './ui/HandoffScreen';
 import HowToPlay from './ui/HowToPlay';
 import SetupPanel from './ui/SetupPanel';
 import TitleScreen, { type PlayMode } from './ui/TitleScreen';
-import { setSeating } from './state/match';
+import { newMatch, setSeating } from './state/match';
 import { HOTSEAT_SEATS, SOLO_SEATS } from './state/seats';
 import { useHandoff, useMatchStarted } from './state/useMatch';
 
@@ -42,6 +42,12 @@ export default function App() {
   const play = useCallback((mode: PlayMode) => {
     setSeating(mode === 'hotseat' ? HOTSEAT_SEATS : SOLO_SEATS);
     setTitle(false);
+  }, []);
+  // Back to the title from a finished match (end screen, HUD): a fresh board
+  // behind it, so `started` is false and the title branch below can show.
+  const toTitle = useCallback(() => {
+    newMatch(Date.now() % 100000);
+    setTitle(true);
   }, []);
 
   // A handoff closes it, so the next player sits down to their own board rather
@@ -85,13 +91,13 @@ export default function App() {
   return (
     <div className="stage">
       <GameCanvas />
-      {started ? <Hud onHelp={openHelp} /> : <SetupPanel onHelp={openHelp} />}
+      {started ? <Hud onHelp={openHelp} onTitle={toTitle} /> : <SetupPanel onHelp={openHelp} />}
       {/* Inside this branch on purpose (V1.1 step 1). A battle report is the
           viewer's private news, so it must be unreachable while the screen is
           blanked for a handoff — mounting it here rather than above the `if`
           makes that structural, exactly as the handoff swap does for the board
           itself. See the header of `BattleReport.tsx`. */}
-      <BattleReport />
+      <BattleReport onTitle={toTitle} />
       {/* Same branch, same reason (gotchas 58, 62): an overlay on the board,
           so there is no path by which it can draw over the handoff screen. */}
       {help !== null && <HowToPlay onClose={closeHelp} start={help || undefined} />}

@@ -35,6 +35,7 @@ import {
   missileHead,
   warningLabel,
 } from './draw';
+import { PALETTE } from './palette';
 import {
   inboundText,
   roundsLeftFrom,
@@ -59,14 +60,17 @@ export interface ReplayContext {
   events: readonly VisibleEvent[];
 }
 
+// Tuned for the paper board (V1.5 Session 3): a pale burst vanishes on cream,
+// so it is a hot yellow now, and smoke is the warm grey of the title's
+// mushroom clouds. Labels are ink outlined in paper, like notes on a map.
 const FX = {
-  burst: 0xfff1a8,
+  burst: 0xffc93c,
   flash: 0xffffff,
   fireball: 0xff7a2a,
   core: 0xffd54a,
-  smoke: 0x9aa4b0,
+  smoke: 0x8f8474,
   scorch: 0x2a1a10,
-  label: 0xf5f7fa,
+  label: PALETTE.ink,
 } as const;
 
 /** The share of an intercept/impact clip spent on a carried missile's final
@@ -78,17 +82,18 @@ const LABEL_STYLE = new TextStyle({
   fontSize: 11,
   fontWeight: 'bold',
   fill: FX.label,
-  stroke: { color: 0x0b0f14, width: 3 },
+  stroke: { color: PALETTE.glyph, width: 3 },
 });
 
 /** The rule under a base disc (session 3), in the intel red. */
 const DISC_STYLE = new TextStyle({ ...LABEL_STYLE, fill: COLOR.enemy });
 
+// The caption sits in a dark console box, so it keeps paper lettering.
 const CAPTION_STYLE = new TextStyle({
   fontFamily: 'monospace',
   fontSize: 16,
   fontWeight: 'bold',
-  fill: FX.label,
+  fill: PALETTE.glyph,
 });
 
 const BANNER_STYLE = new TextStyle({
@@ -96,7 +101,7 @@ const BANNER_STYLE = new TextStyle({
   fontSize: 34,
   fontWeight: 'bold',
   fill: COLOR.enemy,
-  stroke: { color: 0x0b0f14, width: 6 },
+  stroke: { color: PALETTE.glyph, width: 6 },
 });
 
 function clear(layer: Container): void {
@@ -369,7 +374,7 @@ export function drawReplayShapes(
             if (washed.has(key) || !swath.has(key) || !tileAt(ctx.map, axialToOffset(hex))) continue;
             washed.add(key);
             const c = centerOf(hex);
-            g.poly(hexCorners(c.x, c.y)).fill({ color: COLOR.seen, alpha: 0.1 });
+            g.poly(hexCorners(c.x, c.y)).fill({ color: COLOR.seen, alpha: 0.32 });
           }
         }
         if (trail.length > 1) {
@@ -618,9 +623,9 @@ export function drawReplayLabels(
     // A spotted or exposed asset gets its emblem too, in the intel red. A
     // spotted decoy arrives as 'bunker' (`SpottedKind` has no 'decoy').
     if (clip.event.type === 'ASSET_SPOTTED') {
-      layer.addChild(emblemAt(clip.event.kind, x, y, COLOR.enemy, INTEL_EMBLEM_SIZE));
+      layer.addChild(emblemAt(clip.event.kind, x, y, COLOR.enemy, INTEL_EMBLEM_SIZE, true));
     } else if (clip.event.type === 'BASE_EXPOSED') {
-      layer.addChild(emblemAt('interceptor', x, y, COLOR.enemy, INTEL_EMBLEM_SIZE));
+      layer.addChild(emblemAt('interceptor', x, y, COLOR.enemy, INTEL_EMBLEM_SIZE, true));
     }
   }
 }
@@ -669,7 +674,7 @@ export function drawCaption(
       text.height + pad,
       6,
     )
-    .fill({ color: 0x0b0f14, alpha: 0.85 });
+    .fill({ color: PALETTE.table, alpha: 0.85 });
   layer.addChild(box, text);
 
   if (banner) {

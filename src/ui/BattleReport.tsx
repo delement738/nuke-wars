@@ -28,21 +28,41 @@
 // should not be in `reports.ts` at all.
 
 import { useEffect } from 'react';
-import { dismissReport } from '../state/match';
-import { useReplay, useReport } from '../state/useMatch';
+import { dismissReport, newMatch } from '../state/match';
+import type { ReportTone } from '../state/reports';
+import { useReplay, useReport, useView } from '../state/useMatch';
 import './hud.css';
 
-export default function BattleReport() {
+interface Props {
+  /** Leaves the finished match for the title screen, which `App` owns. */
+  onTitle: () => void;
+}
+
+/**
+ * The three tones that end the match get the end-of-match screen (V1.5
+ * Session 3) instead of the small banner. It IS the game-over report — same
+ * queue, same hold-back until the final replay has played, same mount point —
+ * so it inherits both secrecy rules above rather than needing its own.
+ */
+const VERDICT: Partial<Record<ReportTone, string>> = {
+  victory: 'Victory',
+  defeat: 'Defeat',
+  draw: 'Draw',
+};
+
+export default function BattleReport({ onTitle }: Props) {
   // Held back until the viewer's replay has played (presentation phase,
   // session 1): "Launcher lost" popping up before the round has been watched
   // would spoil it. Still mounted inside `App`'s board branch — gotcha 62.
   const replaying = useReplay() !== null;
   const pending = useReport();
   const report = replaying ? null : pending;
+  const round = useView()?.round;
 
   // Space and Enter dismiss, so a player mid-order-entry does not have to reach
   // for the mouse. Bound while a banner is up and unbound the instant it is
   // gone, so the keys go back to doing nothing when there is nothing to clear.
+  // On the end screen "dismiss" is "View the board", the button with focus.
   useEffect(() => {
     if (!report) return;
 
@@ -58,6 +78,36 @@ export default function BattleReport() {
   }, [report]);
 
   if (!report) return null;
+
+  const verdict = VERDICT[report.tone];
+  if (verdict) {
+    return (
+      <div className="report-scrim endgame-scrim" onClick={dismissReport}>
+        <div
+          className={`endgame endgame-${report.tone}`}
+          role="alert"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <p className="endgame-kicker">Match over{round ? ` · round ${round}` : ''}</p>
+          <h2 className="endgame-verdict">{verdict}</h2>
+          <p className="endgame-headline">{report.headline}</p>
+          <p className="endgame-detail">{report.detail}</p>
+          <div className="endgame-buttons">
+            {/* The final reveal (gotcha 73) is on the board underneath. */}
+            <button type="button" className="endgame-btn primary" onClick={dismissReport} autoFocus>
+              See enemy positions
+            </button>
+            <button type="button" className="endgame-btn" onClick={() => newMatch(Date.now() % 100000)}>
+              Play again
+            </button>
+            <button type="button" className="endgame-btn" onClick={onTitle}>
+              Title screen
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="report-scrim" onClick={dismissReport}>
