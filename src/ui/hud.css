@@ -178,6 +178,11 @@
   padding: 8px 14px;
 }
 
+.lobby-code { font-size: 40px; margin: 6px 0; }
+.lobby-link { word-break: break-all; }
+.lobby-waiting { margin-top: 14px; }
+.order-clock { font-variant-numeric: tabular-nums; }
+
 .muted { color: #9c9683; }
 .own { color: #5aa9ff; }
 .enemy { color: #ff8371; }

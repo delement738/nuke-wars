@@ -1,6 +1,6 @@
 # Nuke Wars — network protocol
 
-*Designed and built in V1.5 Session 6 (server, protocol and rooms). Sessions 7–8 add the timer, reconnect and hardening; their sections below say what is still to come.*
+*Designed and built in V1.5 Session 6 (server, protocol and rooms); Session 7 added the order clock, reconnect and the waiting room. Session 8 adds hardening; its section below says what is still to come.*
 
 ## Principles
 - **The server is the only holder of the unfiltered `GameState`.** It runs the same `resolve()` from `src/sim/` and sends each player only `filterForPlayer` / `filterEventsForPlayer` output. A client never receives the enemy's hidden positions, so cheating by reading network traffic is impossible by construction (spec §6). `server/lobby.test.ts` checks this on the actual bytes: across a whole match, no enemy unit id reaches a browser except inside the two public events that name a unit (`UNIT_DESTROYED`, `DRONE_DOWNED`) or the end-of-match reveal.
@@ -23,18 +23,18 @@ browser (store)  ──  src/net/connection.ts  ══ WebSocket ══  server/
 - **Create:** the browser sends `create`. The server picks a map seed, opens a room with a 6-character code (letters and digits without 0/O/1/I), and seats the creator as **p1** (south).
 - **Join:** the link is the site's address plus `?room=CODE`. Opening it skips the title screen and sends `join`. The free seat (p2) is taken; codes are matched case-insensitively.
 - **Full room:** a third browser gets `ROOM_FULL`. **A seat stays reserved after its browser leaves** — it belongs to whoever holds that seat's token, not to the next person with the link.
-- **Closing:** when both seats are empty the room is deleted. (Session 7 keeps an empty room alive for a grace period so a player can reconnect.)
+- **Closing:** when both seats are empty the room is kept for a **grace period (2 minutes)** and then deleted; anyone coming back with a token inside it saves the room. No order clock runs in an empty room, so nobody plays a match out alone.
 - The server tells each side `opponent { present }` whenever the other seat fills or empties.
 
 ## Messages
-All messages are JSON text frames. `PROTOCOL_VERSION` is currently **1**.
+All messages are JSON text frames. `PROTOCOL_VERSION` is currently **2** (Session 7 added `token` to `join`, and `snapshot`, `timer` and two fields on `joined`).
 
 ### Browser → server
 
 | Message | When | Example |
 |---|---|---|
 | `create` | open a room, take p1 | `{"type":"create","version":1}` |
-| `join` | take the free seat in a room | `{"type":"join","version":1,"room":"WKXKBK"}` |
+| `join` | take the free seat in a room — or, with `token`, take back the seat that token belongs to | `{"type":"join","version":2,"room":"WKXKBK","token":"…"}` |
 | `setup` | this seat's secret placements (spec §12) | `{"type":"setup","setup":[{"kind":"bunker","hex":{"q":12,"r":10}}, …]}` |
 | `orders` | this seat's orders for the round (spec §3); `[]` holds everything | `{"type":"orders","orders":[{"type":"LAUNCH","unitId":"p1-launcher-2","target":{"q":6,"r":2}}]}` |
 | `resign` | this seat capitulates (spec §4) | `{"type":"resign"}` |
@@ -45,7 +45,9 @@ All messages are JSON text frames. `PROTOCOL_VERSION` is currently **1**.
 
 | Message | Meaning |
 |---|---|
-| `joined { room, seat, token, seed, map }` | You are in. The map is public (spec §11) and the same for both seats; `token` is kept for Session 7's reconnect. |
+| `joined { room, seat, token, seed, map, resumed, submitted }` | You are in. The map is public (spec §11) and the same for both seats; `token` is kept by the browser to take the seat back. `resumed` is true when a presented token brought you back into your seat; `submitted` is whether the seat has already handed in what is owed now (its setup, or this round's orders). |
+| `snapshot { view, log, finalReveal }` | Sent right after `joined` to a **resumed** seat once a match is running: the board as this seat may see it now, this seat's whole event log (`[{round, events}]`), and the reveal if the match is over. Rebuilt from the very updates the seat was sent live, so a reconnect can never show more than playing on would have. |
+| `timer { msLeft }` | The order clock: milliseconds left to send this round's orders, or `null` when no clock runs (setup, match over). A duration, not a wall-clock time, so a wrong computer clock cannot skew it. Sent with every update, and on (re)joining. |
 | `opponent { present }` | The other seat just filled (`true`) or emptied (`false`). |
 | `update { update }` | A `MatchUpdate` for your seat only: `{ round, view, events, finalReveal }`, all already filtered. Sent when the match starts (no events), after every round, and on a resignation. `finalReveal` is null until `GAME_OVER`. |
 | `error { code }` | See below. |
@@ -54,11 +56,18 @@ All messages are JSON text frames. `PROTOCOL_VERSION` is currently **1**.
 - A round resolves the moment **both** seats have sent `orders`. Until then the server just holds what arrived, which is what keeps orders simultaneous.
 - In the browser, sending orders (or a setup) locks the board, and the button reads "waiting for your opponent", until the next `update` arrives.
 - A seat with nothing to order (the opponent's dead-hand round, spec §3) sends `[]` automatically on receiving the update, or the round would wait on it forever.
-- **Still to come (Session 7):** the 25 s order timer (time running out submits whatever is drafted) and ready-up.
 
-## Reconnect
-- **Session 6:** a token is issued per seat but not yet used. A browser that drops loses its seat for the rest of that match; the other side is told `opponent { present: false }`, and updates for the missing seat are dropped.
-- **Still to come (Session 7):** the browser keeps the token; on reconnect it presents it and gets its view and whole event log back, and the room survives a short grace period with nobody in it.
+## The order clock (Session 7)
+- **25 s to order, plus 5 s for the replay** when the last round had anything in it, so a busy round gives 30 s and a silent one 25 s. It starts when the match starts and after every resolution; there is none in setup (a setup is the ready-up: "Send setup", then wait) and it stops at game over.
+- **The browser sends first.** At zero the browser sends whatever is drafted, exactly as "Send orders" would (unordered units hold). The server's own clock runs **3 s longer** (`graceMs`), so that message normally arrives first; if the browser is closed or cut off, the server then submits an **empty turn** for each seat that still owes one, and the round resolves. A player who has gone therefore cannot stall the other.
+- **Timings are data** (`Timing` in `server/lobby.ts`: `orderMs`, `replayMs`, `graceMs`, `roomGraceMs`) and tests inject short ones.
+
+## Reconnect (Session 7)
+- **The seat belongs to its token.** The browser keeps `{room, token}` in `sessionStorage` (one tab's worth: two tabs on one computer hold two seats). Presenting the token in `join` takes the seat back even if the server has not yet noticed the old connection die; the old connection is replaced, and its later `close` cannot unseat the new one.
+- **Two ways back.** A dropped link is retried by the connection itself (0.5 s, doubling to 5 s, for up to 100 s — inside the server's 2-minute grace) while the board is locked and says so; drafts survive. A reloaded tab reads the saved seat on load and rejoins without the title screen. Either way the server sends `joined { resumed: true }` then `snapshot`; a brief wobble that missed no round changes nothing on screen, and one that missed rounds replaces the view and log outright (no replay for a round you were not there to watch; a match that ended meanwhile still gets its end screen).
+- **What is not restored:** a half-drafted order after a *reload* (the draft lives only in the tab). The server tracks only whether the seat had already *submitted*, and `joined.submitted` says so.
+- **Gives up when** the server answers a rejoin with an error (room gone, protocol changed) or the retries run out; the saved seat is then dropped. Leaving the room, or a finished match, also drops it.
+- **Still not covered (Session 8):** a half-open connection (a laptop that slept) is only noticed when the browser next tries to send; server pings will fix that.
 
 ## Errors and limits
 | Code | Meaning |
@@ -66,14 +75,14 @@ All messages are JSON text frames. `PROTOCOL_VERSION` is currently **1**.
 | `BAD_MESSAGE` | Not JSON, or not a shape this protocol has (or an unexpected server fault, which is logged). |
 | `VERSION_MISMATCH` | The page and the server were built from different protocol versions: reload. |
 | `NO_SUCH_ROOM` | The link's room doesn't exist or has closed. |
-| `ROOM_FULL` | Both seats are taken. |
+| `ROOM_FULL` | Both seats are taken (and the token, if any, matched neither). |
 | `NOT_IN_ROOM` / `ALREADY_IN_ROOM` | A game message before joining, or a second join. |
 | `ILLEGAL_SETUP` | The setup broke a §12 placement rule for **this** seat. The browser unlocks and the player can try again. |
 
 - **Shape vs rules.** `parseClientMessage` checks shape only (field types, integer hex coordinates, list sizes, id lengths) and rebuilds each message from its known fields, so extra fields never reach the game. Rules are checked by the sim's own validators: a setup by `validateSetup` for the sending seat, orders by `resolve()`, which silently drops illegal ones (an order naming the enemy's unit does nothing, gotcha 13).
 - **Sizes:** 8 KB per message (enforced by `ws` before parsing), 8 placements, 16 orders, 32-character ids.
 - **Crashes:** a thrown error inside one room is caught and logged, never allowed to take the process down; a socket `error` (such as an oversized frame) has a listener for the same reason.
-- **Still to come (Session 8):** rate limits, idle-room expiry, origin checks, structured logging.
+- **Still to come (Session 8):** rate limits, origin checks, structured logging, server pings; idle-*setup* rooms are only reaped once empty.
 
 ## Running it locally
 1. `npm run server` — the match server on port 8787 (`npm run server:watch` restarts on file changes).

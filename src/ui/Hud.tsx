@@ -36,6 +36,8 @@ import {
 import EventLog from './EventLog';
 import HelpButton from './HelpButton';
 import OnlinePanel from './OnlinePanel';
+import OrderClock from './OrderClock';
+import { useOrderClock } from './useOrderClock';
 import OrderPanel from './OrderPanel';
 import SelectionPanel from './SelectionPanel';
 import SoundButton from './SoundButton';
@@ -60,6 +62,7 @@ export default function Hud({ onHelp, onTitle }: Props) {
   const online = useOnline();
   const sent = online?.submitted === true;
   const cut = online !== null && online.status !== 'open';
+  useOrderClock();
 
   // `App` only mounts this once a match exists, so a null view is unreachable —
   // but `useView()` is nullable because the setup screen legitimately has no
@@ -118,6 +121,7 @@ export default function Hud({ onHelp, onTitle }: Props) {
                   : 'DEAD HAND — the enemy fires a final volley.'
                 : 'Order phase.'}
           </p>
+          <OrderClock />
 
           {view.outcome && (
             <p className="outcome">{describeOutcome(view.outcome, viewer)}</p>

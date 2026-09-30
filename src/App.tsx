@@ -4,12 +4,14 @@ import BattleReport from './ui/BattleReport';
 import Hud from './ui/Hud';
 import HandoffScreen from './ui/HandoffScreen';
 import HowToPlay from './ui/HowToPlay';
+import LobbyScreen from './ui/LobbyScreen';
 import SetupPanel from './ui/SetupPanel';
 import TitleScreen, { type PlayMode } from './ui/TitleScreen';
 import { newMatch, playOnline, setSeating } from './state/match';
 import { SERVER_URL, roomInLink } from './net/config';
+import { loadSeat } from './net/session';
 import { HOTSEAT_SEATS, SOLO_SEATS } from './state/seats';
-import { useHandoff, useMatchStarted } from './state/useMatch';
+import { useHandoff, useMatchStarted, useOnline } from './state/useMatch';
 import { toggleMute } from './audio/settings';
 import { installUiClicks } from './audio/synth';
 
@@ -44,7 +46,17 @@ export default function App() {
   //
   // A room link (`?room=CODE`, V1.5 Session 6) skips the title: whoever opened
   // it came to join that game.
-  const [linkRoom] = useState(() => (SERVER_URL ? roomInLink() : null));
+  //
+  // So does a seat this tab already holds (V1.5 Session 7): reloading the page
+  // mid-match goes back to the room with the saved token, rather than to a title
+  // screen and a stranded opponent. A link to a *different* room wins over it.
+  const [entry] = useState(() => {
+    if (!SERVER_URL) return { room: null, token: undefined };
+    const saved = loadSeat();
+    const room = roomInLink() ?? saved?.room ?? null;
+    return { room, token: saved && saved.room === room ? saved.token : undefined };
+  });
+  const linkRoom = entry.room;
   const [title, setTitle] = useState(linkRoom === null);
   // Once only: StrictMode runs effects twice in development, and a second join
   // would find the seat the first one took.
@@ -52,8 +64,8 @@ export default function App() {
   useEffect(() => {
     if (!linkRoom || !SERVER_URL || joinedLink.current) return;
     joinedLink.current = true;
-    playOnline(SERVER_URL, linkRoom);
-  }, [linkRoom]);
+    playOnline(SERVER_URL, linkRoom, entry.token);
+  }, [linkRoom, entry.token]);
   const play = useCallback((mode: PlayMode) => {
     if (mode === 'online') {
       if (SERVER_URL) playOnline(SERVER_URL, null);
@@ -68,6 +80,16 @@ export default function App() {
     newMatch(Date.now() % 100000);
     setTitle(true);
   }, []);
+
+  // Leaving an online room (either Leave button) lands on the title, the same
+  // place "Title screen" from a finished match goes. Adjusted during render, like
+  // the help window below, so the title is up on the very frame the room goes.
+  const online = useOnline();
+  const [wasOnline, setWasOnline] = useState(false);
+  if (wasOnline !== (online !== null)) {
+    setWasOnline(online !== null);
+    if (online === null && !started) setTitle(true);
+  }
 
   // A handoff closes it, so the next player sits down to their own board rather
   // than to a window the last player left open. Adjusted during render (React's
@@ -118,6 +140,16 @@ export default function App() {
     return (
       <div className="stage">
         <HandoffScreen />
+      </div>
+    );
+  }
+
+  // Online and not yet two players in a match: the waiting room, with no board
+  // behind it. It ends by itself the moment the opponent is in.
+  if (online && !started && (online.status !== 'open' || !online.opponentJoined)) {
+    return (
+      <div className="stage">
+        <LobbyScreen onTitle={toTitle} />
       </div>
     );
   }

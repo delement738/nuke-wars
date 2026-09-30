@@ -15,6 +15,8 @@ export interface RunningServer {
   /** The port it actually listens on — useful when started on port 0. */
   port: number;
   lobby: Lobby;
+  /** Cut every connection without stopping the server — a network drop, for tests. */
+  dropConnections(): void;
   close(): Promise<void>;
 }
 
@@ -57,6 +59,9 @@ export function startServer(port: number, options: LobbyOptions = {}): Promise<R
       resolve({
         port: (http.address() as AddressInfo).port,
         lobby,
+        dropConnections() {
+          for (const client of sockets.clients) client.terminate();
+        },
         close: () =>
           new Promise<void>((done) => {
             for (const client of sockets.clients) client.terminate();

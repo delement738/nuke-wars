@@ -200,8 +200,10 @@ describe('the store playing online', () => {
     b.socket.close();
     await until(() => matchStore.getState().online?.opponentPresent === false, 'opponent left');
 
+    // The link dropping is not the end any more (Session 7): the store keeps
+    // trying to get its seat back, and says so.
     await server.close();
-    await until(() => matchStore.getState().online?.status === 'closed', 'closed');
+    await until(() => matchStore.getState().online?.status === 'reconnecting', 'reconnecting');
     server = await startServer(0); // for afterEach
   });
 
