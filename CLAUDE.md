@@ -58,9 +58,9 @@ A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, dr
 
 ## Current status (update at end of every session)
 
-### ✅ Code and docs agree as of 2026-09-29 (V1.5 Session 6: server, protocol and rooms) — no known mismatch
+### ✅ Code and docs agree as of 2026-09-30 (V1.5 Session 7: order timer, reconnect and lobby UI) — no known mismatch
 
-**Last session (2026-09-29):** V1.5 Session 6. A Node WebSocket server (`server/`) hosts each room with the unchanged `createLocalAuthority` and sends each seat only its own filtered update; the browser plays through `src/net/connection.ts`, a `MatchAuthority` over the socket, as a `'remote'` opponent seat. Protocol in `docs/protocol.md`. Bare-bones "Play online (test)" in dev only; live site unchanged. 951 tests, including a byte-level leak test on the wire (gotcha 78). **Next: Session 7, order timer, reconnect and lobby UI.**
+**Last session (2026-09-30):** V1.5 Session 7. The server runs a 25 s order clock (+5 s after a replay) and sends an empty turn for a seat that never orders; the browser shows it as a big countdown panel that turns red and ticks each second from 10 s. A seat belongs to its token: a dropped link retries, a reloaded tab rejoins, both rebuilt from a filtered snapshot; an empty room survives 2 minutes. Waiting-room screen with the room code and link. Protocol 2 (`docs/protocol.md`). Online play is still dev-only. 982 tests (gotcha 79). **Next: Session 8, Railway deploy and hardening.**
 
 ### Completed
 
