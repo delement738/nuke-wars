@@ -21,6 +21,12 @@
 // its whole filtered picture (`snapshot`). The room outlives an empty moment by a
 // grace period so that a refresh, or a train going through a tunnel, is survivable.
 //
+// **Session 8 adds limits, for a server anyone can reach.** Each connection has
+// a message allowance and each address a room-creation allowance (`./guard`);
+// the server holds at most so many rooms; and no room lives forever — a finished
+// match's room is let go a few minutes after the end, and any room is closed
+// outright past a hard age, so rooms nobody plays cannot pile up.
+//
 // Deliberately free of sockets: a connection is anything with a `send`, so the
 // room logic is tested with plain arrays, and `./server` glues it to `ws`.
 
@@ -46,10 +52,19 @@ import {
   type LogSlice,
   type ServerMessage,
 } from '../src/net/protocol';
+import { DEFAULT_LIMITS, createBucket, createIpLedger, type Limits } from './guard';
 
 /** Anything the lobby can talk to: a WebSocket in production, an array in tests. */
 export interface Peer {
   send(message: ServerMessage): void;
+  /** Cut the connection — for a flooder, or a room closed under it. */
+  close?(): void;
+}
+
+/** What the door knows about a connection. */
+export interface PeerInfo {
+  /** The visitor's address (see `clientIp` in `./guard`), for per-address limits. */
+  ip?: string;
 }
 
 /** One browser's session with the lobby, from connecting to closing. */
@@ -61,9 +76,13 @@ export interface Connection {
 }
 
 export interface Lobby {
-  connect(peer: Peer): Connection;
+  connect(peer: Peer, info?: PeerInfo): Connection;
   /** Rooms currently open — for logging and tests. */
   roomCount(): number;
+  /** Refusals since the server started — for the periodic stats line. */
+  refusals(): { rateLimited: number; serverFull: number; cut: number };
+  /** Close every room and stop every timer — the server is shutting down. */
+  shutdown(): void;
 }
 
 /** Where a lobby gets its randomness. Injectable so tests can pin a board. */
@@ -73,6 +92,8 @@ export interface LobbyOptions {
   log?: (line: string) => void;
   /** Timing, in milliseconds. Injectable so tests need not wait. */
   timing?: Partial<Timing>;
+  /** Rate and size limits (`DEFAULT_LIMITS`). Injectable so tests can hit them quickly. */
+  limits?: Partial<Limits>;
 }
 
 /** The clocks a lobby runs (designer's ruling, 2026-09-29: 25 s + ~5 s replay). */
@@ -85,6 +106,11 @@ export interface Timing {
   graceMs: number;
   /** How long an empty room is kept for someone to come back to. */
   roomGraceMs: number;
+  /** How long a finished match's room stays joinable after the end (Session 8). */
+  finishedRoomMs: number;
+  /** The most any room may live, played or not (Session 8). A match with its
+   *  order clock lasts well under an hour; this catches rooms left in setup. */
+  maxRoomMs: number;
 }
 
 export const DEFAULT_TIMING: Timing = {
@@ -92,6 +118,8 @@ export const DEFAULT_TIMING: Timing = {
   replayMs: 5_000,
   graceMs: 3_000,
   roomGraceMs: 120_000,
+  finishedRoomMs: 5 * 60_000,
+  maxRoomMs: 2 * 60 * 60_000,
 };
 
 interface Seat {
@@ -119,6 +147,10 @@ interface Room {
   clock: ReturnType<typeof setTimeout> | null;
   /** Fires when the room has stood empty for the grace period. */
   reaper: ReturnType<typeof setTimeout> | null;
+  /** Fires when the room reaches its age limit, or its match has been over a while. */
+  ending: ReturnType<typeof setTimeout> | null;
+  /** Set once the room is gone: a connection still holding it must not act on it. */
+  closed: boolean;
 }
 
 /**
@@ -131,7 +163,10 @@ export function createLobby(options: LobbyOptions = {}): Lobby {
   const seedOf = options.seed ?? (() => randomInt(1, 100000));
   const log = options.log ?? (() => {});
   const timing: Timing = { ...DEFAULT_TIMING, ...options.timing };
+  const limits: Limits = { ...DEFAULT_LIMITS, ...options.limits };
   const rooms = new Map<string, Room>();
+  const creations = createIpLedger(limits);
+  const refusals = { rateLimited: 0, serverFull: 0, cut: 0 };
 
   function newCode(): string {
     for (;;) {
@@ -152,6 +187,26 @@ export function createLobby(options: LobbyOptions = {}): Lobby {
     if (room.clock) clearTimeout(room.clock);
     room.clock = null;
     room.deadline = null;
+  }
+
+  /**
+   * The room is gone. Every timer stops and it leaves the list, so no one can
+   * join it. `kick` also cuts the connections still in it — for a room closed
+   * mid-match (its age limit); their browsers retry, are told `NO_SUCH_ROOM`,
+   * and say the room has closed. A finished match is let go *without* a kick,
+   * so its players keep their end screen.
+   */
+  function closeRoom(room: Room, why: string, kick: boolean): void {
+    if (room.closed) return;
+    room.closed = true;
+    stopClock(room);
+    if (room.reaper) clearTimeout(room.reaper);
+    if (room.ending) clearTimeout(room.ending);
+    room.reaper = null;
+    room.ending = null;
+    if (rooms.get(room.id) === room) rooms.delete(room.id);
+    log(`room ${room.id} closed (${why}); ${rooms.size} open`);
+    if (kick) for (const player of PLAYERS) room.seats[player]?.peer?.close?.();
   }
 
   /** Tell each present seat how long is left, or that no clock is running. */
@@ -203,7 +258,12 @@ export function createLobby(options: LobbyOptions = {}): Lobby {
       room.seats[player]?.peer?.send({ type: 'update', update });
     }
     const over = PLAYERS.some((player) => updates[player]?.view.phase === 'GAME_OVER');
-    if (over) stopClock(room);
+    if (over) {
+      stopClock(room);
+      // Kept a few minutes for a reload to find its end screen, then let go.
+      if (room.ending) clearTimeout(room.ending);
+      room.ending = setTimeout(() => closeRoom(room, 'match over', false), timing.finishedRoomMs);
+    }
     else if (isEmpty(room)) stopClock(room);
     else startClock(room, PLAYERS.some((p) => (updates[p]?.events.length ?? 0) > 0) ? timing.replayMs : 0);
     sendClock(room);
@@ -226,19 +286,28 @@ export function createLobby(options: LobbyOptions = {}): Lobby {
       deadline: null,
       clock: null,
       reaper: null,
+      ending: null,
+      closed: false,
     };
     room.authority = createLocalAuthority(
       { map, seed, seats: HOTSEAT_SEATS, difficulty: NO_CPU },
       (updates) => route(room, updates),
     );
+    room.ending = setTimeout(() => closeRoom(room, 'age limit', true), timing.maxRoomMs);
     rooms.set(room.id, room);
     log(`room ${room.id} opened (seed ${seed}); ${rooms.size} open`);
     return room;
   }
 
-  function connect(peer: Peer): Connection {
+  function connect(peer: Peer, info: PeerInfo = {}): Connection {
     let room: Room | null = null;
     let seat: PlayerId | null = null;
+    const ip = info.ip ?? 'unknown';
+    const bucket = createBucket(limits.messageBurst, limits.messagesPerSecond, Date.now());
+    /** Messages refused for coming too fast, all told; past `messageStrikes` we hang up. */
+    let strikes = 0;
+    /** Whether the player has been told they are going too fast, since their last accepted message. */
+    let warned = false;
 
     function fail(code: ErrorCode): void {
       peer.send({ type: 'error', code });
@@ -294,6 +363,14 @@ export function createLobby(options: LobbyOptions = {}): Lobby {
       if (message.version !== PROTOCOL_VERSION) return fail('VERSION_MISMATCH');
 
       if (message.type === 'create') {
+        if (rooms.size >= limits.maxRooms) {
+          refusals.serverFull += 1;
+          return fail('SERVER_FULL');
+        }
+        if (!creations.createRoom(ip, Date.now())) {
+          refusals.rateLimited += 1;
+          return fail('RATE_LIMITED');
+        }
         sit(openRoom(), 'p1', false);
         return;
       }
@@ -315,6 +392,7 @@ export function createLobby(options: LobbyOptions = {}): Lobby {
 
     function play(message: Exclude<ClientMessage, { type: 'create' | 'join' }>): void {
       if (!room || !seat) return fail('NOT_IN_ROOM');
+      if (room.closed) return fail('NO_SUCH_ROOM');
       const { authority, map } = room;
 
       switch (message.type) {
@@ -341,6 +419,20 @@ export function createLobby(options: LobbyOptions = {}): Lobby {
 
     return {
       receive(raw) {
+        // Counted before parsing, so a flood of junk costs its sender too.
+        if (!bucket.take(Date.now())) {
+          strikes += 1;
+          refusals.rateLimited += 1;
+          if (!warned) fail('RATE_LIMITED');
+          warned = true;
+          if (strikes > limits.messageStrikes) {
+            refusals.cut += 1;
+            log(`connection from ${ip} cut: too many messages`);
+            peer.close?.();
+          }
+          return;
+        }
+        warned = false;
         const message = parseClientMessage(raw);
         if (!message) return fail('BAD_MESSAGE');
         try {
@@ -365,20 +457,25 @@ export function createLobby(options: LobbyOptions = {}): Lobby {
           room.seats[opponentOf(seat)]?.peer?.send({ type: 'opponent', present: false });
         }
         const closing = room;
+        room = null;
+        seat = null;
+        if (closing.closed) return;
         // With nobody left in it the clock stops (nobody is there to be timed)
         // and the room is kept for a grace period, so a player can come back.
         if (isEmpty(closing) && !closing.reaper) {
           stopClock(closing);
-          closing.reaper = setTimeout(() => {
-            rooms.delete(closing.id);
-            log(`room ${closing.id} closed; ${rooms.size} open`);
-          }, timing.roomGraceMs);
+          closing.reaper = setTimeout(() => closeRoom(closing, 'empty', false), timing.roomGraceMs);
         }
-        room = null;
-        seat = null;
       },
     };
   }
 
-  return { connect, roomCount: () => rooms.size };
+  return {
+    connect,
+    roomCount: () => rooms.size,
+    refusals: () => ({ ...refusals }),
+    shutdown() {
+      for (const room of [...rooms.values()]) closeRoom(room, 'server shutting down', false);
+    },
+  };
 }

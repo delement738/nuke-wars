@@ -1,0 +1,22 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "RAILPACK",
+    "watchPatterns": [
+      "server/**",
+      "src/sim/**",
+      "src/state/**",
+      "src/net/**",
+      "package.json",
+      "package-lock.json",
+      "railway.json"
+    ]
+  },
+  "deploy": {
+    "startCommand": "node --import tsx server/main.ts",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 60,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
+  }
+}

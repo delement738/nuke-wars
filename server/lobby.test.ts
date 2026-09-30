@@ -10,6 +10,10 @@ import { createLobby, type Connection } from './lobby';
 
 const SEED = 7;
 
+/** No message allowance: these tests play whole matches in a millisecond, which
+ *  no browser does. The limits themselves are tested at the bottom of the file. */
+const UNLIMITED = { messageBurst: Infinity };
+
 /** A browser, as the lobby sees it: a connection and everything sent to it. */
 interface FakeClient {
   connection: Connection;
@@ -45,7 +49,7 @@ function updates(c: FakeClient): MatchUpdate[] {
 
 /** Two clients in one room: A created it (p1), B joined by its code (p2). */
 function room() {
-  const lobby = createLobby({ seed: () => SEED });
+  const lobby = createLobby({ seed: () => SEED, limits: UNLIMITED });
   const a = client(lobby);
   a.send({ type: 'create', version: PROTOCOL_VERSION });
   const code = last(a, 'joined')!.room;
@@ -521,5 +525,160 @@ describe('reconnecting', () => {
     vi.advanceTimersByTime(100_000);
     expect(updates(a)).toHaveLength(n);
     expect(lobby.roomCount()).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V1.5 Session 8 — limits for a public server, and rooms that do not live forever
+// ---------------------------------------------------------------------------
+
+/** A browser that also records being hung up on, at address `ip`. */
+function guarded(lobby: ReturnType<typeof createLobby>, ip = '1.2.3.4') {
+  const inbox: ServerMessage[] = [];
+  let cut = false;
+  const connection = lobby.connect(
+    {
+      send: (message) => inbox.push(JSON.parse(JSON.stringify(message))),
+      close: () => {
+        cut = true;
+      },
+    },
+    { ip },
+  );
+  return {
+    inbox,
+    connection,
+    send: (m: unknown) => connection.receive(JSON.stringify(m)),
+    errors: () => inbox.flatMap((m) => (m.type === 'error' ? [m.code] : [])),
+    isCut: () => cut,
+  };
+}
+
+describe('rate limits', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('a burst is fine; past it, messages are refused with one warning, and a flood is cut', () => {
+    vi.useFakeTimers();
+    const lobby = createLobby({ limits: { messageBurst: 5, messagesPerSecond: 1, messageStrikes: 3 } });
+    const a = guarded(lobby);
+    for (let i = 0; i < 5; i++) a.send({ type: 'resign' });
+    expect(a.errors()).toEqual(Array(5).fill('NOT_IN_ROOM'));
+
+    a.send({ type: 'resign' });
+    a.send({ type: 'resign' });
+    a.send({ type: 'resign' });
+    // Refused, but told only once — not an error per message.
+    expect(a.errors().filter((code) => code === 'RATE_LIMITED')).toHaveLength(1);
+    expect(a.isCut()).toBe(false);
+    a.send({ type: 'resign' });
+    expect(a.isCut()).toBe(true);
+    expect(lobby.refusals()).toMatchObject({ rateLimited: 4, cut: 1 });
+  });
+
+  it('the allowance refills with time, so a steady honest pace is never refused', () => {
+    vi.useFakeTimers();
+    const lobby = createLobby({ limits: { messageBurst: 2, messagesPerSecond: 1 } });
+    const a = guarded(lobby);
+    for (let i = 0; i < 30; i++) {
+      a.send({ type: 'resign' });
+      vi.advanceTimersByTime(1000);
+    }
+    expect(a.errors()).not.toContain('RATE_LIMITED');
+  });
+
+  it('counts junk against the allowance too, before reading it', () => {
+    const lobby = createLobby({ limits: { messageBurst: 3 } });
+    const a = guarded(lobby);
+    for (let i = 0; i < 4; i++) a.connection.receive('not json');
+    expect(a.errors()).toEqual(['BAD_MESSAGE', 'BAD_MESSAGE', 'BAD_MESSAGE', 'RATE_LIMITED']);
+  });
+
+  it('one address may create only so many rooms a minute; another address is unaffected', () => {
+    vi.useFakeTimers();
+    const lobby = createLobby({ limits: { roomsPerMinutePerIp: 2 } });
+    const make = (ip: string) => {
+      const c = guarded(lobby, ip);
+      c.send({ type: 'create', version: PROTOCOL_VERSION });
+      return c;
+    };
+    make('1.1.1.1');
+    make('1.1.1.1');
+    expect(make('1.1.1.1').errors()).toEqual(['RATE_LIMITED']);
+    expect(make('2.2.2.2').errors()).toEqual([]);
+    expect(lobby.roomCount()).toBe(3);
+
+    vi.advanceTimersByTime(60_000);
+    expect(make('1.1.1.1').errors()).toEqual([]);
+  });
+
+  it('joining is not creating: a full server still lets a player into an existing room', () => {
+    const lobby = createLobby({ limits: { maxRooms: 1 } });
+    const a = guarded(lobby, '1.1.1.1');
+    a.send({ type: 'create', version: PROTOCOL_VERSION });
+    const code = (a.inbox.find((m) => m.type === 'joined') as Extract<ServerMessage, { type: 'joined' }>).room;
+
+    const c = guarded(lobby, '3.3.3.3');
+    c.send({ type: 'create', version: PROTOCOL_VERSION });
+    expect(c.errors()).toEqual(['SERVER_FULL']);
+
+    const b = guarded(lobby, '2.2.2.2');
+    b.send({ type: 'join', version: PROTOCOL_VERSION, room: code });
+    expect(b.errors()).toEqual([]);
+    expect(lobby.refusals().serverFull).toBe(1);
+  });
+});
+
+describe('room lifetimes', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('a finished match is let go a few minutes after the end, without hanging up on anyone', () => {
+    vi.useFakeTimers();
+    const lobby = createLobby({ seed: () => SEED, timing: { finishedRoomMs: 300_000 } });
+    const a = guarded(lobby, '1.1.1.1');
+    a.send({ type: 'create', version: PROTOCOL_VERSION });
+    const code = (a.inbox.find((m) => m.type === 'joined') as Extract<ServerMessage, { type: 'joined' }>).room;
+    const b = guarded(lobby, '2.2.2.2');
+    b.send({ type: 'join', version: PROTOCOL_VERSION, room: code });
+    a.send({ type: 'setup', setup: autoSetup('p1') });
+    b.send({ type: 'setup', setup: autoSetup('p2') });
+    a.send({ type: 'resign' });
+
+    vi.advanceTimersByTime(299_000);
+    expect(lobby.roomCount()).toBe(1);
+    vi.advanceTimersByTime(1_000);
+    expect(lobby.roomCount()).toBe(0);
+    // The end screen stays up: nobody was cut, and nothing more is sent.
+    expect(a.isCut() || b.isCut()).toBe(false);
+
+    const late = guarded(lobby, '3.3.3.3');
+    late.send({ type: 'join', version: PROTOCOL_VERSION, room: code });
+    expect(late.errors()).toEqual(['NO_SUCH_ROOM']);
+    // Leaving a room that has already gone is harmless.
+    a.connection.close();
+    b.connection.close();
+    expect(lobby.roomCount()).toBe(0);
+  });
+
+  it('a room past its age limit is closed and its players cut, even mid-setup', () => {
+    vi.useFakeTimers();
+    const lobby = createLobby({ seed: () => SEED, timing: { maxRoomMs: 7_200_000 } });
+    const a = guarded(lobby);
+    a.send({ type: 'create', version: PROTOCOL_VERSION });
+    vi.advanceTimersByTime(7_199_000);
+    expect(lobby.roomCount()).toBe(1);
+    vi.advanceTimersByTime(1_000);
+    expect(lobby.roomCount()).toBe(0);
+    expect(a.isCut()).toBe(true);
+    // Anything the old connection still sends finds no room.
+    a.send({ type: 'setup', setup: autoSetup('p1') });
+    expect(a.errors().at(-1)).toBe('NO_SUCH_ROOM');
+  });
+
+  it('shutdown closes every room and leaves no timer running', () => {
+    vi.useFakeTimers();
+    const { lobby } = startedRoom();
+    lobby.shutdown();
+    expect(lobby.roomCount()).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
