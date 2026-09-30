@@ -27,14 +27,14 @@ browser (store)  ──  src/net/connection.ts  ══ WebSocket ══  server/
 - The server tells each side `opponent { present }` whenever the other seat fills or empties.
 
 ## Messages
-All messages are JSON text frames. `PROTOCOL_VERSION` is currently **2** (Session 7 added `token` to `join`, and `snapshot`, `timer` and two fields on `joined`).
+All messages are JSON text frames. `PROTOCOL_VERSION` is currently **3** (Session 7 added `token` to `join`, and `snapshot`, `timer` and two fields on `joined`; Session 8 added the `RATE_LIMITED` and `SERVER_FULL` errors).
 
 ### Browser → server
 
 | Message | When | Example |
 |---|---|---|
-| `create` | open a room, take p1 | `{"type":"create","version":1}` |
-| `join` | take the free seat in a room — or, with `token`, take back the seat that token belongs to | `{"type":"join","version":2,"room":"WKXKBK","token":"…"}` |
+| `create` | open a room, take p1 | `{"type":"create","version":3}` |
+| `join` | take the free seat in a room — or, with `token`, take back the seat that token belongs to | `{"type":"join","version":3,"room":"WKXKBK","token":"…"}` |
 | `setup` | this seat's secret placements (spec §12) | `{"type":"setup","setup":[{"kind":"bunker","hex":{"q":12,"r":10}}, …]}` |
 | `orders` | this seat's orders for the round (spec §3); `[]` holds everything | `{"type":"orders","orders":[{"type":"LAUNCH","unitId":"p1-launcher-2","target":{"q":6,"r":2}}]}` |
 | `resign` | this seat capitulates (spec §4) | `{"type":"resign"}` |
@@ -67,7 +67,7 @@ All messages are JSON text frames. `PROTOCOL_VERSION` is currently **2** (Sessio
 - **Two ways back.** A dropped link is retried by the connection itself (0.5 s, doubling to 5 s, for up to 100 s — inside the server's 2-minute grace) while the board is locked and says so; drafts survive. A reloaded tab reads the saved seat on load and rejoins without the title screen. Either way the server sends `joined { resumed: true }` then `snapshot`; a brief wobble that missed no round changes nothing on screen, and one that missed rounds replaces the view and log outright (no replay for a round you were not there to watch; a match that ended meanwhile still gets its end screen).
 - **What is not restored:** a half-drafted order after a *reload* (the draft lives only in the tab). The server tracks only whether the seat had already *submitted*, and `joined.submitted` says so.
 - **Gives up when** the server answers a rejoin with an error (room gone, protocol changed) or the retries run out; the saved seat is then dropped. Leaving the room, or a finished match, also drops it.
-- **Still not covered (Session 8):** a half-open connection (a laptop that slept) is only noticed when the browser next tries to send; server pings will fix that.
+- **Half-open connections (Session 8).** The server pings every connection every 30 s; a browser answers by itself, and one that has not answered by the next ping (a laptop that slept, a phone that lost signal) is cut. Its seat is then empty like any other dropped seat, so the order clock and the room's grace period take over. The pings also keep the host's proxy from closing a connection that has gone quiet between rounds.
 
 ## Errors and limits
 | Code | Meaning |
@@ -78,15 +78,32 @@ All messages are JSON text frames. `PROTOCOL_VERSION` is currently **2** (Sessio
 | `ROOM_FULL` | Both seats are taken (and the token, if any, matched neither). |
 | `NOT_IN_ROOM` / `ALREADY_IN_ROOM` | A game message before joining, or a second join. |
 | `ILLEGAL_SETUP` | The setup broke a §12 placement rule for **this** seat. The browser unlocks and the player can try again. |
+| `RATE_LIMITED` | Too many messages too fast on this connection, or too many new rooms from this address (Session 8). |
+| `SERVER_FULL` | The server already holds its maximum number of rooms; joining an existing room still works (Session 8). |
 
 - **Shape vs rules.** `parseClientMessage` checks shape only (field types, integer hex coordinates, list sizes, id lengths) and rebuilds each message from its known fields, so extra fields never reach the game. Rules are checked by the sim's own validators: a setup by `validateSetup` for the sending seat, orders by `resolve()`, which silently drops illegal ones (an order naming the enemy's unit does nothing, gotcha 13).
 - **Sizes:** 8 KB per message (enforced by `ws` before parsing), 8 placements, 16 orders, 32-character ids.
 - **Crashes:** a thrown error inside one room is caught and logged, never allowed to take the process down; a socket `error` (such as an oversized frame) has a listener for the same reason.
-- **Still to come (Session 8):** rate limits, origin checks, structured logging, server pings; idle-*setup* rooms are only reaped once empty.
+
+### Limits for a public server (Session 8)
+The rules live in `server/guard.ts` (pure, tested with plain numbers) and are applied in two places: `server/server.ts` at the door, before a WebSocket exists, and `server/lobby.ts` per message. The numbers are `DEFAULT_LIMITS` and `DEFAULT_TIMING` (designer's approval, 2026-09-30); an honest match sends a message every few seconds at most, so none of them is ever near.
+
+| Limit | Value | What happens |
+|---|---|---|
+| **Origin** | the sites in `ALLOWED_ORIGINS` (`*` matches any run of characters, never a `/`) | Any other page is refused with HTTP 403 before the handshake completes. Unset means no check (local development). A browser cannot fake its page's origin, so this stops another website from opening games from its visitors' browsers; a script outside a browser can send any origin, which is what the limits below are for. |
+| **Connections per address** | 8 open at once | HTTP 429. Behind Railway the address is the **last** entry of `X-Forwarded-For` (the one the proxy wrote; earlier ones could be made up), and only when `TRUST_PROXY=1`. |
+| **Messages per connection** | a burst of 20, refilling at 5 per second | Past it, messages are dropped and `RATE_LIMITED` is sent once; 20 more dropped and the connection is cut. Counted before parsing, so junk costs its sender too. |
+| **New rooms per address** | 10 per minute | `RATE_LIMITED`. |
+| **Rooms on the server** | 500 | `SERVER_FULL` on `create`; `join` still works. |
+| **A finished match's room** | kept 5 min after the end | Then it leaves the room list (a late `join` gets `NO_SUCH_ROOM`) **without** cutting anyone, so the end screen stays up. |
+| **Any room** | 2 hours | Closed and its connections cut; their retries get `NO_SUCH_ROOM`. A match with the order clock lasts well under an hour, so this only catches rooms left in setup, which has no clock. |
+
+- **Logging.** One line per event, stamped with the time (`server/main.ts`): rooms opening and closing (and why), seats timing out, connections cut for flooding (with their address), socket errors. Refusals are **counted, not logged one by one** (a flood of refusals must not become a flood of log lines), and a `stats:` line every 5 minutes reports rooms, connections and every refusal count since start.
+- **Shutting down.** On `SIGTERM` (Railway sends it during a redeploy) the server closes every room and connection and exits within 5 seconds. **Matches live only in the server's memory, so a redeploy ends every match in progress**; browsers retry, get `NO_SUCH_ROOM` from the new server, and say the room has closed. Railway only redeploys when a file the server uses changes (`watchPatterns` in `railway.json`), not for client-only changes.
 
 ## Running it locally
 1. `npm run server` — the match server on port 8787 (`npm run server:watch` restarts on file changes).
 2. `npm run dev` in a second terminal — the site. In development it finds the server at port 8787 of the same machine automatically, and the title screen shows **Play online (test)**.
 3. Click it, press **Copy link**, and open the link in a second browser window (or on another computer on the same Wi-Fi, using the Network address Vite prints — start Vite with `npm run dev -- --host`).
 
-A production build has no online button until `VITE_SERVER_URL` is set (Session 8).
+A production build has no online button unless `VITE_SERVER_URL` is set; on Vercel it points at the Railway server (`docs/deploy.md`, Part 2). Locally, no origin list is set, so any page may connect.

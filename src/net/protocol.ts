@@ -30,7 +30,7 @@ import type { Order, PlayerId, Unit, VisibleEvent, VisibleGameState } from '../s
  * can be newer than the other; a mismatch is refused up front with a clear
  * error instead of failing somewhere strange mid-match.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** A room code: short enough to read aloud, no 0/O or 1/I to confuse. */
 export const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -73,7 +73,9 @@ export type ErrorCode =
   | 'ROOM_FULL' // both seats are taken
   | 'NOT_IN_ROOM' // a game message before `create`/`join`
   | 'ALREADY_IN_ROOM' // a second `create`/`join` on one connection
-  | 'ILLEGAL_SETUP'; // the setup broke a placement rule (spec §12)
+  | 'ILLEGAL_SETUP' // the setup broke a placement rule (spec §12)
+  | 'RATE_LIMITED' // too many messages, or too many new rooms, too fast (Session 8)
+  | 'SERVER_FULL'; // the server holds as many rooms as it will take (Session 8)
 
 /** One resolved round's worth of a seat's filtered events, as its log keeps them. */
 export interface LogSlice {
@@ -133,7 +135,8 @@ export type ServerMessage =
  * Size limits on anything a browser sends. Generous next to what an honest
  * client produces (three placements; one order per unit, and a side has five
  * units), and small enough that a hostile message cannot make the server do
- * real work. Session 8 adds rate limits on top.
+ * real work. The rate limits on top of these (how *often*, not how *big*) are
+ * `DEFAULT_LIMITS` in `server/guard.ts`.
  */
 export const LIMITS = {
   maxMessageBytes: 8 * 1024,

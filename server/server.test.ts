@@ -19,6 +19,7 @@ import {
 } from '../src/state/match';
 import { sandboxSetup } from '../src/state/sandbox';
 import { LIMITS, PROTOCOL_VERSION, type ServerMessage } from '../src/net/protocol';
+import { WebSocket as NodeSocket } from 'ws';
 import { startServer, type RunningServer } from './server';
 
 const SEED = 11;
@@ -219,5 +220,95 @@ describe('the store playing online', () => {
     expect(matchStore.getState().seats).toEqual({ p1: 'human', p2: 'cpu' });
     await until(() => b.got('opponent').at(-1)?.type === 'opponent' && !(b.got('opponent').at(-1) as { present: boolean }).present, 'left');
     b.socket.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V1.5 Session 8 — the doorman: origins, busy addresses, and pings
+// ---------------------------------------------------------------------------
+
+/**
+ * How a handshake ends: 'open', or the HTTP status it was refused with. Uses
+ * the `ws` client rather than the built-in one, because it lets a test choose
+ * the page's origin and read the refusal's status.
+ */
+function knock(origin?: string, extra: { autoPong?: boolean } = {}) {
+  const socket = new NodeSocket(url, { origin, ...extra });
+  const outcome = new Promise<string | number>((done) => {
+    socket.on('open', () => done('open'));
+    socket.on('unexpected-response', (_req, res) => done(res.statusCode ?? 0));
+    socket.on('error', () => done('error'));
+  });
+  return { socket, outcome };
+}
+
+describe('the doorman', () => {
+  const ALLOWED = ['https://nuke-wars.vercel.app', 'https://nuke-wars-*.vercel.app'];
+
+  async function restart(options: Parameters<typeof startServer>[1]) {
+    await server.close();
+    server = await startServer(0, { seed: () => SEED, ...options });
+    url = `ws://localhost:${server.port}`;
+  }
+
+  it('lets in pages from our own site and its previews, and refuses any other', async () => {
+    await restart({ allowedOrigins: ALLOWED });
+    const live = knock('https://nuke-wars.vercel.app');
+    const preview = knock('https://nuke-wars-git-feat-x.vercel.app');
+    const stranger = knock('https://evil.example');
+    const noOrigin = knock(undefined);
+    expect(await live.outcome).toBe('open');
+    expect(await preview.outcome).toBe('open');
+    expect(await stranger.outcome).toBe(403);
+    expect(await noOrigin.outcome).toBe(403);
+    live.socket.close();
+    preview.socket.close();
+  });
+
+  it('with no list set, as in local development, anyone may connect', async () => {
+    const anyone = knock('https://anything.example');
+    expect(await anyone.outcome).toBe('open');
+    anyone.socket.close();
+  });
+
+  it('refuses one address more connections than its share, and frees a place on close', async () => {
+    await restart({ limits: { connectionsPerIp: 2 } });
+    const first = knock();
+    const second = knock();
+    expect(await first.outcome).toBe('open');
+    expect(await second.outcome).toBe('open');
+    expect(await knock().outcome).toBe(429);
+
+    first.socket.close();
+    await until(() => first.socket.readyState === NodeSocket.CLOSED, 'first closed');
+    // The server hears of the close a moment after the client does.
+    let again: string | number = 0;
+    for (let tries = 0; tries < 20 && again !== 'open'; tries++) {
+      const attempt = knock();
+      again = await attempt.outcome;
+      if (again === 'open') attempt.socket.close();
+      else await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(again).toBe('open');
+    second.socket.close();
+  });
+
+  it('cuts a connection that stops answering pings, and keeps one that answers', async () => {
+    await restart({ pingMs: 40 });
+    const asleep = knock(undefined, { autoPong: false });
+    const awake = knock();
+    expect(await asleep.outcome).toBe('open');
+    expect(await awake.outcome).toBe('open');
+    await until(() => asleep.socket.readyState === NodeSocket.CLOSED, 'the silent one cut');
+    await new Promise((r) => setTimeout(r, 150));
+    expect(awake.socket.readyState).toBe(NodeSocket.OPEN);
+    awake.socket.close();
+  });
+
+  it('writes a stats line to the log on a timer', async () => {
+    const lines: string[] = [];
+    await restart({ statsMs: 30, log: (line) => lines.push(line) });
+    await until(() => lines.some((line) => line.startsWith('stats: ')), 'a stats line');
+    expect(lines.find((line) => line.startsWith('stats: '))).toMatch(/0 rooms, \d+ connections/);
   });
 });

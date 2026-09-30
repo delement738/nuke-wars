@@ -11,4 +11,6 @@ export const ERROR_TEXT: Record<ErrorCode, string> = {
   NOT_IN_ROOM: 'Not in a room yet.',
   ALREADY_IN_ROOM: 'Already in a room.',
   ILLEGAL_SETUP: 'The server refused that setup. Move something and try again.',
+  RATE_LIMITED: 'Too much, too fast. Wait a minute, then try again.',
+  SERVER_FULL: 'The server is full right now. Try again in a few minutes.',
 };

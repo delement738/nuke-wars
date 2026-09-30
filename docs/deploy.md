@@ -45,4 +45,53 @@ Project → **Deployments** → pick an older green deployment → **⋯** → *
 
 ## Part 2 — the server on Railway
 
-*Written in Session 8.* Will cover: the Railway service, its start command, the environment variable that tells the Vercel client where the server is, health checks, and logs.
+The match server (`server/`) runs on Railway as one always-on Node process. The browser talks to it over a WebSocket (`wss://…`); everything else about the site is still served by Vercel.
+
+### What is in the repo
+
+- **`railway.json`** is Railway's settings file, so they live in Git rather than only in the dashboard:
+  - **Start command:** `node --import tsx server/main.ts`. It runs `node` directly rather than through `npm`, so Railway's stop signal reaches the server itself.
+  - **Health check:** Railway opens `/health` and only switches traffic to a new deployment once that answers `ok`. A broken build therefore never replaces a working one.
+  - **Restart** on a crash, up to 10 times.
+  - **`watchPatterns`:** Railway redeploys only when a file the server uses changes (`server/`, `src/sim/`, `src/state/`, `src/net/`, the package files). This matters because **a redeploy ends every match in progress** (see "Things to know" below), so a change to the title screen shouldn't restart the server.
+- **`package.json`** pins Node to `24.x` (`engines`, matching CI and Vercel), and lists `tsx` under `dependencies`, because the server needs it at run time.
+
+### Settings (Railway → the service → **Variables**)
+
+| Variable | Value | Why |
+|---|---|---|
+| `ALLOWED_ORIGINS` | `https://nuke-wars.vercel.app,https://nuke-wars-*-TEAM.vercel.app` | Only pages from our site and its preview links may connect (`docs/protocol.md`, "Limits"). Replace `TEAM` with the end of any Vercel preview link's name, e.g. `delement738s-projects`. |
+| `TRUST_PROXY` | `1` | The server sits behind Railway's proxy, so per-address limits must read the visitor's address from the header the proxy writes. |
+| `PORT` | *(don't set it)* | Railway sets it itself. |
+
+And on **Vercel** (project → **Settings** → **Environment Variables**):
+
+| Variable | Value | Environments |
+|---|---|---|
+| `VITE_SERVER_URL` | `wss://` + the Railway domain, e.g. `wss://nuke-wars-server-production.up.railway.app` | Production **and** Preview |
+
+A `VITE_` variable is baked into the page **when it is built**, so after adding or changing it the site must be **redeployed** before it takes effect.
+
+### First-time setup
+
+1. <https://railway.com/new> → **Deploy from GitHub repo** → pick `delement738/nuke-wars`. If it isn't listed, click **Configure GitHub App**, give Railway access to that repository, and come back.
+2. Railway creates a service and starts building straight away. Let the first build fail or finish; the settings come next.
+3. Click the service → **Settings**:
+   - **Source → Branch:** `main`.
+   - **Networking → Public Networking → Generate Domain.** If it asks for a port, leave the one it detected (the port the server printed). Copy the domain it shows.
+4. **Variables** tab → add `ALLOWED_ORIGINS` and `TRUST_PROXY` as in the table above → **Deploy** (Railway shows a banner to apply the changes).
+5. When the deployment turns green, open `https://<the domain>/health` in a browser. It should say `ok`.
+6. On Vercel, add `VITE_SERVER_URL` (table above), then **Deployments** → the latest production one → **⋯** → **Redeploy**.
+7. Open <https://nuke-wars.vercel.app/>. The title screen now has **Play online**. Create a room and open the link in a second window (or send it to a friend).
+
+### Day to day
+
+- **Deploys:** merging a change to a server file into `main` redeploys Railway on its own. The new copy starts, passes `/health`, takes the traffic, and then the old copy is stopped.
+- **Logs:** the service → **Deployments** → the active one → **View Logs** (or the **Observability** tab). Every line starts with a time. A `stats:` line every 5 minutes shows rooms, connections and every kind of refusal since the server started. A server that is quietly being abused shows up there as climbing refusal counts.
+- **Rolling back:** **Deployments** → an older green one → **⋯** → **Redeploy**. Then fix `main`.
+
+### Things to know
+
+- **A redeploy, restart or crash ends every match in progress.** Rooms live only in the server's memory. Players see "That room does not exist, or has closed." Keeping matches across restarts would need a database; that's a deliberate V1.5 limit.
+- **One server, one process.** Two copies would each hold different rooms, and a link to a room on the other copy would fail. So don't raise Railway's replica count above 1.
+- **Cost:** Railway bills by usage. An idle Node process with a handful of matches uses very little; check **Usage** in the account menu after the first week.
