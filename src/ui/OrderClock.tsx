@@ -3,12 +3,14 @@
 // A panel of its own at the top of the HUD, shown for as long as the server's
 // clock runs: while the replay plays (the clock is already counting then), while
 // ordering, and after sending (dimmed, because it is then the opponent's time
-// that is running out). Red at 10 seconds and below. `useOrderClock`, in its own
+// that is running out). Red at 10 seconds and below, with a tick each second
+// while this player still owes orders. `useOrderClock`, in its own
 // file, is what sends the draft at zero. Reads `online` only, never the board.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { playSound } from '../audio/synth';
 import { useOnline } from '../state/useMatch';
-import { clockText, clockUrgent, secondsLeft } from './clockText';
+import { clockText, clockUrgent, secondsLeft, shouldTick } from './clockText';
 
 /** The current time, refreshed four times a second while a deadline is set. */
 function useNow(endsAt: number | null): number {
@@ -32,10 +34,22 @@ export default function OrderClock() {
   const online = useOnline();
   const endsAt = online?.timerEndsAt ?? null;
   const now = useNow(endsAt);
-  if (!online || endsAt === null) return null;
+  const seconds = endsAt === null ? null : secondsLeft(endsAt, now);
+  const sent = online?.submitted === true;
 
-  const seconds = secondsLeft(endsAt, now);
-  const sent = online.submitted;
+  // The last ten seconds tick, once per second shown.
+  const lastTicked = useRef<number | null>(null);
+  useEffect(() => {
+    if (seconds === null) {
+      lastTicked.current = null;
+      return;
+    }
+    if (shouldTick(seconds, sent, lastTicked.current)) playSound('tick');
+    lastTicked.current = seconds;
+  }, [seconds, sent]);
+
+  if (!online || seconds === null) return null;
+
   const urgent = !sent && clockUrgent(seconds);
   const className = ['panel', 'order-clock', urgent && 'urgent', sent && 'sent']
     .filter(Boolean)

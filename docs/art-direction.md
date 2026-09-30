@@ -57,6 +57,7 @@ Two surfaces carry it:
 - **Motion:** slow and steady rather than flashy. The title map drifts at 20 px/s; the only other motion on the title is the "Press Enter" blink. In play, a busy round's replay stays 4–6 s (presentation Session 1 ruling).
 - **Sound (Session 4):** to match the bunker — teletype clicks for UI, a low siren or klaxon sting for launch warnings, muffled distant thumps for impacts, a relay click for intercepts. Nothing arcade-bright.
   - *Built in V1.5 Session 4.* All four are synthesised with Web Audio in `src/audio/synth.ts` (no audio files): the click is a short band-passed noise tick and bounce; the klaxon two sawtooth tones (196/165 Hz) alternating behind a low-pass "wall"; the thump a sine falling 72 → 30 Hz under low-passed rumble; the relay two sharp contacts 45 ms apart. The replay plays **one sound per beat** (a volley is one klaxon), timed from its timeline (`src/audio/cues.ts`); movement, recon, damage and the verdict are silent.
+  - *Added in V1.5 Session 7:* the online order clock **ticks** once a second in its last 10 s (a sine knock falling 1300 → 700 Hz with a bright noise edge — rounder than the teletype so it is never mistaken for a button), only while the player still owes orders. The clock turns red at the same moment.
   - **Settings:** a small speaker beside each `?` (and in the title screen's top-right corner) opens a console popover with Mute and Volume; `M` mutes from anywhere. Default volume 70%. Saved per browser.
 
 ## Constraints that come from the rules

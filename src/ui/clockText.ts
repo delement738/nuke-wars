@@ -18,3 +18,12 @@ export function clockText(seconds: number): string {
 export function clockUrgent(seconds: number): boolean {
   return seconds <= CLOCK_URGENT_SECONDS;
 }
+
+/**
+ * Whether the clock should tick now: once per second from 10 down to 1, only
+ * while this player still owes orders (after sending, it is the opponent's time
+ * running out, not theirs), and never twice for the same second.
+ */
+export function shouldTick(seconds: number, sent: boolean, lastTicked: number | null): boolean {
+  return !sent && seconds >= 1 && clockUrgent(seconds) && seconds !== lastTicked;
+}

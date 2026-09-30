@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clockText, clockUrgent, secondsLeft } from './clockText';
+import { clockText, clockUrgent, secondsLeft, shouldTick } from './clockText';
 
 describe('the order clock display', () => {
   it('rounds up, and never goes below zero', () => {
@@ -19,5 +19,15 @@ describe('the order clock display', () => {
     expect(clockUrgent(11)).toBe(false);
     expect(clockUrgent(10)).toBe(true);
     expect(clockUrgent(0)).toBe(true);
+  });
+
+  it('ticks once a second from 10 to 1, only while orders are still owed', () => {
+    expect(shouldTick(11, false, null)).toBe(false);
+    expect(shouldTick(10, false, null)).toBe(true);
+    expect(shouldTick(10, false, 10)).toBe(false); // same second: once only
+    expect(shouldTick(9, false, 10)).toBe(true);
+    expect(shouldTick(1, false, 2)).toBe(true);
+    expect(shouldTick(0, false, 1)).toBe(false); // time is up: no tick at zero
+    expect(shouldTick(5, true, 6)).toBe(false); // sent: the opponent's time
   });
 });
