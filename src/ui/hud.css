@@ -178,6 +178,50 @@
   padding: 8px 14px;
 }
 
+.lobby-code { font-size: 40px; margin: 6px 0; }
+.lobby-link { word-break: break-all; }
+.lobby-waiting { margin-top: 14px; }
+/* The order clock (V1.5 Session 7): its own panel, big digits, red at <= 10 s. */
+.order-clock {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.order-clock-label {
+  font-family: var(--console-head);
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9c9683;
+}
+.order-clock-time {
+  font-family: 'Saira Stencil One', 'Impact', 'Arial Black', sans-serif;
+  font-size: 40px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: #e6e1cf;
+}
+.order-clock.urgent {
+  border-color: #ff3b30;
+}
+.order-clock.urgent .order-clock-time,
+.order-clock.urgent .order-clock-label {
+  color: #ff3b30;
+}
+.order-clock.urgent .order-clock-time {
+  animation: order-clock-pulse 1s steps(2, jump-none) infinite;
+}
+.order-clock.sent .order-clock-time {
+  color: #9c9683;
+}
+@keyframes order-clock-pulse {
+  50% { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .order-clock.urgent .order-clock-time { animation: none; }
+}
+
 .muted { color: #9c9683; }
 .own { color: #5aa9ff; }
 .enemy { color: #ff8371; }

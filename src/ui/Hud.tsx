@@ -36,6 +36,8 @@ import {
 import EventLog from './EventLog';
 import HelpButton from './HelpButton';
 import OnlinePanel from './OnlinePanel';
+import OrderClock from './OrderClock';
+import { useOrderClock } from './useOrderClock';
 import OrderPanel from './OrderPanel';
 import SelectionPanel from './SelectionPanel';
 import SoundButton from './SoundButton';
@@ -60,6 +62,7 @@ export default function Hud({ onHelp, onTitle }: Props) {
   const online = useOnline();
   const sent = online?.submitted === true;
   const cut = online !== null && online.status !== 'open';
+  useOrderClock();
 
   // `App` only mounts this once a match exists, so a null view is unreachable —
   // but `useView()` is nullable because the setup screen legitimately has no
@@ -73,6 +76,9 @@ export default function Hud({ onHelp, onTitle }: Props) {
   return (
     <div className="hud">
       <div className="column left">
+        {/* Online only, and above both branches: the clock runs through the
+            replay too, so it must not disappear while the replay plays. */}
+        <OrderClock />
         {/* While the viewer's replay plays, the board is last round's picture,
             so the order controls and the new round's status would be talking
             about a board that is not on screen (and would spoil the outcome).

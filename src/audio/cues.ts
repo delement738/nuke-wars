@@ -23,8 +23,9 @@
 import { DIVE, type Cue, type Timeline } from '../render/timeline';
 import type { MissileId } from '../sim/types';
 
-/** The four sounds, from `docs/art-direction.md` (Motion and sound). */
-export type Sound = 'click' | 'klaxon' | 'thump' | 'relay';
+/** The sounds, from `docs/art-direction.md` (Motion and sound). `tick` is the
+ *  order clock's last ten seconds (V1.5 Session 7), not a replay beat. */
+export type Sound = 'click' | 'klaxon' | 'thump' | 'relay' | 'tick';
 
 /**
  * Which sound each beat makes. A `Record` over every cue, so a new cue fails to

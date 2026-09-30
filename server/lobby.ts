@@ -14,6 +14,13 @@
 // `server.test.ts` records every byte one seat receives across a whole match and
 // checks the other seat's hidden pieces never appear in it.
 //
+// **Session 7 adds time and return.** Each round has an order clock; when it runs
+// out the server submits an empty turn for any seat still owing one, so a player
+// who has gone, or gone quiet, cannot stall the other. And a seat belongs to its
+// token: a browser that drops presents it again, retakes the seat, and is sent
+// its whole filtered picture (`snapshot`). The room outlives an empty moment by a
+// grace period so that a refresh, or a train going through a tunnel, is survivable.
+//
 // Deliberately free of sockets: a connection is anything with a `send`, so the
 // room logic is tested with plain arrays, and `./server` glues it to `ws`.
 
@@ -24,6 +31,7 @@ import { PLAYERS, opponentOf, type PlayerId } from '../src/sim/types';
 import {
   createLocalAuthority,
   type LocalAuthority,
+  type MatchUpdate,
   type MatchUpdates,
 } from '../src/state/authority';
 import { HOTSEAT_SEATS } from '../src/state/seats';
@@ -35,6 +43,7 @@ import {
   parseClientMessage,
   type ClientMessage,
   type ErrorCode,
+  type LogSlice,
   type ServerMessage,
 } from '../src/net/protocol';
 
@@ -62,10 +71,31 @@ export interface LobbyOptions {
   /** A room's map seed. Same range the client's "New map" uses. */
   seed?: () => number;
   log?: (line: string) => void;
+  /** Timing, in milliseconds. Injectable so tests need not wait. */
+  timing?: Partial<Timing>;
 }
 
+/** The clocks a lobby runs (designer's ruling, 2026-09-29: 25 s + ~5 s replay). */
+export interface Timing {
+  /** How long a round's orders may be sent, once the replay has had its time. */
+  orderMs: number;
+  /** Allowance for the previous round's replay, added when that round had events. */
+  replayMs: number;
+  /** Slack past the deadline for the browser's own auto-send to arrive. */
+  graceMs: number;
+  /** How long an empty room is kept for someone to come back to. */
+  roomGraceMs: number;
+}
+
+export const DEFAULT_TIMING: Timing = {
+  orderMs: 25_000,
+  replayMs: 5_000,
+  graceMs: 3_000,
+  roomGraceMs: 120_000,
+};
+
 interface Seat {
-  /** This seat's secret — Session 7's reconnect presents it to get back in. */
+  /** This seat's secret — a returning browser presents it to get back in. */
   token: string;
   /** The connection in the seat, or null once it has gone. */
   peer: Peer | null;
@@ -77,6 +107,18 @@ interface Room {
   map: MapData;
   seats: Partial<Record<PlayerId, Seat>>;
   authority: LocalAuthority;
+  /** Whether each seat has handed in what is owed now: its setup, then each round's orders. */
+  submitted: Record<PlayerId, boolean>;
+  /** The latest filtered view each seat was sent, and its whole log so far —
+   *  what a returning seat is rebuilt from. Only ever what was sent live. */
+  latest: Partial<Record<PlayerId, MatchUpdate>>;
+  log: Record<PlayerId, LogSlice[]>;
+  /** When this round's orders are due (what browsers count down to), or null. */
+  deadline: number | null;
+  /** Fires at the deadline plus grace: submits empty orders for absent seats. */
+  clock: ReturnType<typeof setTimeout> | null;
+  /** Fires when the room has stood empty for the grace period. */
+  reaper: ReturnType<typeof setTimeout> | null;
 }
 
 /**
@@ -88,6 +130,7 @@ const NO_CPU = 'medium';
 export function createLobby(options: LobbyOptions = {}): Lobby {
   const seedOf = options.seed ?? (() => randomInt(1, 100000));
   const log = options.log ?? (() => {});
+  const timing: Timing = { ...DEFAULT_TIMING, ...options.timing };
   const rooms = new Map<string, Room>();
 
   function newCode(): string {
@@ -100,15 +143,70 @@ export function createLobby(options: LobbyOptions = {}): Lobby {
     }
   }
 
+  function isEmpty(room: Room): boolean {
+    return PLAYERS.every((player) => !room.seats[player]?.peer);
+  }
+
+  /** Stop the order clock. */
+  function stopClock(room: Room): void {
+    if (room.clock) clearTimeout(room.clock);
+    room.clock = null;
+    room.deadline = null;
+  }
+
+  /** Tell each present seat how long is left, or that no clock is running. */
+  function sendClock(room: Room): void {
+    const msLeft = room.deadline === null ? null : Math.max(0, room.deadline - Date.now());
+    for (const player of PLAYERS) room.seats[player]?.peer?.send({ type: 'timer', msLeft });
+  }
+
+  /**
+   * Start the order clock for the round now awaiting orders. The browsers are
+   * told the deadline; the server waits a little longer than that, so a browser
+   * that sends its drafted orders the instant its clock hits zero is not beaten
+   * to it by an empty turn.
+   */
+  function startClock(room: Room, replayAllowance: number): void {
+    stopClock(room);
+    room.deadline = Date.now() + replayAllowance + timing.orderMs;
+    room.clock = setTimeout(() => expire(room), room.deadline - Date.now() + timing.graceMs);
+  }
+
+  /** Time is up: whoever still owes orders sends an empty turn (everything holds). */
+  function expire(room: Room): void {
+    room.clock = null;
+    try {
+      for (const player of PLAYERS) {
+        if (room.submitted[player]) continue;
+        room.submitted[player] = true;
+        log(`room ${room.id}: ${player} timed out`);
+        room.authority.submitOrders(player, []);
+      }
+    } catch (error) {
+      log(`room ${room.id}: ${String(error)}`);
+    }
+  }
+
   /**
    * Hand each player their own update, and nobody else's. A seat whose browser
-   * has gone misses it; Session 7's reconnect is what gives it back.
+   * has gone misses it live; `latest` and `log` are what give it back on return.
    */
   function route(room: Room, updates: MatchUpdates): void {
     for (const player of PLAYERS) {
       const update = updates[player];
-      if (update) room.seats[player]?.peer?.send({ type: 'update', update });
+      if (!update) continue;
+      room.latest[player] = update;
+      if (update.events.length > 0) {
+        room.log[player].push({ round: update.round, events: [...update.events] });
+      }
+      room.submitted[player] = false;
+      room.seats[player]?.peer?.send({ type: 'update', update });
     }
+    const over = PLAYERS.some((player) => updates[player]?.view.phase === 'GAME_OVER');
+    if (over) stopClock(room);
+    else if (isEmpty(room)) stopClock(room);
+    else startClock(room, PLAYERS.some((p) => (updates[p]?.events.length ?? 0) > 0) ? timing.replayMs : 0);
+    sendClock(room);
   }
 
   function openRoom(): Room {
@@ -116,7 +214,19 @@ export function createLobby(options: LobbyOptions = {}): Lobby {
     const map = generateMap(undefined, undefined, seed);
     // `room` is declared before the authority so the update callback can close
     // over it; the authority never calls back until someone submits.
-    const room: Room = { id: newCode(), seed, map, seats: {}, authority: null! };
+    const room: Room = {
+      id: newCode(),
+      seed,
+      map,
+      seats: {},
+      authority: null!,
+      submitted: { p1: false, p2: false },
+      latest: {},
+      log: { p1: [], p2: [] },
+      deadline: null,
+      clock: null,
+      reaper: null,
+    };
     room.authority = createLocalAuthority(
       { map, seed, seats: HOTSEAT_SEATS, difficulty: NO_CPU },
       (updates) => route(room, updates),
@@ -135,11 +245,15 @@ export function createLobby(options: LobbyOptions = {}): Lobby {
     }
 
     /** Sit this connection in `player`'s seat and tell both sides. */
-    function sit(target: Room, player: PlayerId): void {
-      const token = randomUUID();
+    function sit(target: Room, player: PlayerId, resumed: boolean): void {
+      const existing = target.seats[player];
+      const token = existing?.token ?? randomUUID();
       target.seats[player] = { token, peer };
       room = target;
       seat = player;
+      // Someone is here again: the room is no longer waiting to be reaped.
+      if (target.reaper) clearTimeout(target.reaper);
+      target.reaper = null;
       peer.send({
         type: 'joined',
         room: target.id,
@@ -147,10 +261,32 @@ export function createLobby(options: LobbyOptions = {}): Lobby {
         token,
         seed: target.seed,
         map: target.map,
+        resumed,
+        submitted: target.submitted[player],
       });
+      const latest = target.latest[player];
+      if (resumed && latest) {
+        peer.send({
+          type: 'snapshot',
+          view: latest.view,
+          log: target.log[player].map((slice) => ({ ...slice, events: [...slice.events] })),
+          finalReveal: latest.finalReveal ? [...latest.finalReveal] : null,
+        });
+      }
       const other = target.seats[opponentOf(player)];
       peer.send({ type: 'opponent', present: Boolean(other?.peer) });
       other?.peer?.send({ type: 'opponent', present: true });
+      // A match whose clock stopped because the room emptied starts a fresh one
+      // for whoever came back; otherwise the running clock is simply reported.
+      if (latest && latest.view.phase !== 'GAME_OVER' && target.deadline === null) {
+        startClock(target, 0);
+        sendClock(target);
+      } else {
+        peer.send({
+          type: 'timer',
+          msLeft: target.deadline === null ? null : Math.max(0, target.deadline - Date.now()),
+        });
+      }
     }
 
     function enter(message: Extract<ClientMessage, { type: 'create' | 'join' }>): void {
@@ -158,16 +294,23 @@ export function createLobby(options: LobbyOptions = {}): Lobby {
       if (message.version !== PROTOCOL_VERSION) return fail('VERSION_MISMATCH');
 
       if (message.type === 'create') {
-        sit(openRoom(), 'p1');
+        sit(openRoom(), 'p1', false);
         return;
       }
       const target = rooms.get(normaliseRoomCode(message.room));
       if (!target) return fail('NO_SUCH_ROOM');
+      // A seat belongs to whoever holds its token. A browser coming back takes
+      // it over even if the server has not yet noticed the old connection die
+      // (a refresh, a wifi change): the old one is simply replaced.
+      if (message.token) {
+        const mine = PLAYERS.find((player) => target.seats[player]?.token === message.token);
+        if (mine) return sit(target, mine, true);
+      }
       // A seat stays reserved after its browser leaves: it belongs to whoever
       // holds the token, not to the next person with the link.
       const free = PLAYERS.find((player) => !target.seats[player]);
       if (!free) return fail('ROOM_FULL');
-      sit(target, free);
+      sit(target, free, false);
     }
 
     function play(message: Exclude<ClientMessage, { type: 'create' | 'join' }>): void {
@@ -180,12 +323,14 @@ export function createLobby(options: LobbyOptions = {}): Lobby {
           // `startMatch`: that runs when the *last* setup arrives and would
           // blame whichever player happened to submit second.
           if (!validateSetup(map, seat, message.setup).legal) return fail('ILLEGAL_SETUP');
+          room.submitted[seat] = true;
           authority.submitSetup(seat, message.setup);
           return;
         case 'orders':
           // Illegal orders need no check here: `resolve()` validates every one
           // against the true board and silently drops what fails, exactly as
           // it does for a local game (gotcha 13).
+          room.submitted[seat] = true;
           authority.submitOrders(seat, message.orders);
           return;
         case 'resign':
@@ -213,13 +358,21 @@ export function createLobby(options: LobbyOptions = {}): Lobby {
       close() {
         if (!room || !seat) return;
         const mine = room.seats[seat];
-        if (mine) mine.peer = null;
-        room.seats[opponentOf(seat)]?.peer?.send({ type: 'opponent', present: false });
-        // With nobody left in it, nobody can finish it (reconnect is Session 7,
-        // which will keep an empty room alive for a grace period instead).
-        if (PLAYERS.every((player) => !room!.seats[player]?.peer)) {
-          rooms.delete(room.id);
-          log(`room ${room.id} closed; ${rooms.size} open`);
+        // A seat already retaken by a newer connection is no longer ours to
+        // empty, and its opponent has nothing to be told.
+        if (mine && mine.peer === peer) {
+          mine.peer = null;
+          room.seats[opponentOf(seat)]?.peer?.send({ type: 'opponent', present: false });
+        }
+        const closing = room;
+        // With nobody left in it the clock stops (nobody is there to be timed)
+        // and the room is kept for a grace period, so a player can come back.
+        if (isEmpty(closing) && !closing.reaper) {
+          stopClock(closing);
+          closing.reaper = setTimeout(() => {
+            rooms.delete(closing.id);
+            log(`room ${closing.id} closed; ${rooms.size} open`);
+          }, timing.roomGraceMs);
         }
         room = null;
         seat = null;

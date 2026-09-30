@@ -60,6 +60,8 @@ describe('parseClientMessage', () => {
     ['an unknown type', json({ type: 'teleport' })],
     ['create without a version', json({ type: 'create' })],
     ['join without a room', json({ type: 'join', version: 1 })],
+    ['join with a numeric token', json({ type: 'join', version: 2, room: 'ABC234', token: 5 })],
+    ['join with an enormous token', json({ type: 'join', version: 2, room: 'ABC234', token: 'x'.repeat(500) })],
     ['a fractional hex', json({ type: 'setup', setup: [{ kind: 'bunker', hex: { q: 1.5, r: 2 } }] })],
     ['a string hex', json({ type: 'setup', setup: [{ kind: 'bunker', hex: { q: '1', r: 2 } }] })],
     ['a huge hex', json({ type: 'setup', setup: [{ kind: 'bunker', hex: { q: 1e9, r: 2 } }] })],
@@ -70,6 +72,12 @@ describe('parseClientMessage', () => {
     ['orders that are not a list', json({ type: 'orders', orders: {} })],
   ])('refuses %s', (_label, raw) => {
     expect(parseClientMessage(raw)).toBeNull();
+  });
+
+  it('reads a join with the token of a seat to take back, and drops fields it does not know', () => {
+    expect(
+      parseClientMessage(json({ type: 'join', version: 2, room: 'ABC234', token: 'abc-123', player: 'p2' })),
+    ).toEqual({ type: 'join', version: 2, room: 'ABC234', token: 'abc-123' });
   });
 
   it('refuses a list longer than an honest client could send', () => {

@@ -45,7 +45,8 @@ import {
   type MatchAuthority,
   type MatchUpdates,
 } from './authority';
-import { connectOnline, type Joined } from '../net/connection';
+import { connectOnline, type Joined, type Snapshot } from '../net/connection';
+import { clearSeat, saveSeat } from '../net/session';
 import type { ErrorCode } from '../net/protocol';
 import type { CpuDifficulty } from './cpu';
 import {
@@ -144,8 +145,9 @@ export interface Replay {
  * as `MatchUpdate`s — it is the connection, the room and the waiting.
  */
 export interface OnlineState {
-  /** `connecting` until the server gives us a seat; `closed` once the link is gone. */
-  status: 'connecting' | 'open' | 'closed';
+  /** `connecting` until the server gives us a seat; `reconnecting` while a dropped
+   *  link is being retried (the board is locked meanwhile); `closed` once it is gone for good. */
+  status: 'connecting' | 'open' | 'reconnecting' | 'closed';
   /** The room code, once joined — what the shareable link carries. */
   room: string | null;
   /** Which player this browser is, once joined. */
@@ -163,6 +165,12 @@ export interface OnlineState {
   submitted: boolean;
   /** The last thing the server refused, if any. */
   error: ErrorCode | null;
+  /**
+   * When this round's orders are due, as a time on *this* browser's clock, or
+   * null when no clock runs (setup, or the match is over). The server sends a
+   * duration (`msLeft`), so a wrong computer clock cannot skew the countdown.
+   */
+  timerEndsAt: number | null;
 }
 
 /**
@@ -560,6 +568,7 @@ function appendLog(
  * cleared, because none of it means anything on a new board.
  */
 export function newMatch(seed: number = DEFAULT_SEED): void {
+  clearSeat();
   // A new board is a new, local game: an online match's board is the server's,
   // so rolling one here leaves the room (and "back to title" goes through here).
   disconnect();
@@ -613,13 +622,17 @@ function setOnline(patch: Partial<OnlineState>): void {
 
 /**
  * Play online: connect to the server at `url` and open a new room (`room`
- * null) or take the free seat in `room` — the code in a shared link.
+ * null) or take the free seat in `room` — the code in a shared link. With the
+ * `token` this tab saved for that room, it takes its old seat back instead
+ * (a reload, or a restart after a crash).
  *
  * Nothing is playable until the server answers with a seat and a board
  * (`joined`); from then on it is the setup screen as usual, with the setup going
- * to the server when the player commits it (`beginMatch`).
+ * to the server when the player commits it (`beginMatch`). If the link drops
+ * mid-match the connection retries on its own and the board stays locked until
+ * the seat is back (`reconnecting`).
  */
-export function playOnline(url: string, room: string | null): void {
+export function playOnline(url: string, room: string | null, token?: string): void {
   // Out of any hotseat first, so the fresh board below opens without a handoff.
   matchStore.setState({ seats: SOLO_SEATS });
   newMatch(matchStore.getState().seed);
@@ -632,33 +645,58 @@ export function playOnline(url: string, room: string | null): void {
       opponentJoined: false,
       submitted: false,
       error: null,
+      timerEndsAt: null,
     },
   });
 
-  const remote = connectOnline(url, room, {
+  const remote = connectOnline(url, { room, token }, {
     joined: onJoined,
     opponent: (present) =>
       setOnline(present ? { opponentPresent: true, opponentJoined: true } : { opponentPresent: false }),
     update(update) {
       const seat = matchStore.getState().online?.seat;
       if (!seat) return;
-      setOnline({ submitted: false, error: null });
+      setOnline({ submitted: false, error: null, timerEndsAt: null });
       receive({ [seat]: update });
+      if (update.view.phase === 'GAME_OVER') clearSeat();
       submitIfNothingToOrder();
     },
+    snapshot: onSnapshot,
+    timer: (msLeft) => setOnline({ timerEndsAt: msLeft === null ? null : Date.now() + msLeft }),
     error(code) {
       // A refused setup is the one refusal the player can fix, so it unlocks
-      // the board again. The rest end the attempt to play.
-      setOnline(code === 'ILLEGAL_SETUP' ? { error: code, submitted: false } : { error: code });
+      // the board again. The rest end the attempt to play — and a room that is
+      // gone or full has nothing left to come back to.
+      if (code === 'ILLEGAL_SETUP') setOnline({ error: code, submitted: false });
+      else {
+        setOnline({ error: code });
+        if (code === 'NO_SUCH_ROOM' || code === 'ROOM_FULL') clearSeat();
+      }
     },
-    closed: () => setOnline({ status: 'closed' }),
+    reconnecting: () => setOnline({ status: 'reconnecting', opponentPresent: false, timerEndsAt: null }),
+    closed: () => setOnline({ status: 'closed', timerEndsAt: null }),
   });
   authority = remote;
   connection = remote;
 }
 
-/** The server has given us a seat and the board: a fresh setup screen on it. */
-function onJoined({ room, seat, seed, map }: Joined): void {
+/**
+ * The server has given us a seat and the board.
+ *
+ * Three cases. **First time**: a fresh setup screen on the server's board.
+ * **Reload** (`resumed`, but this tab holds nothing): the same fresh screen,
+ * and a `snapshot` follows to rebuild the match. **Reconnect** (`resumed`, and
+ * this tab still holds this seat's drafts and log): nothing is reset, so the
+ * player's half-drafted orders survive a wobble in the connection.
+ */
+function onJoined({ room, seat, token, seed, map, resumed, submitted }: Joined): void {
+  saveSeat({ room, token });
+  const { online } = matchStore.getState();
+  const reconnect = resumed && online?.seat === seat && online.room === room;
+  if (reconnect) {
+    setOnline({ status: 'open', submitted, error: null });
+    return;
+  }
   matchStore.setState({
     seed,
     map,
@@ -672,7 +710,65 @@ function onJoined({ room, seat, seed, map }: Joined): void {
     hovered: null,
     orderMode: null,
   });
-  setOnline({ status: 'open', room, seat });
+  setOnline({ status: 'open', room, seat, submitted, error: null });
+}
+
+/**
+ * A returning seat's whole picture, from the server. A brief wobble that
+ * missed nothing changes nothing here; one that missed rounds replaces the view
+ * and the log outright — there is no replay for rounds the player was not there
+ * to watch, and the log is complete regardless.
+ */
+function onSnapshot(snap: Snapshot): void {
+  const state = matchStore.getState();
+  const seat = state.online?.seat;
+  if (!seat) return;
+  // Whoever else was ever here is, by definition, someone who joined.
+  setOnline({ opponentJoined: true });
+  const current = state.views?.[seat];
+  if (current && current.round === snap.view.round && current.phase === snap.view.phase) return;
+
+  const log: LogEntry[] = snap.log.flatMap((slice) =>
+    slice.events.map((event) => ({ round: slice.round, event })),
+  );
+  // A match that ended while we were away still gets its end screen, from the
+  // last round's own events, exactly as if we had been watching.
+  const last = snap.log.at(-1);
+  const over = snap.view.phase === 'GAME_OVER';
+  matchStore.setState({
+    views: { ...state.views, [seat]: snap.view },
+    logs: { ...state.logs, [seat]: log },
+    reports: {
+      ...state.reports,
+      [seat]:
+        over && last ? queueReports([], last.events, seat, snap.view.units, last.round) : [],
+    },
+    replay: { ...state.replay, [seat]: null },
+    finalReveal: snap.finalReveal
+      ? { ...state.finalReveal, [seat]: snap.finalReveal }
+      : state.finalReveal,
+    draft: { p1: EMPTY_DRAFT, p2: EMPTY_DRAFT },
+    orderMode: null,
+    selected: null,
+    selectedUnitId: null,
+    hovered: null,
+    handoff: null,
+  });
+  if (over) clearSeat();
+  else if (!matchStore.getState().online?.submitted) submitIfNothingToOrder();
+}
+
+/**
+ * The order clock ran out on this browser: send what is drafted, exactly as
+ * the Send orders button would (unordered units hold). The server's own clock
+ * is a little longer, so this normally lands first; if this browser is closed
+ * or cut off, the server sends an empty turn instead.
+ */
+export function orderTimeExpired(): void {
+  const { online } = matchStore.getState();
+  if (!online || online.status !== 'open' || online.submitted) return;
+  if (!inPlay()) return;
+  resolveRound();
 }
 
 /**

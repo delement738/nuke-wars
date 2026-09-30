@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { generateMap, makeRng } from '../src/sim/map';
 import { PLAYERS, type PlayerId, type VisibleEvent } from '../src/sim/types';
 import { createLocalAuthority, setupRng, type MatchUpdate } from '../src/state/authority';
@@ -132,7 +132,8 @@ describe('rooms and seats', () => {
     expect(last(c, 'error')!.code).toBe('ROOM_FULL');
 
     b.connection.close();
-    expect(lobby.roomCount()).toBe(0);
+    // Not closed at once: someone may come back (Session 7). See 'reconnecting'.
+    expect(lobby.roomCount()).toBe(1);
   });
 });
 
@@ -291,4 +292,234 @@ describe('what goes over the wire (spec §6)', () => {
     expect(all.slice(0, -1).every((u) => u.finalReveal === null)).toBe(true);
     expect(all.at(-1)!.finalReveal).not.toBeNull();
   }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// V1.5 Session 7 — the order clock, reconnecting and the empty-room grace
+// ---------------------------------------------------------------------------
+
+const TIMING = { orderMs: 25_000, replayMs: 5_000, graceMs: 3_000, roomGraceMs: 120_000 };
+
+/** A started match in a room with fake timers running: both setups are in. */
+function startedRoom() {
+  const lobby = createLobby({ seed: () => SEED, timing: TIMING });
+  const a = client(lobby);
+  a.send({ type: 'create', version: PROTOCOL_VERSION });
+  const joinedA = last(a, 'joined')!;
+  const b = client(lobby);
+  b.send({ type: 'join', version: PROTOCOL_VERSION, room: joinedA.room });
+  const joinedB = last(b, 'joined')!;
+  a.send({ type: 'setup', setup: autoSetup('p1') });
+  b.send({ type: 'setup', setup: autoSetup('p2') });
+  return { lobby, a, b, code: joinedA.room, tokenA: joinedA.token, tokenB: joinedB.token };
+}
+
+describe('the order clock', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('starts when the match does, and tells both seats how long they have', () => {
+    vi.useFakeTimers();
+    const { a, b } = startedRoom();
+    expect(last(a, 'timer')).toEqual({ type: 'timer', msLeft: 25_000 });
+    expect(last(b, 'timer')).toEqual({ type: 'timer', msLeft: 25_000 });
+  });
+
+  it('a round with events gets the replay allowance on top', () => {
+    vi.useFakeTimers();
+    const { a, b } = startedRoom();
+    a.send({ type: 'orders', orders: [] });
+    b.send({ type: 'orders', orders: [] });
+    // An all-hold round can be silent; find whichever gave events.
+    const busy = updates(a).at(-1)!.events.length > 0 || updates(b).at(-1)!.events.length > 0;
+    expect(last(a, 'timer')!.msLeft).toBe(busy ? 30_000 : 25_000);
+  });
+
+  it('submits an empty turn for a seat that never sends, and resolves the round', () => {
+    vi.useFakeTimers();
+    const { a, b } = startedRoom();
+    const before = updates(a).length;
+    a.send({ type: 'orders', orders: [] });
+    expect(updates(a)).toHaveLength(before); // still waiting on b
+
+    vi.advanceTimersByTime(25_000 + 3_000 - 1);
+    expect(updates(a)).toHaveLength(before);
+    vi.advanceTimersByTime(1);
+    expect(updates(a)).toHaveLength(before + 1);
+    expect(updates(b)).toHaveLength(before + 1);
+    expect(updates(a).at(-1)!.round).toBe(1);
+  });
+
+  it('both seats silent: an empty round for both, and the clock runs again', () => {
+    vi.useFakeTimers();
+    const { a } = startedRoom();
+    const before = updates(a).length;
+    vi.advanceTimersByTime(28_000);
+    expect(updates(a)).toHaveLength(before + 1);
+    expect(last(a, 'timer')!.msLeft).toBeGreaterThanOrEqual(25_000);
+  });
+
+  it('does not run in the setup phase, and stops when the match ends', () => {
+    vi.useFakeTimers();
+    const lobby = createLobby({ seed: () => SEED, timing: TIMING });
+    const a = client(lobby);
+    a.send({ type: 'create', version: PROTOCOL_VERSION });
+    vi.advanceTimersByTime(600_000);
+    expect(a.inbox.some((m) => m.type === 'update')).toBe(false);
+
+    const { a: a2, b: b2 } = startedRoom();
+    a2.send({ type: 'resign' });
+    expect(last(a2, 'timer')).toEqual({ type: 'timer', msLeft: null });
+    expect(last(b2, 'timer')).toEqual({ type: 'timer', msLeft: null });
+    const n = updates(a2).length;
+    vi.advanceTimersByTime(600_000);
+    expect(updates(a2)).toHaveLength(n);
+  });
+});
+
+describe('reconnecting', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('a browser that presents its token takes its seat back and is told it is resumed', () => {
+    vi.useFakeTimers();
+    const { lobby, a, b, code, tokenA } = startedRoom();
+    a.connection.close();
+    expect(last(b, 'opponent')!.present).toBe(false);
+
+    const a2 = client(lobby);
+    a2.send({ type: 'join', version: PROTOCOL_VERSION, room: code, token: tokenA });
+    const joined = last(a2, 'joined')!;
+    expect(joined.seat).toBe('p1');
+    expect(joined.token).toBe(tokenA);
+    expect(joined.resumed).toBe(true);
+    expect(last(b, 'opponent')!.present).toBe(true);
+  });
+
+  it('gets its view and whole log back, equal to what it was sent live', () => {
+    vi.useFakeTimers();
+    const { lobby, a, b, code, tokenA } = startedRoom();
+    for (let i = 0; i < 3; i++) {
+      a.send({ type: 'orders', orders: [] });
+      b.send({ type: 'orders', orders: [] });
+    }
+    const live = updates(a);
+    a.connection.close();
+
+    const a2 = client(lobby);
+    a2.send({ type: 'join', version: PROTOCOL_VERSION, room: code, token: tokenA });
+    const snap = last(a2, 'snapshot')!;
+    expect(snap.view).toEqual(live.at(-1)!.view);
+    const liveLog = live.filter((u) => u.events.length > 0).map((u) => ({ round: u.round, events: u.events }));
+    expect(snap.log).toEqual(liveLog);
+  });
+
+  it('misses no round: what resolved while it was away is in the snapshot', () => {
+    vi.useFakeTimers();
+    const { lobby, a, b, code, tokenA } = startedRoom();
+    a.connection.close();
+    b.send({ type: 'orders', orders: [] });
+    vi.advanceTimersByTime(28_000); // a's seat times out, the round resolves
+    const a2 = client(lobby);
+    a2.send({ type: 'join', version: PROTOCOL_VERSION, room: code, token: tokenA });
+    expect(last(a2, 'snapshot')!.view.round).toBe(updates(b).at(-1)!.view.round);
+    expect(last(a2, 'snapshot')!.view.round).toBeGreaterThan(1);
+  });
+
+  it('reports whether the seat had already sent this round\'s orders', () => {
+    vi.useFakeTimers();
+    const { lobby, a, code, tokenA } = startedRoom();
+    a.send({ type: 'orders', orders: [] });
+    a.connection.close();
+    const a2 = client(lobby);
+    a2.send({ type: 'join', version: PROTOCOL_VERSION, room: code, token: tokenA });
+    expect(last(a2, 'joined')!.submitted).toBe(true);
+  });
+
+  it('replaces a connection the server has not noticed dying, and the old one cannot unseat it', () => {
+    vi.useFakeTimers();
+    const { lobby, a, b, code, tokenA } = startedRoom();
+    const a2 = client(lobby);
+    a2.send({ type: 'join', version: PROTOCOL_VERSION, room: code, token: tokenA });
+    expect(last(a2, 'joined')!.seat).toBe('p1');
+    const opponentMessages = b.inbox.filter((m) => m.type === 'opponent').length;
+    a.connection.close(); // the stale one finally dies
+    expect(b.inbox.filter((m) => m.type === 'opponent')).toHaveLength(opponentMessages);
+    b.send({ type: 'orders', orders: [] });
+    a2.send({ type: 'orders', orders: [] });
+    expect(updates(a2)).toHaveLength(1); // the round, live — the opening came as the snapshot
+  });
+
+  it('a wrong token does not steal a seat, and gets no snapshot', () => {
+    vi.useFakeTimers();
+    const { lobby, code } = startedRoom();
+    const c = client(lobby);
+    c.send({ type: 'join', version: PROTOCOL_VERSION, room: code, token: 'nope' });
+    expect(last(c, 'error')!.code).toBe('ROOM_FULL');
+    expect(last(c, 'snapshot')).toBeUndefined();
+  });
+
+  it("a returning seat's reveal is the enemy's pieces, from its own snapshot", () => {
+    vi.useFakeTimers();
+    const { lobby, a, b, code, tokenB } = startedRoom();
+    a.send({ type: 'resign' });
+    const b2 = client(lobby);
+    b2.send({ type: 'join', version: PROTOCOL_VERSION, room: code, token: tokenB });
+    // b's snapshot is b's view: its reveal is the enemy's pieces, never its own.
+    const snap = last(b2, 'snapshot')!;
+    expect(snap.finalReveal!.every((u) => u.owner === 'p1')).toBe(true);
+    expect(snap.view).toEqual(updates(b).at(-1)!.view);
+  });
+
+  it('the snapshot carries no enemy unit id that the live updates did not', () => {
+    vi.useFakeTimers();
+    const { lobby, a, b, code, tokenA } = startedRoom();
+    for (let i = 0; i < 4; i++) {
+      a.send({ type: 'orders', orders: [] });
+      b.send({ type: 'orders', orders: [] });
+    }
+    const liveWire = a.wire.join('\n');
+    a.connection.close();
+    const a2 = client(lobby);
+    a2.send({ type: 'join', version: PROTOCOL_VERSION, room: code, token: tokenA });
+    const ids = new Set(liveWire.match(/p2-[a-z]+-\d+/g) ?? []);
+    const snapIds = a2.wire.join('\n').match(/p2-[a-z]+-\d+/g) ?? [];
+    for (const id of snapIds) expect(ids.has(id)).toBe(true);
+  });
+
+  it('an empty room is kept for the grace period, then closed; coming back saves it', () => {
+    vi.useFakeTimers();
+    const { lobby, a, b, code, tokenA } = startedRoom();
+    a.connection.close();
+    b.connection.close();
+    expect(lobby.roomCount()).toBe(1);
+    vi.advanceTimersByTime(119_000);
+    expect(lobby.roomCount()).toBe(1);
+
+    const a2 = client(lobby);
+    a2.send({ type: 'join', version: PROTOCOL_VERSION, room: code, token: tokenA });
+    expect(last(a2, 'joined')!.resumed).toBe(true);
+    vi.advanceTimersByTime(600_000 - 1);
+    expect(lobby.roomCount()).toBe(1);
+    // ...and the clock restarted for the one who came back.
+    expect(last(a2, 'timer')!.msLeft).not.toBeNull();
+  });
+
+  it('a room nobody returns to closes after the grace period', () => {
+    vi.useFakeTimers();
+    const { lobby, a, b } = startedRoom();
+    a.connection.close();
+    b.connection.close();
+    vi.advanceTimersByTime(120_000);
+    expect(lobby.roomCount()).toBe(0);
+  });
+
+  it('no clock runs in an empty room, so nobody plays a match out alone', () => {
+    vi.useFakeTimers();
+    const { lobby, a, b } = startedRoom();
+    a.connection.close();
+    b.connection.close();
+    const n = updates(a).length;
+    vi.advanceTimersByTime(100_000);
+    expect(updates(a)).toHaveLength(n);
+    expect(lobby.roomCount()).toBe(1);
+  });
 });

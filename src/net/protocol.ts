@@ -22,7 +22,7 @@ import type { MatchUpdate } from '../state/authority';
 import type { MapData } from '../sim/map';
 import type { Hex } from '../sim/hex';
 import type { Placement, PlayerSetup } from '../sim/setup';
-import type { Order, PlayerId } from '../sim/types';
+import type { Order, PlayerId, Unit, VisibleEvent, VisibleGameState } from '../sim/types';
 
 /**
  * Bumped whenever a message changes shape. The client (Vercel) and the server
@@ -30,7 +30,7 @@ import type { Order, PlayerId } from '../sim/types';
  * can be newer than the other; a mismatch is refused up front with a clear
  * error instead of failing somewhere strange mid-match.
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** A room code: short enough to read aloud, no 0/O or 1/I to confuse. */
 export const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -43,8 +43,13 @@ export const ROOM_CODE_LENGTH = 6;
 export type ClientMessage =
   /** Open a new room and take its first seat. */
   | { type: 'create'; version: number }
-  /** Take the free seat in an existing room (the link someone shared). */
-  | { type: 'join'; version: number; room: string }
+  /**
+   * Take the free seat in an existing room (the link someone shared) — or, with
+   * the `token` a `joined` message once gave this browser, take back the seat it
+   * held (V1.5 Session 7's reconnect). A token that matches no seat is ignored
+   * and the join is an ordinary one.
+   */
+  | { type: 'join'; version: number; room: string; token?: string }
   /** `MatchAuthority.submitSetup` for this connection's seat. */
   | { type: 'setup'; setup: PlayerSetup }
   /** `MatchAuthority.submitOrders` for this connection's seat. */
@@ -70,11 +75,20 @@ export type ErrorCode =
   | 'ALREADY_IN_ROOM' // a second `create`/`join` on one connection
   | 'ILLEGAL_SETUP'; // the setup broke a placement rule (spec §12)
 
+/** One resolved round's worth of a seat's filtered events, as its log keeps them. */
+export interface LogSlice {
+  round: number;
+  events: VisibleEvent[];
+}
+
 export type ServerMessage =
   /**
    * You are in. `seat` is who you play; `seed` and `map` are the board — public
    * from the first frame (spec §11), and the same for both seats. `token` is
-   * this seat's secret, kept by the browser for Session 7's reconnect.
+   * this seat's secret, kept by the browser so it can take the seat back.
+   * `resumed` is true when the token brought a returning browser back into its
+   * seat; `submitted` is whether the seat has already handed in what it owes
+   * right now (its setup, or this round's orders).
    */
   | {
       type: 'joined';
@@ -83,7 +97,28 @@ export type ServerMessage =
       token: string;
       seed: number;
       map: MapData;
+      resumed: boolean;
+      submitted: boolean;
     }
+  /**
+   * A returning seat's whole picture, sent right after `joined` once a match is
+   * running: the board as this seat may see it now and this seat's whole event
+   * log. Built from the same filtered updates the seat was sent live, and
+   * nothing else, so a reconnect can never show more than playing on would have.
+   */
+  | {
+      type: 'snapshot';
+      view: VisibleGameState;
+      log: LogSlice[];
+      finalReveal: Unit[] | null;
+    }
+  /**
+   * The order clock: how long this round's orders may still be sent, in
+   * milliseconds, or null when no clock is running (setup, or the match is
+   * over). Durations rather than a wall-clock time, so a browser whose clock is
+   * wrong still counts down correctly.
+   */
+  | { type: 'timer'; msLeft: number | null }
   /** Whether the other seat currently has someone in it. */
   | { type: 'opponent'; present: boolean }
   /** What the authority told this seat — filtered, and for this seat only. */
@@ -190,12 +225,20 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return Number.isInteger(data.version)
         ? { type: 'create', version: data.version as number }
         : null;
-    case 'join':
-      return Number.isInteger(data.version) &&
-        typeof data.room === 'string' &&
-        data.room.length <= LIMITS.maxIdLength
-        ? { type: 'join', version: data.version as number, room: data.room }
+    case 'join': {
+      if (
+        !Number.isInteger(data.version) ||
+        typeof data.room !== 'string' ||
+        data.room.length > LIMITS.maxIdLength
+      ) {
+        return null;
+      }
+      const base = { type: 'join' as const, version: data.version as number, room: data.room };
+      if (data.token === undefined) return base;
+      return typeof data.token === 'string' && data.token.length <= LIMITS.maxIdLength * 2
+        ? { ...base, token: data.token }
         : null;
+    }
     case 'setup': {
       const setup = parseList(data.setup, LIMITS.maxPlacements, parsePlacement);
       return setup ? { type: 'setup', setup } : null;
@@ -228,6 +271,8 @@ export function parseServerMessage(raw: string): ServerMessage | null {
     case 'joined':
     case 'opponent':
     case 'update':
+    case 'snapshot':
+    case 'timer':
     case 'error':
       return data as ServerMessage;
     default:

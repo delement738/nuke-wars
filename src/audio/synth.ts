@@ -66,6 +66,8 @@ export function playSound(sound: Sound): void {
       return thump(c, master, t);
     case 'relay':
       return relay(c, master, t);
+    case 'tick':
+      return tick(c, master, t);
     default: {
       const never: never = sound;
       return never;
@@ -177,6 +179,22 @@ function relay(c: AudioContext, out: AudioNode, t: number): void {
     blip.start(t + at);
     blip.stop(t + at + 0.02);
   }
+}
+
+/**
+ * The order clock's last seconds: a mechanical clock tick, a short woody knock
+ * with a bright edge — lower and rounder than the teletype, so a player never
+ * mistakes the clock for their own button presses.
+ */
+function tick(c: AudioContext, out: AudioNode, t: number): void {
+  const knock = c.createOscillator();
+  knock.type = 'sine';
+  knock.frequency.setValueAtTime(1300, t);
+  knock.frequency.exponentialRampToValueAtTime(700, t + 0.04);
+  knock.connect(envelope(c, out, t, 0.3, 0.001, 0.06));
+  knock.start(t);
+  knock.stop(t + 0.08);
+  noiseBurst(c, envelope(c, out, t, 0.25, 0.001, 0.01), t, 0.015, 'highpass', 5000, 0.7);
 }
 
 /**
