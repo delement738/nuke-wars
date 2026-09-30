@@ -76,6 +76,9 @@ export default function Hud({ onHelp, onTitle }: Props) {
   return (
     <div className="hud">
       <div className="column left">
+        {/* Online only, and above both branches: the clock runs through the
+            replay too, so it must not disappear while the replay plays. */}
+        <OrderClock />
         {/* While the viewer's replay plays, the board is last round's picture,
             so the order controls and the new round's status would be talking
             about a board that is not on screen (and would spoil the outcome).
@@ -121,7 +124,6 @@ export default function Hud({ onHelp, onTitle }: Props) {
                   : 'DEAD HAND — the enemy fires a final volley.'
                 : 'Order phase.'}
           </p>
-          <OrderClock />
 
           {view.outcome && (
             <p className="outcome">{describeOutcome(view.outcome, viewer)}</p>
