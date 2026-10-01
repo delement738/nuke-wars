@@ -58,7 +58,7 @@ All messages are JSON text frames. `PROTOCOL_VERSION` is currently **3** (Sessio
 - A seat with nothing to order (the opponent's dead-hand round, spec §3) sends `[]` automatically on receiving the update, or the round would wait on it forever.
 
 ## The order clock (Session 7)
-- **25 s to order, plus 5 s for the replay** when the last round had anything in it, so a busy round gives 30 s and a silent one 25 s. It starts when the match starts and after every resolution; there is none in setup (a setup is the ready-up: "Send setup", then wait) and it stops at game over.
+- **35 s to order, plus 5 s for the replay** when the last round had anything in it, so a busy round gives 40 s and a silent one 35 s (25 s until 2026-09-30). It starts when the match starts and after every resolution; there is none in setup (a setup is the ready-up: "Send setup", then wait) and it stops at game over.
 - **The browser sends first.** At zero the browser sends whatever is drafted, exactly as "Send orders" would (unordered units hold). The server's own clock runs **3 s longer** (`graceMs`), so that message normally arrives first; if the browser is closed or cut off, the server then submits an **empty turn** for each seat that still owes one, and the round resolves. A player who has gone therefore cannot stall the other.
 - **Timings are data** (`Timing` in `server/lobby.ts`: `orderMs`, `replayMs`, `graceMs`, `roomGraceMs`) and tests inject short ones.
 
@@ -103,7 +103,7 @@ The rules live in `server/guard.ts` (pure, tested with plain numbers) and are ap
 
 ## Running it locally
 1. `npm run server` — the match server on port 8787 (`npm run server:watch` restarts on file changes).
-2. `npm run dev` in a second terminal — the site. In development it finds the server at port 8787 of the same machine automatically, and the title screen shows **Play online (test)**.
+2. `npm run dev` in a second terminal — the site. In development it finds the server at port 8787 of the same machine automatically, and the title screen shows **Play online**.
 3. Click it, press **Copy link**, and open the link in a second browser window (or on another computer on the same Wi-Fi, using the Network address Vite prints — start Vite with `npm run dev -- --host`).
 
 A production build has no online button unless `VITE_SERVER_URL` is set; on Vercel it points at the Railway server (`docs/deploy.md`, Part 2). Locally, no origin list is set, so any page may connect.

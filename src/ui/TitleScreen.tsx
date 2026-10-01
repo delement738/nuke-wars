@@ -111,11 +111,11 @@ export default function TitleScreen({ onPlay, onHelp }: Props) {
               <button type="button" className="title-btn" onClick={() => onPlay('hotseat')}>
                 Two players (hotseat)
               </button>
-              {/* Only when there is a server to talk to (V1.5 Session 6):
+              {/* Only when there is a server to talk to (V1.5 Session 6; "(test)" dropped from the label in Session 9):
                   in development, or once Session 8 configures one. */}
               {SERVER_URL && (
                 <button type="button" className="title-btn" onClick={() => onPlay('online')}>
-                  Play online (test)
+                  Play online
                 </button>
               )}
               <button type="button" className="title-btn" onClick={() => onHelp()}>

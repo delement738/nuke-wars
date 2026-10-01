@@ -53,7 +53,7 @@ A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, dr
 - `npm run build` — production build / full type-check
 - `npm run lint` — ESLint
 - `npm test` — Vitest, single run (`npm run test:watch` for watch mode)
-- `npm run server` — the online match server on port 8787 (`npm run server:watch` restarts on changes). With it running, `npm run dev` shows "Play online (test)"; see `docs/protocol.md`
+- `npm run server` — the online match server on port 8787 (`npm run server:watch` restarts on changes). With it running, `npm run dev` shows "Play online"; see `docs/protocol.md`
 - `npm run soak` — the balance harness: plays whole CPU-vs-CPU matches and prints outcome distribution, recon coverage and offensive stats. `SOAK_MATCHES=100 npm run soak` for tighter numbers, `SOAK_SEED=500` for a different family of boards. **A match uses seeds `SOAK_SEED … SOAK_SEED + SOAK_MATCHES − 1`, so families must be far apart to be independent:** at 100 matches, seeds 3 / 7 / 11 share ~95% of their boards (use e.g. 3 / 500 / 1000). **Run this before and after any change to `defs.ts`, `cpu.ts` or `cpuSetup.ts`** — it is the only thing that turns spec §7's "untested first drafts" into evidence.
 
 ## Current status (update at end of every session)

@@ -96,7 +96,8 @@ export interface LobbyOptions {
   limits?: Partial<Limits>;
 }
 
-/** The clocks a lobby runs (designer's ruling, 2026-09-29: 25 s + ~5 s replay). */
+/** The clocks a lobby runs (designer's ruling, 2026-09-29: 25 s + ~5 s replay;
+ *  raised to 35 s on 2026-09-30 after the first online game found 25 s tight). */
 export interface Timing {
   /** How long a round's orders may be sent, once the replay has had its time. */
   orderMs: number;
@@ -114,7 +115,7 @@ export interface Timing {
 }
 
 export const DEFAULT_TIMING: Timing = {
-  orderMs: 25_000,
+  orderMs: 35_000,
   replayMs: 5_000,
   graceMs: 3_000,
   roomGraceMs: 120_000,

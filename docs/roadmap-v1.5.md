@@ -12,11 +12,11 @@ When a session finishes: tick it here, add its dated entry to `docs/history.md`,
 |---|---|
 | Hosting | **Vercel** for the static client; **Railway** for the Node WebSocket server (picked over Fly.io for simplicity). |
 | Order of work | **Cosmetics first**, then networking. The game should look finished before strangers play it. |
-| Round length | **25 s order timer + ~5 s replay ≈ 30 s a round.** |
+| Round length | **35 s order timer + ~5 s replay ≈ 40 s a round at most** (was 25 s; raised 2026-09-30, Session 9, after the designer's first online game found 25 s tight). A round resolves as soon as both seats send, so the clock is a ceiling. |
 | Devices | **Desktop and tablet only.** A phone gets a polite notice, not a squeezed board. |
 | Accounts | **None.** A room is a link; a reconnect token in the browser gets you back into your seat. |
 | Title art | The designer supplies the title-screen artwork (Session 2). |
-| Match length | **`roundCap` stays 25** (≈12.5 min); real games have run up to ~20 rounds. |
+| Match length | **`roundCap` stays 25** (≈12.5 min at the old 25 s clock; ≈17 min if every round ran the full 35 s clock); real games have run up to ~20 rounds. |
 
 ## Open questions
 
