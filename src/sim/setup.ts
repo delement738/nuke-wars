@@ -89,6 +89,7 @@ export type PlacementIllegalReason =
   | 'OFF_MAP' // not a real tile
   | 'OUTSIDE_HOME_ZONE' // outside `RULES.homeZoneRows` for this player
   | 'SPAWN_HEX' // §12: placement may never use one of the 8 public spawns
+  | 'BACK_ROW' // a bunker or decoy within `RULES.siteBackRowsBarred` of the map edge
   | 'FORBIDDEN_TERRAIN' // not in `RULES.placementTerrain` for this kind
   | 'HEX_TAKEN' // one of this player's own placed assets is already there
   | 'EXCLUSION_ZONE'; // a base and a site closer than `bunkerExclusionRadius`
@@ -150,6 +151,16 @@ function isSite(kind: PlaceableKind): boolean {
 }
 
 /**
+ * How far `row` sits in front of the back edge of `playerId`'s home zone — 0 on
+ * the back row itself (spec §7, §12). P1 holds the south, so their back edge is
+ * the zone's highest row; P2's is its lowest.
+ */
+export function rowsFromBackEdge(playerId: PlayerId, row: number): number {
+  const zone = RULES.homeZoneRows[playerId];
+  return playerId === 'p1' ? zone.max - row : row - zone.min;
+}
+
+/**
  * Whether `playerId` may place `kind` on `hex`, given what they have already
  * placed (spec §12).
  *
@@ -190,6 +201,13 @@ export function validatePlacement(
   // the full set is the rule rather than a consequence of the map layout.
   if (SPAWN_KEYS.has(hexKey(hex))) {
     return { legal: false, reason: 'SPAWN_HEX' };
+  }
+
+  // §12: neither site may sit on the back rows. Asked through `isSite`, so the
+  // bunker and the decoy get the same answer by construction — barring only the
+  // real one would make every back-row site provably the fake.
+  if (isSite(kind) && rowsFromBackEdge(playerId, offset.row) < RULES.siteBackRowsBarred) {
+    return { legal: false, reason: 'BACK_ROW' };
   }
 
   // `RULES.placementTerrain`, NOT `TerrainDef.groundPassable` — see the header.

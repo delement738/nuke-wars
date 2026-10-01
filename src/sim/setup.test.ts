@@ -7,11 +7,12 @@ import {
   offsetToAxial,
   type Hex,
 } from './hex';
-import { generateMap, tileAt, type MapData, type TileData } from './map';
+import { generateMap, rotate180, tileAt, type MapData, type TileData } from './map';
 import {
   PLACEMENT_ORDER,
   legalPlacementHexes,
   nextPlacementKind,
+  rowsFromBackEdge,
   startMatch,
   validatePlacement,
   validateSetup,
@@ -53,7 +54,7 @@ function place(kind: Placement['kind'], hex: Hex): Placement {
  * and same-column hexes are exactly |Δrow| apart — asserted, not assumed.
  */
 const BUNKER = at(5, 13);
-const DECOY = at(5, 18);
+const DECOY = at(5, 17); // one row in: the back row is closed to sites
 const BASE_A = at(0, 16);
 
 const SITES: PlayerSetup = [place('bunker', BUNKER), place('decoy', DECOY)];
@@ -63,7 +64,7 @@ const LEGAL_SETUP: PlayerSetup = [...SITES, place('interceptor', BASE_A)];
 /** P2's counterpart of LEGAL_SETUP, in the north. */
 const P2_SETUP: PlayerSetup = [
   place('bunker', at(5, 5)),
-  place('decoy', at(5, 0)),
+  place('decoy', at(5, 1)),
   place('interceptor', at(0, 2)),
 ];
 
@@ -234,14 +235,16 @@ describe('validatePlacement() — the interceptor exclusion', () => {
   });
 
   it('rejects a base too close to the DECOY, at a legal distance from the bunker', () => {
-    const close = at(5, 18 - (RULES.bunkerExclusionRadius - 1));
-    expect(distance(DECOY, close)).toBe(RULES.bunkerExclusionRadius - 1);
-    expect(distance(BUNKER, close)).toBeGreaterThanOrEqual(
-      RULES.bunkerExclusionRadius,
+    // Searched rather than hand-picked, like the inclusive-bound test below.
+    const close = homeZoneHexes('p1').find(
+      (hex) =>
+        distance(DECOY, hex) === RULES.bunkerExclusionRadius - 1 &&
+        distance(BUNKER, hex) >= RULES.bunkerExclusionRadius,
     );
+    expect(close).toBeDefined();
 
     expect(
-      validatePlacement(makeMap(), 'p1', 'interceptor', close, SITES),
+      validatePlacement(makeMap(), 'p1', 'interceptor', close!, SITES),
     ).toEqual({ legal: false, reason: 'EXCLUSION_ZONE' });
   });
 
@@ -313,12 +316,113 @@ describe('validatePlacement() — the interceptor exclusion', () => {
   });
 });
 
+// --- the back row (spec §12, added 2026-10-01) -------------------------------
+
+describe('validatePlacement() — the back row', () => {
+  /** Every hex on `player`'s barred strip — the rows nearest their map edge. */
+  function backRowHexes(player: PlayerId): Hex[] {
+    return homeZoneHexes(player).filter(
+      (hex) => rowsFromBackEdge(player, axialToOffset(hex).row) < RULES.siteBackRowsBarred,
+    );
+  }
+
+  it('measures from the map edge for both players', () => {
+    expect(rowsFromBackEdge('p1', 18)).toBe(0);
+    expect(rowsFromBackEdge('p2', 0)).toBe(0);
+    expect(rowsFromBackEdge('p1', 13)).toBe(5);
+    expect(rowsFromBackEdge('p2', 5)).toBe(5);
+  });
+
+  /**
+   * Both sites, with the same reason code. Barring only the real bunker would
+   * make every back-row site provably the decoy (§12's principle).
+   */
+  it('rejects the bunker AND the decoy on every back-row hex, for both players', () => {
+    const map = makeMap();
+    for (const player of ['p1', 'p2'] as const) {
+      const strip = backRowHexes(player);
+      expect(strip).toHaveLength(16 * RULES.siteBackRowsBarred);
+      for (const hex of strip) {
+        for (const kind of ['bunker', 'decoy'] as const) {
+          expect(validatePlacement(map, player, kind, hex, [])).toEqual({
+            legal: false,
+            reason: 'BACK_ROW',
+          });
+        }
+      }
+    }
+  });
+
+  it('accepts a site one row in from the strip — the bound is exact', () => {
+    const map = makeMap();
+    const p1 = at(5, 18 - RULES.siteBackRowsBarred);
+    const p2 = at(5, RULES.siteBackRowsBarred);
+    for (const kind of ['bunker', 'decoy'] as const) {
+      expect(validatePlacement(map, 'p1', kind, p1, [])).toEqual({ legal: true });
+      expect(validatePlacement(map, 'p2', kind, p2, [])).toEqual({ legal: true });
+    }
+  });
+
+  it('still lets the interceptor base use the back row', () => {
+    const map = makeMap();
+    for (const player of ['p1', 'p2'] as const) {
+      for (const hex of backRowHexes(player)) {
+        expect(validatePlacement(map, player, 'interceptor', hex, [])).toEqual({ legal: true });
+      }
+    }
+  });
+
+  it('bars a back-row mountain too — terrain does not reopen it', () => {
+    const map = makeMap();
+    const hex = at(5, 18);
+    tileAt(map, axialToOffset(hex))!.terrain = 'mountain';
+    expect(validatePlacement(map, 'p1', 'bunker', hex, [])).toEqual({
+      legal: false,
+      reason: 'BACK_ROW',
+    });
+  });
+
+  it('leaves no back-row hex in either site highlight, and the two lists equal', () => {
+    const map = makeMap();
+    for (const player of ['p1', 'p2'] as const) {
+      const bunker = legalPlacementHexes(map, player, 'bunker', []);
+      const decoy = legalPlacementHexes(map, player, 'decoy', []);
+      expect(decoy.map(hexKey)).toEqual(bunker.map(hexKey));
+      const barred = new Set(backRowHexes(player).map(hexKey));
+      expect(bunker.some((hex) => barred.has(hexKey(hex)))).toBe(false);
+    }
+  });
+
+  it('bars strips that are half-turn twins, so neither side gets more ground', () => {
+    const dims = { width: 16, height: 19 };
+    const p1 = backRowHexes('p1').map((hex) =>
+      hexKey(offsetToAxial(rotate180(dims, axialToOffset(hex)))),
+    );
+    const p2 = new Set(backRowHexes('p2').map(hexKey));
+    expect(p1.every((key) => p2.has(key))).toBe(true);
+    expect(p1).toHaveLength(p2.size);
+  });
+
+  it('fails a whole setup with the decoy on the back row, and startMatch refuses it', () => {
+    const map = makeMap();
+    const bad: PlayerSetup = [
+      place('bunker', BUNKER),
+      place('decoy', at(5, 18)),
+      place('interceptor', BASE_A),
+    ];
+    expect(validateSetup(map, 'p1', bad)).toEqual({ legal: false, index: 1, reason: 'BACK_ROW' });
+    expect(() => startMatch(map, { p1: bad, p2: P2_SETUP })).toThrow(/BACK_ROW/);
+  });
+});
+
 // --- the UI's highlight list ------------------------------------------------
 
 describe('legalPlacementHexes()', () => {
-  it('offers the whole home zone except the spawns', () => {
+  it('offers a base the whole home zone except the spawns', () => {
+    // The base, because it is the one kind the back-row rule leaves alone —
+    // the back-row describe covers what the sites are offered.
     const map = makeMap();
-    const hexes = legalPlacementHexes(map, 'p1', 'bunker', []);
+    const hexes = legalPlacementHexes(map, 'p1', 'interceptor', []);
     const spawns = new Set(ALL_SPAWN_HEXES.map((o) => hexKey(offsetToAxial(o))));
     const zone = RULES.homeZoneRows.p1;
     const zoneSize = map.width * (zone.max - zone.min + 1);
@@ -347,17 +451,21 @@ describe('legalPlacementHexes()', () => {
   });
 
   it('offers ground for any kind at any time — there is no placement order', () => {
-    // With nothing placed, all three kinds are offered the same ground: no
-    // exclusion applies yet, and §12 gives bunker, decoy and base identical
-    // terrain and zone rules.
+    // With nothing placed, no exclusion applies yet. §12 gives bunker and decoy
+    // identical ground; the base gets the same plus the back row, which is
+    // closed to sites only (2026-10-01).
     const map = makeMap();
     const bunker = legalPlacementHexes(map, 'p1', 'bunker', []).map(hexKey);
     const decoy = legalPlacementHexes(map, 'p1', 'decoy', []).map(hexKey);
-    const base = legalPlacementHexes(map, 'p1', 'interceptor', []).map(hexKey);
+    const base = legalPlacementHexes(map, 'p1', 'interceptor', []);
 
     expect(bunker.length).toBeGreaterThan(0);
     expect(decoy).toEqual(bunker);
-    expect(base).toEqual(bunker);
+    expect(
+      base
+        .filter((hex) => rowsFromBackEdge('p1', axialToOffset(hex).row) >= RULES.siteBackRowsBarred)
+        .map(hexKey),
+    ).toEqual(bunker);
   });
 
   it('offers nothing once that kind’s roster slots are full', () => {

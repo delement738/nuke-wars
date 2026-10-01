@@ -75,6 +75,8 @@ const STOPS = RULES.interceptsPerRound;
 const SATURATE = STOPS + 1;
 const EXCLUSION = RULES.bunkerExclusionRadius;
 const ZONE_ROWS = RULES.homeZoneRows.p1.max - RULES.homeZoneRows.p1.min + 1;
+const BACK_ROWS =
+  RULES.siteBackRowsBarred === 1 ? 'back row' : `back ${RULES.siteBackRowsBarred} rows`;
 const DAMAGE = RULES.missileDamage;
 
 /** The whole screen, top to bottom. */
@@ -92,7 +94,7 @@ export const HOW_TO_PLAY: readonly HelpSection[] = [
     id: 'setup',
     title: 'Before the match',
     blocks: [
-      p(`Hide your bunker, decoy and ${BASE} in the ${ZONE_ROWS} gold rows at your end. Neither player sees the other's. Launchers and drones start on fixed, known hexes.`),
+      p(`Hide your bunker, decoy and ${BASE} in the ${ZONE_ROWS} gold rows at your end, with neither site on the ${BACK_ROWS}. Launchers and drones start on fixed, known hexes.`),
       p(`The base must be at least ${EXCLUSION} hexes from both sites, so it guards an approach, never the bunker. Keep the sites apart: one drone pass photographs a strip ${SWATH} hexes wide.`),
     ],
   },

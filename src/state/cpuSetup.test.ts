@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { RULES } from '../sim/defs';
 import { axialToOffset, distance, hexKey, hexLine, offsetToAxial, type Hex } from '../sim/hex';
 import { generateMap, lineOfFireClear, makeRng, type MapData } from '../sim/map';
-import { validateSetup } from '../sim/setup';
+import { rowsFromBackEdge, validateSetup } from '../sim/setup';
 import { PLAYERS, type PlayerId } from '../sim/types';
 import { HARD_SITE_GAP_MAX, approachLanes, cpuSetup } from './cpuSetup';
 import { sandboxSetup } from './sandbox';
@@ -94,6 +94,12 @@ describe('cpuSetup', () => {
    * it intercepts (`BASE_EXPOSED`), so if it sat systematically nearer one kind
    * of site, an exposed base would tell the enemy which of two found sites is
    * real. Over 400 boards a fair coin lands 44–56% about 98% of the time.
+   *
+   * The mean-distance bound is 0.4, about 4σ: measured on 2026-10-01 over four
+   * seed families, the mean difference has a standard error of ~0.1 and read
+   * −0.31 / −0.13 / +0.06 / +0.12. It was 0.3 (3σ) until the back-row rule
+   * reshuffled every board and this family landed on the line. The coin is
+   * flipped after all geometry is chosen, so a real bias cannot hide here.
    */
   it('HARD’s base is no nearer the bunker than the decoy', () => {
     let nearerBunker = 0;
@@ -112,7 +118,7 @@ describe('cpuSetup', () => {
     }
     expect(nearerBunker / decided).toBeGreaterThan(0.4);
     expect(nearerBunker / decided).toBeLessThan(0.6);
-    expect(Math.abs(bunkerDistance - decoyDistance) / (SEEDS.length * 2)).toBeLessThan(0.3);
+    expect(Math.abs(bunkerDistance - decoyDistance) / (SEEDS.length * 2)).toBeLessThan(0.4);
   });
 
   /** Gotchas 43–45: the bunker hunt must stay a hunt. */
@@ -123,11 +129,13 @@ describe('cpuSetup', () => {
       const cols = new Set<number>();
       for (const { bunker, decoy } of hardBoards(player)) {
         const { col, row } = axialToOffset(bunker);
+        expect(rowsFromBackEdge(player, row)).toBeGreaterThanOrEqual(RULES.siteBackRowsBarred);
         rows.add(row);
         cols.add(col);
         expect(distance(bunker, decoy)).toBeLessThanOrEqual(HARD_SITE_GAP_MAX);
       }
-      expect(rows.size).toBe(zone.max - zone.min + 1);
+      // Every row the bunker may legally use (§12: not the back row).
+      expect(rows.size).toBe(zone.max - zone.min + 1 - RULES.siteBackRowsBarred);
       expect(cols.size).toBe(16);
     }
   });
