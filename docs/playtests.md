@@ -6,7 +6,7 @@ A playtest that shows a real rules problem reopens the freeze **on purpose** (sp
 
 ## Beta (V1.5 Session 9)
 
-Invited testers play each other online at https://nuke-wars.vercel.app/ → **Play online**. Order clock: **35 s** (+5 s after a round with a replay; raised from 25 s on 2026-09-30). A round resolves as soon as both seats send, so the clock is only a ceiling.
+Invited testers play each other online at https://nuke-wars.vercel.app/ → **Play online**. Order clock: **35 s** (+5 s after a round with a replay; raised from 25 s on 2026-09-30). Rules: the beta build includes the **back-row site ban** (bunker and decoy may not use the row at the map edge; merged 2026-10-01). A round resolves as soon as both seats send, so the clock is only a ceiling.
 
 **Before inviting anyone:** the server must already be running the build you want tested. A Railway redeploy (any merge to `main` that touches the server) **ends every match in progress**, so merge fixes between games, not during them.
 
@@ -15,6 +15,7 @@ Invited testers play each other online at https://nuke-wars.vercel.app/ → **Pl
 During the game (yours, or ask testers to tell you):
 - [ ] **Joining:** did the link open straight into the waiting room, and the match start once both were in?
 - [ ] **Setup:** did both players understand what to place and that they had to press **Send setup**?
+- [ ] **Back-row ban:** did anyone try to put a site on the back row, and was the refusal clear? Did sites still feel hard to find?
 - [ ] **The clock:** did anyone run out of time? Did 35 s feel rushed, right, or slow? Which rounds were hardest to finish?
 - [ ] **Waiting:** did the faster player get bored waiting for the slower one?
 - [ ] **Replays:** could players follow what happened each round (launches, intercepts, hits)?
@@ -45,7 +46,7 @@ Copy this for each game. One or two words per line is enough; write more only wh
 
 ```
 ### YYYY-MM-DD — online | hotseat — who played
-- Build: <commit> (clock 35 s)
+- Build: <commit> (clock 35 s, back-row ban)
 - Result: <winner>, <how: bunker destroyed / round cap / resigned / other>, round <N>
 - Clock: <too short / about right / too long>; timeouts in the log: <N>
 - Connection: <fine / dropped, rejoined / dropped, lost the game>

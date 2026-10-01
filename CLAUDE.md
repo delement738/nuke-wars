@@ -58,9 +58,11 @@ A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, dr
 
 ## Current status (update at end of every session)
 
-### ✅ Code and docs agree as of 2026-10-01 (rules change: no bunker sites on the back row) — no known mismatch
+### ✅ Code and docs agree as of 2026-10-01 (V1.5 Session 9 in progress: 35 s clock, back-row rule merged for the beta) — no known mismatch
 
-**Latest (2026-10-01):** the designer reopened the frozen rules for one change: **neither the bunker nor the decoy may be placed on the back row of a home zone** (P1 row 18, P2 row 0; `RULES.siteBackRowsBarred`, placement reason `BACK_ROW`). The interceptor base still may. Spec §7, §12 and a dated amendment; gotcha 81. 1016 tests. Sim is frozen again.
+**Latest (2026-10-01):** the designer reopened the frozen rules for one change: **neither the bunker nor the decoy may be placed on the back row of a home zone** (P1 row 18, P2 row 0; `RULES.siteBackRowsBarred`, placement reason `BACK_ROW`). The interceptor base still may. Spec §7, §12 and a dated amendment; gotcha 81. 1016 tests. Sim is frozen again. **Merged to `main` before the beta** (designer's call, 2026-10-01), so beta testers play with it; it was first parked on its branch for a later patch.
+
+**Session 9 so far (2026-09-30):** the order clock went 25 s → **35 s** (`DEFAULT_TIMING.orderMs`), the title button lost "(test)", and `docs/playtests.md` gained the beta watch-list and bug queue. **Next: invited beta games, fix what they find, tag `v1.5`.**
 
 **Last session (2026-09-30):** V1.5 Session 8. **Online play is live:** the match server runs on Railway at `wss://nuke-wars-production.up.railway.app` and https://nuke-wars.vercel.app/ shows **Play online**. The server refuses pages from other sites, rate-limits messages, connections and new rooms, pings out dead connections, retires finished and over-age rooms, and logs a stats line every 5 minutes (`server/guard.ts`, gotcha 80). Protocol 3. A redeploy ends matches in progress (rooms are in memory). 1007 tests. Designer's first online game (two browsers) worked; the 25 s order clock felt tight. **Next: Session 9, beta and launch.**
 
@@ -79,7 +81,7 @@ The session-by-session build history (V1 steps 1–10, the V1.1 rules, the sim f
 6. ✅ **DONE 2026-09-29.** ~~**Server, protocol and rooms.**~~ See `docs/protocol.md`, gotcha 78 and `docs/history.md`.
 7. ✅ **DONE 2026-09-30.** ~~**Order timer, reconnect and lobby UI.**~~ See `docs/protocol.md` ("The order clock", "Reconnect"), gotcha 79 and `docs/history.md`.
 8. ✅ **DONE 2026-09-30.** ~~**Railway deploy and hardening.**~~ See `docs/deploy.md` Part 2, `docs/protocol.md` ("Limits for a public server"), gotcha 80 and `docs/history.md`.
-9. **NEXT —** Beta and launch: play with invited testers, fix what they find, write it up in `docs/playtests.md`, tag `v1.5`. Open question from the designer's first online game: is the 25 s order clock too short?
+9. **IN PROGRESS —** Beta and launch: play with invited testers, fix what they find, write it up in `docs/playtests.md`, tag `v1.5`. Done so far: the order clock is **35 s** (settled from the first online game), "Play online" lost "(test)", the beta log is ready, and the back-row site ban (gotcha 81) was merged so the beta plays the launch rules. Left: the beta games themselves, fixes, and the `v1.5` tag.
 
 **Every push to `main` redeploys the live site on Vercel, and every pull request gets its own preview link and a CI check (lint, test, build; `.github/workflows/ci.yml`).** Don't merge a red check.
 
