@@ -1,6 +1,6 @@
 # Nuke Wars — deployment
 
-How the game gets from GitHub to the internet. Part 1 (the client on Vercel) is live since V1.5 Session 1; Part 2 (the WebSocket server on Railway) is written in Session 8.
+How the game gets from GitHub to the internet. Part 1 (the client on Vercel) is live since V1.5 Session 1; Part 2 (the WebSocket match server on Railway) since Session 8.
 
 ## How it works today
 
@@ -9,7 +9,7 @@ How the game gets from GitHub to the internet. Part 1 (the client on Vercel) is 
 - **Previews:** every pull request gets its own temporary copy of the site at a unique link. Vercel's bot posts it as a comment on the PR. Use it to try a change before merging.
 - **CI:** GitHub Actions (`.github/workflows/ci.yml`) runs `npm run lint`, `npm test` and `npm run build` on every pull request and every push to `main`. A red ✗ on a PR means one failed; click **Details** to see which.
 - The client is a plain static site (Vite builds it into `dist/`). CPU and hotseat run entirely in the player's browser.
-- **The match server exists since Session 6 (`server/`, `npm run server`) but is not deployed yet.** Without `VITE_SERVER_URL` a production build hides the online button, so the live site is unaffected. Session 8 puts the server on Railway and sets that variable on Vercel. How to run it locally: `docs/protocol.md`, "Running it locally".
+- **Match server:** `wss://nuke-wars-production.up.railway.app` on Railway (project `nuke-wars`, service `nuke-wars`, deploys `main`); `/health` answers `ok`. Vercel's `VITE_SERVER_URL` points the site at it, which is what shows **Play online**. How to run it locally: `docs/protocol.md`, "Running it locally".
 
 ## Part 1 — the client on Vercel
 
@@ -23,7 +23,7 @@ How the game gets from GitHub to the internet. Part 1 (the client on Vercel) is 
 | Output Directory | `dist` |
 | Install Command | default (`npm install`) |
 | Node.js version | 24.x (Project → Settings → Build and Deployment) |
-| Environment variables | none yet (Session 8 adds the server URL) |
+| Environment variables | `VITE_SERVER_URL` (Part 2) |
 
 No `vercel.json` is needed: the game is one page with no URL routes.
 
@@ -60,15 +60,15 @@ The match server (`server/`) runs on Railway as one always-on Node process. The 
 
 | Variable | Value | Why |
 |---|---|---|
-| `ALLOWED_ORIGINS` | `https://nuke-wars.vercel.app,https://nuke-wars-*-TEAM.vercel.app` | Only pages from our site and its preview links may connect (`docs/protocol.md`, "Limits"). Replace `TEAM` with the end of any Vercel preview link's name, e.g. `delement738s-projects`. |
+| `ALLOWED_ORIGINS` | `https://nuke-wars.vercel.app,https://nuke-wars-*-nuclear-armed-regime.vercel.app` | Only pages from our site and its preview links may connect (`docs/protocol.md`, "Limits"). The second entry matches every Vercel preview link; `nuclear-armed-regime` is the Vercel team's name. |
 | `TRUST_PROXY` | `1` | The server sits behind Railway's proxy, so per-address limits must read the visitor's address from the header the proxy writes. |
 | `PORT` | *(don't set it)* | Railway sets it itself. |
 
-And on **Vercel** (project → **Settings** → **Environment Variables**):
+And on **Vercel**. Variables now live **under each environment**: project → **Settings** → **Environments** → click **Production** (then **Preview**) → **Environment Variables** → **Add**. ("Create Environment" on that page is a paid feature and is not needed.)
 
 | Variable | Value | Environments |
 |---|---|---|
-| `VITE_SERVER_URL` | `wss://` + the Railway domain, e.g. `wss://nuke-wars-server-production.up.railway.app` | Production **and** Preview |
+| `VITE_SERVER_URL` | `wss://nuke-wars-production.up.railway.app` | Production **and** Preview (type **Config**, not Secret: it is in every visitor's page anyway) |
 
 A `VITE_` variable is baked into the page **when it is built**, so after adding or changing it the site must be **redeployed** before it takes effect.
 
@@ -80,8 +80,8 @@ A `VITE_` variable is baked into the page **when it is built**, so after adding 
    - **Source → Branch:** `main`.
    - **Networking → Public Networking → Generate Domain.** If it asks for a port, leave the one it detected (the port the server printed). Copy the domain it shows.
 4. **Variables** tab → add `ALLOWED_ORIGINS` and `TRUST_PROXY` as in the table above → **Deploy** (Railway shows a banner to apply the changes).
-5. When the deployment turns green, open `https://<the domain>/health` in a browser. It should say `ok`.
-6. On Vercel, add `VITE_SERVER_URL` (table above), then **Deployments** → the latest production one → **⋯** → **Redeploy**.
+5. When the deployment turns green, open `https://<the domain>/health` in a browser. It should say `ok`. (The bare domain shows **Not Found**; that is expected, as the server has no web page.) The first log line should list the origins and end `behind a proxy`; if it says `any origin (development)` the variables have not been deployed yet.
+6. On Vercel, add `VITE_SERVER_URL` (table above), then **Deployments** → the latest production one → **⋯** → **Redeploy**. To confirm it took, the live page's JavaScript should contain the `wss://` address.
 7. Open <https://nuke-wars.vercel.app/>. The title screen now has **Play online**. Create a room and open the link in a second window (or send it to a friend).
 
 ### Day to day

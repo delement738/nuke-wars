@@ -27,3 +27,12 @@ A playtest that shows a real rules problem reopens the freeze **on purpose** (sp
 - Bugs: none reported
 - Rules concern: none ("I have play tested that version of the game and it's good")
 - Note: the gate asked for hotseat games; the designer played only against the CPU and judged that enough to start networking. Hotseat itself was last exercised in headless Chrome during Session 5.
+
+### 2026-09-30 — online — the designer, against themself in two browsers
+- Build: https://nuke-wars.vercel.app/ after Session 8 (6865cc8), server on Railway
+- Result: not recorded
+- Felt like a race? not recorded
+- Confusing: nothing reported
+- Bugs: none reported ("it worked well and was cool to play")
+- Rules concern: none
+- Note: **the 25 s order clock felt tight** ("hard to input all my orders in the allotted time"). Partly because one person was ordering for both seats; worth asking beta testers before changing `DEFAULT_TIMING.orderMs` in `server/lobby.ts`. The clock is a server setting, not a sim rule, so changing it does not reopen the freeze.
