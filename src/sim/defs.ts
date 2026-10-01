@@ -379,6 +379,22 @@ export const RULES = {
   },
 
   /**
+   * How many rows at the back of a home zone — the map edge — are closed to the
+   * bunker AND the decoy (spec §12, added 2026-10-01). At 1 that is P1's row 18
+   * and P2's row 0. The interceptor base may still be built there.
+   *
+   * Why it exists: the back edge is the ground furthest from the enemy drone,
+   * so a site tucked into a back corner is the slowest to find — a cheap
+   * default rather than a read on the opponent (designer's call).
+   *
+   * **Both sites, never just the bunker** — §12's indistinguishability
+   * principle. If only the real bunker were barred, any site spotted on the
+   * back row would be provably the decoy. It is one depth rather than a pair of
+   * row ranges so the two players' strips match by construction.
+   */
+  siteBackRowsBarred: 1,
+
+  /**
    * How many of each asset a player places during SETUP (spec §7, §12).
    * Launcher and drone counts are not here because they are not placed — they
    * start on the fixed public spawn hexes in SPAWNS.

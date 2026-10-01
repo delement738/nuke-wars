@@ -34,6 +34,10 @@ describe('how-to-play: numbers come from the rule tables', () => {
     expect(joined).toContain(`at least ${RULES.bunkerExclusionRadius} hexes from both`);
   });
 
+  it('states that neither site may use the back row (§12)', () => {
+    expect(joined).toMatch(/with neither site on the back (row|\d+ rows)\./);
+  });
+
   it('types no number that is not derived: every digit in the copy is one of the rule values', () => {
     const allowed = new Set(
       [
@@ -47,6 +51,7 @@ describe('how-to-play: numbers come from the rule tables', () => {
         RULES.bunkerExclusionRadius - 1,
         RULES.roundCap,
         RULES.homeZoneRows.p1.max - RULES.homeZoneRows.p1.min + 1,
+        RULES.siteBackRowsBarred,
         2 * RULES.reconSwathRadius + 1,
         SPAWNS.p1.launchers.length,
         UNIT_DEFS.launcher.movement,

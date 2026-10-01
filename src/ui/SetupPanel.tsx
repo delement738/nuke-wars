@@ -198,7 +198,9 @@ export default function SetupPanel({ onHelp }: Props) {
             You are {seat.toUpperCase()}, holding the{' '}
             {seat === 'p1' ? 'south' : 'north'}. Place your assets on the gold
             rows ({RULES.homeZoneRows[seat].min}–{RULES.homeZoneRows[seat].max}),
-            plains or mountain.
+            plains or mountain. The bunker and decoy may not use the back{' '}
+            {RULES.siteBackRowsBarred === 1 ? 'row' : `${RULES.siteBackRowsBarred} rows`}{' '}
+            at the map edge.
           </p>
 
           <ul className="unit-list">
