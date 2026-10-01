@@ -58,9 +58,9 @@ A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, dr
 
 ## Current status (update at end of every session)
 
-### ✅ Code and docs agree as of 2026-09-30 (V1.5 Session 7: order timer, reconnect and lobby UI) — no known mismatch
+### ✅ Code and docs agree as of 2026-09-30 (V1.5 Session 8: Railway deploy and hardening) — no known mismatch
 
-**Last session (2026-09-30):** V1.5 Session 7. The server runs a 25 s order clock (+5 s after a replay) and sends an empty turn for a seat that never orders; the browser shows it as a big countdown panel that turns red and ticks each second from 10 s. A seat belongs to its token: a dropped link retries, a reloaded tab rejoins, both rebuilt from a filtered snapshot; an empty room survives 2 minutes. Waiting-room screen with the room code and link. Protocol 2 (`docs/protocol.md`). Online play is still dev-only. 982 tests (gotcha 79). **Next: Session 8, Railway deploy and hardening.**
+**Last session (2026-09-30):** V1.5 Session 8. **Online play is live:** the match server runs on Railway at `wss://nuke-wars-production.up.railway.app` and https://nuke-wars.vercel.app/ shows **Play online**. The server refuses pages from other sites, rate-limits messages, connections and new rooms, pings out dead connections, retires finished and over-age rooms, and logs a stats line every 5 minutes (`server/guard.ts`, gotcha 80). Protocol 3. A redeploy ends matches in progress (rooms are in memory). 1007 tests. Designer's first online game (two browsers) worked; the 25 s order clock felt tight. **Next: Session 9, beta and launch.**
 
 ### Completed
 
@@ -76,8 +76,8 @@ The session-by-session build history (V1 steps 1–10, the V1.1 rules, the sim f
 5. ✅ **DONE 2026-09-29.** ~~**Authority split refactor.**~~ See gotcha 77 and `docs/history.md`.
 6. ✅ **DONE 2026-09-29.** ~~**Server, protocol and rooms.**~~ See `docs/protocol.md`, gotcha 78 and `docs/history.md`.
 7. ✅ **DONE 2026-09-30.** ~~**Order timer, reconnect and lobby UI.**~~ See `docs/protocol.md` ("The order clock", "Reconnect"), gotcha 79 and `docs/history.md`.
-8. **NEXT —** Railway deploy and hardening (rate limits, origin checks, logging, server pings for half-open connections; the "Play online" button goes live with `VITE_SERVER_URL`).
-9. Beta and launch; tag `v1.5`.
+8. ✅ **DONE 2026-09-30.** ~~**Railway deploy and hardening.**~~ See `docs/deploy.md` Part 2, `docs/protocol.md` ("Limits for a public server"), gotcha 80 and `docs/history.md`.
+9. **NEXT —** Beta and launch: play with invited testers, fix what they find, write it up in `docs/playtests.md`, tag `v1.5`. Open question from the designer's first online game: is the 25 s order clock too short?
 
 **Every push to `main` redeploys the live site on Vercel, and every pull request gets its own preview link and a CI check (lint, test, build; `.github/workflows/ci.yml`).** Don't merge a red check.
 
