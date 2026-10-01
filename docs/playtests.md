@@ -8,7 +8,7 @@ A playtest that shows a real rules problem reopens the freeze **on purpose** (sp
 
 Invited testers play each other online at https://nuke-wars.vercel.app/ → **Play online**. Order clock: **35 s** (+5 s after a round with a replay; raised from 25 s on 2026-09-30). Rules: the beta build includes the **back-row site ban** (bunker and decoy may not use the row at the map edge; merged 2026-10-01). A round resolves as soon as both seats send, so the clock is only a ceiling.
 
-**Before inviting anyone:** the server must already be running the build you want tested. A Railway redeploy (any merge to `main` that touches the server) **ends every match in progress**, so merge fixes between games, not during them.
+**Before inviting anyone:** the server must already be running the build you want tested. A Railway redeploy (any merge to `main` that touches the server) **ends every match in progress**, so merge fixes between games, not during them. Quick check that it is current: in an online game the order clock should first read **0:35** (the clock comes from the server, so 0:25 means it is still on an old build). (On 2026-10-01 Railway had silently stopped deploying; see `docs/deploy.md`.)
 
 ### What to watch for
 

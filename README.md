@@ -10,13 +10,13 @@ Each side fields the entire roster: **3 mobile launchers** (move *or* fire, neve
 
 ## Status
 
-**V1 (hotseat) — in development.** The design was pivoted on 2026-08-11 (see the spec) and the sim code is fully migrated to it. **The simulation engine is feature-complete, it is wired to the screen, and the game is playable against a CPU opponent.** Built and tested: hex math including the `hexLine` flight primitive, self-validating symmetric map generation (mountain ranges, re-rolled until playable), launcher movement, secret setup placement, `resolve()` with **all five phases** — recon drone, launch and interception, impact, the outcome check, and ground movement — the dead-hand retaliation round and win/draw state machine, and the **visibility filter** that turns the engine's omniscient truth into each player's redacted view. On top of that sits a Zustand store that owns the match, a Pixi board that draws one player's redacted view, a HUD that keeps that player's permanent event log, an order builder, a setup-placement screen, and a difficulty-tiered CPU that plays from its own redacted view rather than from the truth. 870 tests.
+**V1.5 — online beta.** Play at **<https://nuke-wars.vercel.app/>**: against a CPU opponent (three difficulty tiers), **hotseat** on one machine, or **Play online** against a friend. Create a room, send the link, and the match server pairs you up. Each round you have **35 seconds** to send your orders (a round resolves the moment both players have sent), and a match lasts at most 25 rounds.
 
-**The rules are frozen as of 2026-09-28.** After the first human playtests, a round of V1.1 changes landed: battle-report banners, one hidden interceptor base that exposes itself when it shoots down a missile, missile flight time (long shots land next round), mountains that block line of fire, a forced march, and a drone that respawns the round after it's shot down. The rules layer now changes only for bugs. **The presentation phase is built:** each round replays from its event log, missiles fly with inbound warnings, intel overlays shade what you have worked out, and a how-to-play screen (on the setup screen, in the HUD, or the `?` key) teaches the rules in about three minutes, and every piece is drawn with its own emblem. Next is V1.5: a cosmetics pass, hotseat playtests on the live build, then networked play.
+**The rules are frozen** (since 2026-09-28; reopened once on 2026-10-01 to keep both bunker sites off the back row at the map edge). A how-to-play screen (`?` on any screen) teaches them in about three minutes. The board is a paper plotting table, each round replays from its event log with missiles in flight and inbound warnings, and the sound is synthesized in the browser.
 
-You can play a full match today: **hide your bunker and decoy**, place your interceptor base at least 3 hexes from both, then fly recon, advance (or force-march) launchers and fire — against a CPU that is hunting your bunker while you hunt its. The board draws your units, your intel and your interceptor coverage, and the log fills. The mouse wheel zooms toward the cursor and dragging pans. Two humans can also play **hotseat** on one machine, with a pass-the-screen handoff between turns.
+Online play runs on the same engine as solo. The server holds the true match state and sends each player only what they may see, so a client never receives the enemy's hidden positions. A dropped connection or a reloaded tab rejoins its seat. 1016 tests.
 
-See the "Current status" section of [CLAUDE.md](CLAUDE.md) for exactly where things stand, [docs/roadmap-v1.5.md](docs/roadmap-v1.5.md) for the plan to networked play, and [docs/history.md](docs/history.md) for how it was built. **Play it at <https://nuke-wars.vercel.app/>**, deployed on Vercel from `main` ([docs/deploy.md](docs/deploy.md)); every pull request is checked by GitHub Actions (lint, test, build).
+See the "Current status" section of [CLAUDE.md](CLAUDE.md) for exactly where things stand, [docs/roadmap-v1.5.md](docs/roadmap-v1.5.md) for the V1.5 plan, [docs/playtests.md](docs/playtests.md) for the beta log, and [docs/history.md](docs/history.md) for how it was built. The client deploys to Vercel and the match server to Railway, both from `main` ([docs/deploy.md](docs/deploy.md)); every pull request is checked by GitHub Actions (lint, test, build).
 
 ## Stack
 
@@ -25,7 +25,7 @@ See the "Current status" section of [CLAUDE.md](CLAUDE.md) for exactly where thi
 - **Zustand** — client state
 - **Vitest** — unit tests
 
-Hex math is hand-rolled in [src/sim/hex.ts](src/sim/hex.ts) rather than pulled from a library, keeping the simulation layer dependency-free so it can move server-side unchanged in V1.5.
+Plus **ws** for the Node WebSocket match server. Hex math is hand-rolled in [src/sim/hex.ts](src/sim/hex.ts) rather than pulled from a library, which keeps the simulation layer dependency-free; the server runs it unchanged.
 
 ## Commands
 
@@ -37,19 +37,21 @@ npm run lint     # ESLint
 npm test         # Vitest, single run
 npm run test:watch
 npm run soak     # balance harness: CPU-vs-CPU matches, outcome stats
+npm run server   # online match server on port 8787 (then npm run dev shows "Play online")
 ```
 
 ## Architecture
 
-Four strictly separated layers. The separation is non-negotiable — it's what lets the same engine run authoritatively on a server in V1.5 without modification.
+Strictly separated layers. The separation is non-negotiable — it's what lets the same engine run authoritatively on the server without modification.
 
 | Directory | Role | Rule |
 |---|---|---|
 | `src/sim/` | Pure simulation engine | Never imports React, Pixi, DOM, or network code. All rules and state live here as pure functions. |
-| `src/state/` | Zustand match store | The only module that ever holds the unfiltered state, in a module-private variable with no accessor. Everything it hands out has been through the visibility filter. |
+| `src/state/` | Match authority + Zustand store | `authority.ts` is the only module that ever holds the unfiltered state; the store holds only the filtered updates it is sent. |
 | `src/render/` | PixiJS drawing | Reads state, draws it. Never mutates game state. The type flowing in is `VisibleGameState`. |
 | `src/ui/` | React HUD/menus | Reads state, sends player intents. |
-| *(V1.5)* | Node.js WebSocket server | Rooms, order collection, authoritative resolve, per-player visibility filter. |
+| `src/net/` | Wire protocol + browser connection | The messages shared with the server, and a WebSocket stand-in for the local authority. |
+| `server/` | Node.js WebSocket server | Rooms, order clock, reconnect, rate limits; runs the same authority and routes each player only their own filtered updates. |
 
 Three rules govern the sim layer:
 
@@ -57,9 +59,9 @@ Three rules govern the sim layer:
 - **Event log** — `resolve()` emits an ordered event list with per-player visibility rules (spec §6). Clients animate from those events, never by diffing state. It doubles as the replay format.
 - **Data tables** — unit, terrain, and rule numbers live as plain keyed data in [src/sim/defs.ts](src/sim/defs.ts), never hardcoded in logic. A balance pass should be a one-file diff.
 
-**`resolve()` never lies; [src/sim/visibility.ts](src/sim/visibility.ts) does.** The engine always computes and emits the whole truth — a decoy is stored and logged as a decoy. `filterForPlayer` / `filterEventsForPlayer` hand each player a redacted copy, and that module is the only layer permitted to know the difference. In hotseat it hides the inactive player's information across the handoff; in V1.5 the server applies it before broadcasting, so a client never receives the enemy's positions and cheating is impossible by construction rather than by policy.
+**`resolve()` never lies; [src/sim/visibility.ts](src/sim/visibility.ts) does.** The engine always computes and emits the whole truth — a decoy is stored and logged as a decoy. `filterForPlayer` / `filterEventsForPlayer` hand each player a redacted copy, and that module is the only layer permitted to know the difference. In hotseat it hides the inactive player's information across the handoff; online, the server applies it before sending, so a client never receives the enemy's positions and cheating is impossible by construction rather than by policy.
 
-**And the filter cannot be skipped.** A redaction layer only protects callers that actually call it, so the unfiltered state lives in a module-private variable inside [src/state/match.ts](src/state/match.ts) — not in the store, not exported, no accessor. There is no code path by which a component could obtain one, which makes "the renderer never sees the truth" a property of the module rather than a rule someone has to remember.
+**And the filter cannot be skipped.** A redaction layer only protects callers that actually call it, so the unfiltered state lives in a closure variable inside [src/state/authority.ts](src/state/authority.ts) — not in the store, not exported, no accessor. There is no code path by which a component could obtain one, which makes "the renderer never sees the truth" a property of the module rather than a rule someone has to remember.
 
 ## Docs
 
