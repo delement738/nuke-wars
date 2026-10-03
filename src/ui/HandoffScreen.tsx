@@ -22,20 +22,12 @@
 // state of the match — not the round, not the outcome, not whose turn it was.
 // The outgoing player is standing right there.
 
-import type { PlayerId } from '../sim/types';
 import { takeScreen } from '../state/match';
 import { useHandoff, useMatchStarted } from '../state/useMatch';
 // Imported here as well as in `Hud`, because `App` renders this screen *instead*
 // of the HUD — with the canvas and every panel unmounted, nothing else would
 // have pulled the stylesheet in. Bundlers dedupe it.
 import './hud.css';
-
-/** Which end of the board a player holds (spec §7) — the one orienting fact it
- *  is always safe to print, because the map is public (§11 rule 1). */
-const SIDE: Record<PlayerId, string> = {
-  p1: 'south',
-  p2: 'north',
-};
 
 export default function HandoffScreen() {
   const handoff = useHandoff();
@@ -57,8 +49,8 @@ export default function HandoffScreen() {
 
         <p className="muted">
           {started
-            ? `Hand the machine to ${name}, who holds the ${SIDE[handoff]}. Press below only when they are the one looking.`
-            : `Hand the machine to ${name}, who holds the ${SIDE[handoff]}, and look away while they hide their assets.`}
+            ? `Hand the machine to ${name}. Press below only when they are the one looking.`
+            : `Hand the machine to ${name}, and look away while they hide their assets.`}
         </p>
 
         <div className="buttons">
