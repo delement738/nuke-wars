@@ -1,7 +1,8 @@
 // UI LAYER — the online waiting room (V1.5 Session 7).
 //
 // What a player sees between "I asked for a room" and "there are two of us":
-// connecting, the room's code and link to send, and — if it goes wrong — why.
+// connecting, the room's code and link to send (either works: the friend can
+// type the code into the title screen's join box, or open the link), and — if it goes wrong — why.
 // It reads `online` only, never the board, so it has nothing to leak; and `App`
 // shows it *instead of* the setup screen, so no board is drawn behind it.
 //
@@ -21,14 +22,16 @@ interface Props {
 
 export default function LobbyScreen({ onTitle }: Props) {
   const online = useOnline();
-  const [copied, setCopied] = useState(false);
+  // Which of the two was copied last, for the button's "Copied" tick.
+  const [copied, setCopied] = useState<'code' | 'link' | null>(null);
   if (!online) return null;
 
   const link = online.room ? roomLink(online.room) : null;
 
-  function copy() {
-    if (!link) return;
-    void navigator.clipboard?.writeText(link).then(() => setCopied(true));
+  function copy(what: 'code' | 'link') {
+    const text = what === 'code' ? online?.room : link;
+    if (!text) return;
+    void navigator.clipboard?.writeText(text).then(() => setCopied(what));
   }
 
   function leave() {
@@ -49,12 +52,19 @@ export default function LobbyScreen({ onTitle }: Props) {
   } else {
     body = (
       <>
-        <p className="muted">Your room is open. Send your opponent this link:</p>
+        <p className="muted">Your room is open. Your opponent can join with this code:</p>
         <p className="handoff-to lobby-code">{online.room}</p>
+        <p className="footnote">
+          They type it into <strong>Have a code?</strong> on the title screen — or just
+          open the link:
+        </p>
         <p className="footnote lobby-link">{link}</p>
         <div className="buttons">
-          <button type="button" onClick={copy}>
-            {copied ? 'Copied' : 'Copy link'}
+          <button type="button" onClick={() => copy('code')}>
+            {copied === 'code' ? 'Copied' : 'Copy code'}
+          </button>
+          <button type="button" onClick={() => copy('link')}>
+            {copied === 'link' ? 'Copied' : 'Copy link'}
           </button>
         </div>
         <p className="alert lobby-waiting">Waiting for your opponent to join…</p>

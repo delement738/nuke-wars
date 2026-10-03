@@ -178,7 +178,7 @@
   padding: 8px 14px;
 }
 
-.lobby-code { font-size: 40px; margin: 6px 0; }
+.lobby-code { font-size: 48px; margin: 6px 0; letter-spacing: 0.2em; user-select: all; }
 .lobby-link { word-break: break-all; }
 .lobby-waiting { margin-top: 14px; }
 /* The order clock (V1.5 Session 7): its own panel, big digits, red at <= 10 s. */

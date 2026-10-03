@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { LIMITS, PROTOCOL_VERSION, parseClientMessage, parseServerMessage } from './protocol';
+import {
+  LIMITS,
+  PROTOCOL_VERSION,
+  parseClientMessage,
+  parseServerMessage,
+  readRoomCode,
+} from './protocol';
 
 const json = (value: unknown) => JSON.stringify(value);
 
@@ -103,5 +109,29 @@ describe('parseServerMessage', () => {
     });
     expect(parseServerMessage('<html>Bad gateway</html>')).toBeNull();
     expect(parseServerMessage(json({ type: 'create' }))).toBeNull();
+  });
+});
+
+describe('readRoomCode', () => {
+  it('reads a code typed the way people type', () => {
+    expect(readRoomCode('U7EK44')).toBe('U7EK44');
+    expect(readRoomCode('  u7ek44 ')).toBe('U7EK44');
+    expect(readRoomCode('u7e-k44')).toBe('U7EK44');
+    expect(readRoomCode('U7E K44')).toBe('U7EK44');
+  });
+
+  it('pulls the code out of a pasted invite link', () => {
+    expect(readRoomCode('https://nuke-wars.vercel.app/?room=U7EK44')).toBe('U7EK44');
+    expect(readRoomCode('nuke-wars.vercel.app/?room=u7ek44')).toBe('U7EK44');
+    expect(readRoomCode('https://nuke-wars.vercel.app/?x=1&room=U7EK44#top')).toBe('U7EK44');
+  });
+
+  it('refuses anything that cannot be a room code', () => {
+    expect(readRoomCode('')).toBeNull();
+    expect(readRoomCode('U7EK4')).toBeNull(); // too short
+    expect(readRoomCode('U7EK445')).toBeNull(); // too long
+    expect(readRoomCode('U7EK40')).toBeNull(); // 0 is not in the alphabet
+    expect(readRoomCode('OIEK44')).toBeNull(); // nor O or I
+    expect(readRoomCode('https://nuke-wars.vercel.app/')).toBeNull();
   });
 });

@@ -60,6 +60,8 @@ A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, dr
 
 ### ✅ Code and docs agree as of 2026-10-02 (V1.5 shipped, tagged `v1.5`) — no known mismatch
 
+**Latest (2026-10-03): join by code** — the title screen has a *Have a code?* box (type the 6-character room code or paste the link), the waiting room has *Copy code* + *Copy link*, and the code sits in the address bar while a room is open. Client only; no Railway redeploy needed. See `docs/history.md`.
+
 **V1.5 is DONE (2026-10-02).** The game is live at https://nuke-wars.vercel.app/ with online play against the Railway server, 35 s order clock, back-row site ban. The project is **paused**: V2 is a possible future project, not scheduled. **Known deploy quirk:** Railway stopped auto-deploying from `main` after Session 8 (cause not found); deploy server changes by hand (Railway → service → Ctrl+K → *Deploy Latest Commit*), then check the first online order clock reads 0:35. See `docs/deploy.md`.
 
 **Latest (2026-10-01):** the designer reopened the frozen rules for one change: **neither the bunker nor the decoy may be placed on the back row of a home zone** (P1 row 18, P2 row 0; `RULES.siteBackRowsBarred`, placement reason `BACK_ROW`). The interceptor base still may. Spec §7, §12 and a dated amendment; gotcha 81. 1016 tests. Sim is frozen again. **Merged to `main` before the beta** (designer's call, 2026-10-01), so beta testers play with it; it was first parked on its branch for a later patch.

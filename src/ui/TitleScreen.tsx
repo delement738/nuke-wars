@@ -13,11 +13,16 @@
 // promises. The how-to-play window swallows Enter in the capture phase while it
 // is open, so Enter there never reaches this listener.
 //
+// Below the menu, when there is a server: a box to join a friend's game by its
+// six-character room code (or a pasted invite link), for anyone who was told the
+// code rather than sent the link.
+//
 // Phones get a notice instead of the buttons (designer's ruling: desktop and
 // tablet only), with a way past it for anyone who wants to try anyway.
 
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties, type FormEvent } from 'react';
 import { SERVER_URL } from '../net/config';
+import { ROOM_CODE_LENGTH, readRoomCode } from '../net/protocol';
 import SoundButton from './SoundButton';
 import { DRIFT_PERIOD_S, TILE_H, TILE_W, titleTileCss } from './titleBackdrop';
 import './title.css';
@@ -25,7 +30,8 @@ import './title.css';
 export type PlayMode = 'solo' | 'hotseat' | 'online';
 
 interface Props {
-  onPlay: (mode: PlayMode) => void;
+  /** `room`: join that room (online only) instead of opening a new one. */
+  onPlay: (mode: PlayMode, room?: string) => void;
   onHelp: () => void;
 }
 
@@ -42,6 +48,15 @@ function isPhone(): boolean {
 export default function TitleScreen({ onPlay, onHelp }: Props) {
   const [phone, setPhone] = useState(isPhone);
   const [anyway, setAnyway] = useState(false);
+  const [code, setCode] = useState('');
+  const [codeError, setCodeError] = useState(false);
+
+  function join(event: FormEvent) {
+    event.preventDefault();
+    const room = readRoomCode(code);
+    if (room) onPlay('online', room);
+    else setCodeError(true);
+  }
 
   useEffect(() => {
     const query = window.matchMedia?.(PHONE_QUERY);
@@ -122,6 +137,36 @@ export default function TitleScreen({ onPlay, onHelp }: Props) {
                 How to play
               </button>
             </nav>
+            {SERVER_URL && (
+              <form className="title-join" onSubmit={join}>
+                <label htmlFor="title-join-code">Have a code? Join a friend's game</label>
+                <div className="title-join-row">
+                  <input
+                    id="title-join-code"
+                    className="title-join-input"
+                    value={code}
+                    onChange={(event) => {
+                      setCode(event.target.value);
+                      setCodeError(false);
+                    }}
+                    placeholder="e.g. U7EK44"
+                    autoComplete="off"
+                    autoCapitalize="characters"
+                    spellCheck={false}
+                    aria-invalid={codeError}
+                    aria-describedby={codeError ? 'title-join-error' : undefined}
+                  />
+                  <button type="submit" className="title-btn primary title-join-btn">
+                    Join
+                  </button>
+                </div>
+                {codeError && (
+                  <p id="title-join-error" className="title-join-error" role="alert">
+                    A room code is {ROOM_CODE_LENGTH} letters and numbers, like U7EK44.
+                  </p>
+                )}
+              </form>
+            )}
             <p className="title-press">Press Enter to begin campaign</p>
           </div>
         )}
