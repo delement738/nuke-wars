@@ -2,7 +2,7 @@
 //
 // What a player sees between "I asked for a room" and "there are two of us":
 // connecting, the room's code and link to send (either works: the friend can
-// type the code into the title screen's join box, or open the link), and — if it goes wrong — why.
+// pick Join match on the title screen and type the code, or open the link), and — if it goes wrong — why.
 // It reads `online` only, never the board, so it has nothing to leak; and `App`
 // shows it *instead of* the setup screen, so no board is drawn behind it.
 //
@@ -55,7 +55,7 @@ export default function LobbyScreen({ onTitle }: Props) {
         <p className="muted">Your room is open. Your opponent can join with this code:</p>
         <p className="handoff-to lobby-code">{online.room}</p>
         <p className="footnote">
-          They type it into <strong>Have a code?</strong> on the title screen — or just
+          They pick <strong>Play online → Join match</strong> and type it in — or just
           open the link:
         </p>
         <p className="footnote lobby-link">{link}</p>

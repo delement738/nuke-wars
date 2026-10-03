@@ -60,7 +60,7 @@ A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, dr
 
 ### ✅ Code and docs agree as of 2026-10-02 (V1.5 shipped, tagged `v1.5`) — no known mismatch
 
-**Latest (2026-10-03): join by code** — the title screen has a *Have a code?* box (type the 6-character room code or paste the link), the waiting room has *Copy code* + *Copy link*, and the code sits in the address bar while a room is open. Client only; no Railway redeploy needed. See `docs/history.md`.
+**Latest (2026-10-03): join by code and a shorter title menu** — the title offers Play vs CPU / Play online / How to play (hotseat is no longer offered anywhere in the UI, though the mode still exists in the store and its tests); *Play online* opens Create match / Join match, and Join match asks for the 6-character code (or a pasted link); the waiting room has *Copy code* + *Copy link*, and the code sits in the address bar while a room is open. Client only; no Railway redeploy needed. See `docs/history.md`.
 
 **V1.5 is DONE (2026-10-02).** The game is live at https://nuke-wars.vercel.app/ with online play against the Railway server, 35 s order clock, back-row site ban. The project is **paused**: V2 is a possible future project, not scheduled. **Known deploy quirk:** Railway stopped auto-deploying from `main` after Session 8 (cause not found); deploy server changes by hand (Railway → service → Ctrl+K → *Deploy Latest Commit*), then check the first online order clock reads 0:35. See `docs/deploy.md`.
 
