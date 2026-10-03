@@ -337,7 +337,12 @@ export function drawIntelOverlay(layer: Container, overlay: IntelOverlay | null)
       g.moveTo(a.x, a.y).lineTo(b.x, b.y);
     }
   }
-  g.stroke({ width: 2, color: COLOR.enemy, alpha: 0.85 });
+  // Only with a region to border. Pixi's `stroke()` straight after a `fill()`,
+  // with no new path between, outlines the shape just filled — so with no
+  // candidates this ringed the last photographed hex in red, beside the drone.
+  if (overlay.candidates.length > 0) {
+    g.stroke({ width: 2, color: COLOR.enemy, alpha: 0.85 });
+  }
   layer.addChild(g);
 
   for (const hex of overlay.candidates) {
