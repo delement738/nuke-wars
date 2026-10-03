@@ -94,6 +94,7 @@ import { PALETTE } from './palette';
 import { soundCues } from '../audio/cues';
 import { playSound } from '../audio/synth';
 import { wheelZoomFactor, ZOOM, zoomAt } from './camera';
+import { setBoardTurned } from './geometry';
 
 /** Pointer travel (px) past which a drag is a pan, not a click on a tile. */
 const DRAG_SLOP = 4;
@@ -241,6 +242,13 @@ export default function GameCanvas() {
   const inference = useIntelOverlay();
   const reveal = useFinalReveal();
 
+  // Each player sees their own home at the bottom of the screen: P2's board is
+  // drawn turned a half-turn (see `setBoardTurned`). Set here, during render, so
+  // it is in place before any effect below draws, and every drawing effect
+  // lists `turned` so a change of viewer redraws the whole board.
+  const turned = viewer === 'p2';
+  setBoardTurned(turned ? map : null);
+
   // The unit being ordered, and the hexes it may legally be sent to. Computed
   // here rather than in `draw.ts` because deciding what is legal is state's job
   // and drawing's job is to draw it (CLAUDE.md's render rule). Memoised because
@@ -306,7 +314,7 @@ export default function GameCanvas() {
     );
 
     fitToScreen(scene);
-  }, [scene, map]);
+  }, [scene, map, turned]);
 
   // --- 3. everything that changes round to round ----------------------------
   // `view` is null on the setup screen, and the layers are cleared rather than
@@ -340,12 +348,12 @@ export default function GameCanvas() {
     }
     drawUnits(scene.units, board.units);
     drawMissiles(scene.missiles, board.missiles, viewer);
-  }, [scene, view, replay, viewer, inference, reveal]);
+  }, [scene, view, replay, viewer, inference, reveal, turned]);
 
   useEffect(() => {
     if (!scene) return;
     drawSelection(scene.selection, selected);
-  }, [scene, selected]);
+  }, [scene, selected, turned]);
 
   // --- 4. the order overlay -------------------------------------------------
   // Its own effect because it changes on hover, which is far more often than the
@@ -363,7 +371,7 @@ export default function GameCanvas() {
       hovered,
       draft,
     });
-  }, [scene, view, replay, orderUnit, orderMode, targets, hovered, draft]);
+  }, [scene, view, replay, orderUnit, orderMode, targets, hovered, draft, turned]);
 
   // --- 5. the setup overlay (build-order step 10b) ---------------------------
   // Also hover-driven, and also cleared on the transition — here the other way
@@ -381,7 +389,7 @@ export default function GameCanvas() {
       selectedHex: setupSelectedHex,
       hovered,
     });
-  }, [scene, view, setupTargets, setupExclusion, setupSlots, setupSelectedHex, hovered]);
+  }, [scene, view, setupTargets, setupExclusion, setupSlots, setupSelectedHex, hovered, turned]);
 
   // --- 6. the replay (presentation phase, session 1) -------------------------
   // Pixi's ticker calls `tick` once per frame with the time since the last one.
@@ -475,7 +483,7 @@ export default function GameCanvas() {
       clearLayer(scene.fxLabels);
       clearLayer(scene.caption);
     };
-  }, [scene, replay, viewer]);
+  }, [scene, replay, viewer, turned]);
 
   return <div ref={hostRef} className="canvas-host" />;
 }
