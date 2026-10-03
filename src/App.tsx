@@ -10,7 +10,7 @@ import TitleScreen, { type PlayMode } from './ui/TitleScreen';
 import { newMatch, playOnline, setSeating } from './state/match';
 import { SERVER_URL, roomInLink, showRoomInAddress } from './net/config';
 import { loadSeat } from './net/session';
-import { HOTSEAT_SEATS, SOLO_SEATS } from './state/seats';
+import { SOLO_SEATS } from './state/seats';
 import { useHandoff, useMatchStarted, useOnline } from './state/useMatch';
 import { toggleMute } from './audio/settings';
 import { installUiClicks } from './audio/synth';
@@ -72,7 +72,7 @@ export default function App() {
     if (mode === 'online') {
       if (SERVER_URL) playOnline(SERVER_URL, room ?? null);
     } else {
-      setSeating(mode === 'hotseat' ? HOTSEAT_SEATS : SOLO_SEATS);
+      setSeating(SOLO_SEATS);
     }
     setTitle(false);
   }, []);

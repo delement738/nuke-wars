@@ -13,9 +13,12 @@
 // promises. The how-to-play window swallows Enter in the capture phase while it
 // is open, so Enter there never reaches this listener.
 //
-// Below the menu, when there is a server: a box to join a friend's game by its
-// six-character room code (or a pasted invite link), for anyone who was told the
-// code rather than sent the link.
+// Play online opens a second menu in the same console rather than a new screen
+// (designer's call, 2026-10-03, to keep the first menu short): Create match
+// opens a room and its code; Join match asks for a friend's six-character code
+// (or a pasted invite link). Back, or Escape, returns to the first menu. The
+// hotseat button was dropped at the same time — the mode still exists in the
+// store, it is just no longer offered.
 //
 // Phones get a notice instead of the buttons (designer's ruling: desktop and
 // tablet only), with a way past it for anyone who wants to try anyway.
@@ -27,7 +30,10 @@ import SoundButton from './SoundButton';
 import { DRIFT_PERIOD_S, TILE_H, TILE_W, titleTileCss } from './titleBackdrop';
 import './title.css';
 
-export type PlayMode = 'solo' | 'hotseat' | 'online';
+export type PlayMode = 'solo' | 'online';
+
+/** Which menu the console shows: the first one, the online one, or the code box. */
+type Menu = 'main' | 'online' | 'join';
 
 interface Props {
   /** `room`: join that room (online only) instead of opening a new one. */
@@ -48,8 +54,15 @@ function isPhone(): boolean {
 export default function TitleScreen({ onPlay, onHelp }: Props) {
   const [phone, setPhone] = useState(isPhone);
   const [anyway, setAnyway] = useState(false);
+  const [menu, setMenu] = useState<Menu>('main');
   const [code, setCode] = useState('');
   const [codeError, setCodeError] = useState(false);
+
+  function goTo(next: Menu) {
+    setMenu(next);
+    setCode('');
+    setCodeError(false);
+  }
 
   function join(event: FormEvent) {
     event.preventDefault();
@@ -68,8 +81,22 @@ export default function TitleScreen({ onPlay, onHelp }: Props) {
 
   const blocked = phone && !anyway;
 
+  // Escape steps back a menu (join → online → first).
   useEffect(() => {
-    if (blocked) return;
+    if (menu === 'main') return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      setMenu(menu === 'join' ? 'online' : 'main');
+      setCode('');
+      setCodeError(false);
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menu]);
+
+  // Enter plays the CPU from the first menu only — never from the online one.
+  useEffect(() => {
+    if (blocked || menu !== 'main') return;
     function onKey(event: KeyboardEvent) {
       if (event.key !== 'Enter' || event.repeat) return;
       // A focused button already answers Enter itself.
@@ -79,7 +106,7 @@ export default function TitleScreen({ onPlay, onHelp }: Props) {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [blocked, onPlay]);
+  }, [blocked, menu, onPlay]);
 
   return (
     <div className="title">
@@ -119,27 +146,43 @@ export default function TitleScreen({ onPlay, onHelp }: Props) {
             <div className="title-rule">
               <span>Strategic assets deployed</span>
             </div>
-            <nav className="title-menu">
-              <button type="button" className="title-btn primary" onClick={() => onPlay('solo')}>
-                Play vs CPU
-              </button>
-              <button type="button" className="title-btn" onClick={() => onPlay('hotseat')}>
-                Two players (hotseat)
-              </button>
-              {/* Only when there is a server to talk to (V1.5 Session 6; "(test)" dropped from the label in Session 9):
-                  in development, or once Session 8 configures one. */}
-              {SERVER_URL && (
-                <button type="button" className="title-btn" onClick={() => onPlay('online')}>
-                  Play online
+            {menu === 'main' && (
+              <nav className="title-menu">
+                <button type="button" className="title-btn primary" onClick={() => onPlay('solo')}>
+                  Play vs CPU
                 </button>
-              )}
-              <button type="button" className="title-btn" onClick={() => onHelp()}>
-                How to play
-              </button>
-            </nav>
-            {SERVER_URL && (
+                {/* Only when there is a server to talk to (V1.5 Session 6). */}
+                {SERVER_URL && (
+                  <button type="button" className="title-btn" onClick={() => goTo('online')}>
+                    Play online
+                  </button>
+                )}
+                <button type="button" className="title-btn" onClick={() => onHelp()}>
+                  How to play
+                </button>
+              </nav>
+            )}
+            {menu === 'online' && (
+              <nav className="title-menu" aria-label="Play online">
+                <button
+                  type="button"
+                  className="title-btn primary"
+                  onClick={() => onPlay('online')}
+                  autoFocus
+                >
+                  Create match
+                </button>
+                <button type="button" className="title-btn" onClick={() => goTo('join')}>
+                  Join match
+                </button>
+                <button type="button" className="title-btn" onClick={() => goTo('main')}>
+                  Back
+                </button>
+              </nav>
+            )}
+            {menu === 'join' && (
               <form className="title-join" onSubmit={join}>
-                <label htmlFor="title-join-code">Have a code? Join a friend's game</label>
+                <label htmlFor="title-join-code">Enter your friend's room code</label>
                 <div className="title-join-row">
                   <input
                     id="title-join-code"
@@ -153,6 +196,7 @@ export default function TitleScreen({ onPlay, onHelp }: Props) {
                     autoComplete="off"
                     autoCapitalize="characters"
                     spellCheck={false}
+                    autoFocus
                     aria-invalid={codeError}
                     aria-describedby={codeError ? 'title-join-error' : undefined}
                   />
@@ -165,9 +209,12 @@ export default function TitleScreen({ onPlay, onHelp }: Props) {
                     A room code is {ROOM_CODE_LENGTH} letters and numbers, like U7EK44.
                   </p>
                 )}
+                <button type="button" className="title-btn" onClick={() => goTo('online')}>
+                  Back
+                </button>
               </form>
             )}
-            <p className="title-press">Press Enter to begin campaign</p>
+            {menu === 'main' && <p className="title-press">Press Enter to begin campaign</p>}
           </div>
         )}
       </main>

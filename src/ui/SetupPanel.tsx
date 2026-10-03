@@ -28,7 +28,6 @@ import {
   newMatch,
   selectSlot,
   setDifficulty,
-  setSeating,
   startPlacedMatch,
 } from '../state/match';
 import {
@@ -37,7 +36,6 @@ import {
   placementSlots,
   type PlacementSlot,
 } from '../state/placement';
-import { HOTSEAT_SEATS, SOLO_SEATS } from '../state/seats';
 import {
   useActiveSeat,
   useAwaitingSetup,
@@ -133,23 +131,6 @@ export default function SetupPanel({ onHelp }: Props) {
               <HelpButton onClick={() => onHelp('setup')} />
             </span>
           </h2>
-
-          <div className="buttons">
-            <button
-              type="button"
-              onClick={() => setSeating(SOLO_SEATS)}
-              disabled={!hotseat}
-            >
-              One player vs CPU
-            </button>
-            <button
-              type="button"
-              onClick={() => setSeating(HOTSEAT_SEATS)}
-              disabled={hotseat}
-            >
-              Two players (hotseat)
-            </button>
-          </div>
 
           {!hotseat && (
             <>
