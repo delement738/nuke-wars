@@ -287,3 +287,19 @@ export function parseServerMessage(raw: string): ServerMessage | null {
 export function normaliseRoomCode(code: string): string {
   return code.trim().toUpperCase();
 }
+
+/**
+ * The room code in whatever a player typed into the title screen's join box,
+ * or null if there is none. Forgiving on purpose: lower case, spaces or dashes
+ * ("u7e-k44"), and a whole pasted invite link ("https://…/?room=U7EK44") all
+ * work. Strict about the code itself — exactly `ROOM_CODE_LENGTH` characters
+ * from `ROOM_ALPHABET` — so a typo is caught here rather than as a server
+ * refusal.
+ */
+export function readRoomCode(input: string): string | null {
+  const fromLink = /[?&]room=([^&#\s]*)/i.exec(input);
+  const code = normaliseRoomCode(fromLink ? fromLink[1] : input).replace(/[\s-]/g, '');
+  if (code.length !== ROOM_CODE_LENGTH) return null;
+  for (const char of code) if (!ROOM_ALPHABET.includes(char)) return null;
+  return code;
+}

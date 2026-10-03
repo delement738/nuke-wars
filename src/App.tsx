@@ -8,7 +8,7 @@ import LobbyScreen from './ui/LobbyScreen';
 import SetupPanel from './ui/SetupPanel';
 import TitleScreen, { type PlayMode } from './ui/TitleScreen';
 import { newMatch, playOnline, setSeating } from './state/match';
-import { SERVER_URL, roomInLink } from './net/config';
+import { SERVER_URL, roomInLink, showRoomInAddress } from './net/config';
 import { loadSeat } from './net/session';
 import { HOTSEAT_SEATS, SOLO_SEATS } from './state/seats';
 import { useHandoff, useMatchStarted, useOnline } from './state/useMatch';
@@ -66,9 +66,11 @@ export default function App() {
     joinedLink.current = true;
     playOnline(SERVER_URL, linkRoom, entry.token);
   }, [linkRoom, entry.token]);
-  const play = useCallback((mode: PlayMode) => {
+  // `room` is a code typed into the title's join box: online with it joins that
+  // room, exactly as opening its link would; without it, opens a new one.
+  const play = useCallback((mode: PlayMode, room?: string) => {
     if (mode === 'online') {
-      if (SERVER_URL) playOnline(SERVER_URL, null);
+      if (SERVER_URL) playOnline(SERVER_URL, room ?? null);
     } else {
       setSeating(mode === 'hotseat' ? HOTSEAT_SEATS : SOLO_SEATS);
     }
@@ -90,6 +92,22 @@ export default function App() {
     setWasOnline(online !== null);
     if (online === null && !started) setTitle(true);
   }
+
+  // The room's code rides in the address bar while we are in it, so the host can
+  // share the page's own address; it comes out once we leave. Only after this
+  // tab has actually been online: on first load the link's code must stay put
+  // until the join above has read it.
+  const onlineRoom = online?.room ?? null;
+  const isOnline = online !== null;
+  const wasEverOnline = useRef(false);
+  useEffect(() => {
+    if (isOnline) {
+      wasEverOnline.current = true;
+      if (onlineRoom) showRoomInAddress(onlineRoom);
+    } else if (wasEverOnline.current) {
+      showRoomInAddress(null);
+    }
+  }, [isOnline, onlineRoom]);
 
   // A handoff closes it, so the next player sits down to their own board rather
   // than to a window the last player left open. Adjusted during render (React's

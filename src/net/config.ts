@@ -26,3 +26,17 @@ export function roomInLink(): string | null {
   if (typeof location === 'undefined') return null;
   return new URLSearchParams(location.search).get('room');
 }
+
+/**
+ * Put `room` in the address bar (or take it out, for null) without reloading.
+ * Once a room is open the host's own address bar *is* the invite, so copying it
+ * from there works too; and on leaving, the code comes out again, so a later
+ * reload goes to the title instead of back into a finished room.
+ */
+export function showRoomInAddress(room: string | null): void {
+  if (typeof history === 'undefined') return;
+  const url = new URL(location.href);
+  if (room) url.searchParams.set('room', room);
+  else url.searchParams.delete('room');
+  if (url.href !== location.href) history.replaceState(history.state, '', url);
+}
