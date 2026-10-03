@@ -58,7 +58,9 @@ A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, dr
 
 ## Current status (update at end of every session)
 
-### ✅ Code and docs agree as of 2026-10-01 (V1.5 Session 9 in progress: 35 s clock, back-row rule merged for the beta) — no known mismatch
+### ✅ Code and docs agree as of 2026-10-02 (V1.5 shipped, tagged `v1.5`) — no known mismatch
+
+**V1.5 is DONE (2026-10-02).** The game is live at https://nuke-wars.vercel.app/ with online play against the Railway server, 35 s order clock, back-row site ban. The project is **paused**: V2 is a possible future project, not scheduled. **Known deploy quirk:** Railway stopped auto-deploying from `main` after Session 8 (cause not found); deploy server changes by hand (Railway → service → Ctrl+K → *Deploy Latest Commit*), then check the first online order clock reads 0:35. See `docs/deploy.md`.
 
 **Latest (2026-10-01):** the designer reopened the frozen rules for one change: **neither the bunker nor the decoy may be placed on the back row of a home zone** (P1 row 18, P2 row 0; `RULES.siteBackRowsBarred`, placement reason `BACK_ROW`). The interceptor base still may. Spec §7, §12 and a dated amendment; gotcha 81. 1016 tests. Sim is frozen again. **Merged to `main` before the beta** (designer's call, 2026-10-01), so beta testers play with it; it was first parked on its branch for a later patch.
 
@@ -81,7 +83,7 @@ The session-by-session build history (V1 steps 1–10, the V1.1 rules, the sim f
 6. ✅ **DONE 2026-09-29.** ~~**Server, protocol and rooms.**~~ See `docs/protocol.md`, gotcha 78 and `docs/history.md`.
 7. ✅ **DONE 2026-09-30.** ~~**Order timer, reconnect and lobby UI.**~~ See `docs/protocol.md` ("The order clock", "Reconnect"), gotcha 79 and `docs/history.md`.
 8. ✅ **DONE 2026-09-30.** ~~**Railway deploy and hardening.**~~ See `docs/deploy.md` Part 2, `docs/protocol.md` ("Limits for a public server"), gotcha 80 and `docs/history.md`.
-9. **IN PROGRESS —** Beta and launch: play with invited testers, fix what they find, write it up in `docs/playtests.md`, tag `v1.5`. Done so far: the order clock is **35 s** (settled from the first online game), "Play online" lost "(test)", the beta log is ready, and the back-row site ban (gotcha 81) was merged so the beta plays the launch rules. Left: the beta games themselves, fixes, and the `v1.5` tag.
+9. ✅ **DONE 2026-10-02.** ~~**Beta and launch.**~~ 35 s clock, "Play online" label, beta log, back-row site ban (gotcha 81), README refresh; the live server verified end to end by a scripted two-player match. Closed on the designer's own online games; no invited-tester games were logged. Tagged `v1.5`. See `docs/history.md`.
 
 **Every push to `main` redeploys the live site on Vercel, and every pull request gets its own preview link and a CI check (lint, test, build; `.github/workflows/ci.yml`).** Don't merge a red check.
 
