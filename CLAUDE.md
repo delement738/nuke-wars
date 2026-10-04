@@ -60,7 +60,9 @@ A 1v1 web-based strategy game: simultaneous hidden orders, hex-grid maneuver, dr
 
 ### ✅ Code and docs agree as of 2026-10-02 (V1.5 shipped, tagged `v1.5`) — no known mismatch
 
-**Latest (2026-10-03): every player sees their home at the bottom** — P2's board is drawn turned 180° (`setBoardTurned` in `src/render/geometry.ts`, set from the viewer in `GameCanvas`); render only, no server change. See `docs/history.md`.
+**Latest (2026-10-03): moves are drawn along their route** — the move/march preview, the committed arrow and the replay follow the hexes a launcher walks through, round mountains and known units (`src/render/route.ts`; the sim keeps no route, so this draws one shortest legal one). Render only; missiles still fly straight by rule (§10). See `docs/history.md`.
+
+**Earlier (2026-10-03): every player sees their home at the bottom** — P2's board is drawn turned 180° (`setBoardTurned` in `src/render/geometry.ts`, set from the viewer in `GameCanvas`); render only, no server change. See `docs/history.md`.
 
 **Earlier (2026-10-03): join by code and a shorter title menu** — the title offers Play vs CPU / Play online / How to play (hotseat is no longer offered anywhere in the UI, though the mode still exists in the store and its tests); *Play online* opens Create match / Join match, and Join match asks for the 6-character code (or a pasted link); the waiting room has *Copy code* + *Copy link*, and the code sits in the address bar while a room is open. Client only; no Railway redeploy needed. See `docs/history.md`.
 
