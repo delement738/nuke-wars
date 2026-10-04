@@ -654,8 +654,14 @@
   border-right: 1px solid #25231f;
 }
 
+/* Set like the section headings it jumps to. */
 .help-nav button {
   text-align: left;
+  font-family: var(--console-head);
+  font-weight: 500;
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
   background: none;
   border-color: transparent;
 }
