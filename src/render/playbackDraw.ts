@@ -44,6 +44,7 @@ import {
   type FlightLeg,
 } from './flights';
 import { HEX, hexCorners } from './geometry';
+import { groundBlockers, routeForMove } from './route';
 import { DIVE, type ClipFrame } from './timeline';
 import { downedOnFirstStep } from '../state/inference';
 
@@ -181,7 +182,8 @@ function easeOut(t: number): number {
   return 1 - (1 - t) ** 2;
 }
 
-/** A point at a fractional index along a missile's line. */
+/** A point at a fractional index along a line of hexes — a missile's, or a
+ *  launcher's route. */
 function onLine(line: readonly Hex[], at: number): { x: number; y: number } {
   const i = Math.min(line.length - 1, Math.max(0, Math.floor(at)));
   if (i >= line.length - 1) return centerOf(line[line.length - 1]);
@@ -463,12 +465,16 @@ export function drawReplayShapes(
         cross(g, x, y, HEX * 0.55 * Math.min(1, p * 2), COLOR.enemy);
         break;
       }
+      // Along the route, hex by hex, so a launcher that went round a ridge is
+      // seen going round it (`route.ts`; the sim keeps no route, so this is one
+      // shortest legal way round the units the viewer had on the board).
       case 'UNIT_MOVED': {
-        const a = centerOf(event.from);
-        const b = centerOf(event.to);
-        const x = lerp(a.x, b.x, p);
-        const y = lerp(a.y, b.y, p);
-        g.moveTo(a.x, a.y).lineTo(x, y).stroke({ width: 2, color: COLOR.move, alpha: 0.6 });
+        const route = routeForMove(ctx.map, event.from, event.to, groundBlockers(ctx.own, event.unitId));
+        const at = p * (route.length - 1);
+        const { x, y } = onLine(route, at);
+        g.moveTo(centerOf(route[0]).x, centerOf(route[0]).y);
+        for (let i = 1; i <= Math.floor(at); i++) g.lineTo(centerOf(route[i]).x, centerOf(route[i]).y);
+        g.lineTo(x, y).stroke({ width: 2, color: COLOR.move, alpha: 0.6 });
         token(g, x, y, COLOR.own);
         const kind = ownUnit(ctx, event.unitId)?.kind ?? 'launcher';
         layer.addChild(emblemAt(kind, x, y, COLOR.glyph));

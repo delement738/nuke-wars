@@ -37,6 +37,7 @@ import type {
 // Types only. The order builder's shapes live in client state, and the render
 // layer is handed them fully assembled — it draws the overlay, it never decides
 // what is in one.
+import { knownEnemyHexes } from '../state/belief';
 import type { IntelOverlay } from '../state/inference';
 import type { DraftEntry, OrderDraft, OrderMode } from '../state/orders';
 import type { PlacementSlot } from '../state/placement';
@@ -44,6 +45,7 @@ import { EMBLEM, EMBLEM_BOX } from './emblems';
 import { missileMarkers, warningLine } from './flights';
 import { HEX, hexCenter, hexCorners } from './geometry';
 import { PALETTE } from './palette';
+import { groundBlockers, routeForMove } from './route';
 
 // --- palette ----------------------------------------------------------------
 //
@@ -439,17 +441,26 @@ function swathHexes(path: readonly Hex[]): Hex[] {
   return hexes;
 }
 
-/** A line with an arrowhead at `to`. Used for a committed move. */
-function arrow(from: Hex, to: Hex, color: number): Graphics {
-  const a = centerOf(from);
-  const b = centerOf(to);
+/**
+ * A line through every hex of `route`, with an arrowhead at the last one and a
+ * dot on each hex it passes through. Used for a committed move.
+ *
+ * It follows the route rather than cutting from start to finish because a
+ * launcher walks (spec §9): a move round a ridge goes round the ridge, and a
+ * straight arrow drawn over the mountains would show a path no launcher can take.
+ */
+function routeArrow(route: readonly Hex[], color: number): Graphics {
+  const points = route.map(centerOf);
+  const a = points[points.length - 2];
+  const b = points[points.length - 1];
   const angle = Math.atan2(b.y - a.y, b.x - a.x);
   const head = HEX * 0.42;
 
-  return new Graphics()
-    .moveTo(a.x, a.y)
-    .lineTo(b.x, b.y)
-    .stroke({ width: 3, color })
+  const g = new Graphics().moveTo(points[0].x, points[0].y);
+  for (const p of points.slice(1)) g.lineTo(p.x, p.y);
+  g.stroke({ width: 3, color, join: 'round' });
+  for (const p of points.slice(1, -1)) g.circle(p.x, p.y, HEX * 0.12).fill(color);
+  return g
     .poly([
       b.x,
       b.y,
@@ -459,6 +470,26 @@ function arrow(from: Hex, to: Hex, color: number): Graphics {
       b.y - head * Math.sin(angle + 0.4),
     ])
     .fill(color);
+}
+
+/** The route a move from `unit` to `to` is drawn through, round the mountains,
+ *  the viewer's own ground units and every enemy asset they have spotted
+ *  (`route.ts`). `view.units` is own units only (gotcha 31), hence the second set. */
+function moveRouteOf(view: VisibleGameState, unit: Unit, to: Hex): Hex[] {
+  const blocked = groundBlockers(view.units, unit.id);
+  for (const key of knownEnemyHexes(view)) blocked.add(key);
+  return routeForMove(view.map, unit.position, to, blocked);
+}
+
+/** The hexes a move passes through, outlined, ahead of the arrow — the hover
+ *  preview's answer to "which way will it go?". */
+function routeHexes(route: readonly Hex[], color: number): Graphics {
+  const g = new Graphics();
+  for (const hex of route.slice(1, -1)) {
+    const c = centerOf(hex);
+    g.poly(hexCorners(c.x, c.y, HEX * 0.55)).stroke({ width: 2, color, alpha: 0.85 });
+  }
+  return g;
 }
 
 /** A ringed cross. Used for a committed launch target. */
@@ -561,29 +592,37 @@ function drawPreview(
   const { x, y } = centerOf(target);
 
   switch (mode) {
-    case 'MOVE':
+    case 'MOVE': {
+      const route = moveRouteOf(view, unit, target);
       layer.addChild(
         new Graphics()
           .poly(hexCorners(x, y))
           .fill({ color: COLOR.move, alpha: 0.4 })
           .stroke({ width: 2.5, color: COLOR.move }),
+        routeHexes(route, COLOR.move),
+        routeArrow(route, COLOR.move),
       );
       return;
+    }
 
     // The destination reads like a MOVE in the march's hotter green — but the
     // origin is marked too, and that second mark is the point. The two washes
     // are deliberately the same colour family (both are ground you may stand
     // on), so on a dim screen the *shape* of the preview, not its hue, is what
     // tells a player they are about to go loud.
-    case 'MARCH':
+    case 'MARCH': {
+      const route = moveRouteOf(view, unit, target);
       layer.addChild(
         new Graphics()
           .poly(hexCorners(x, y))
           .fill({ color: COLOR.march, alpha: 0.4 })
           .stroke({ width: 2.5, color: COLOR.march }),
         announcedMark(unit.position),
+        routeHexes(route, COLOR.march),
+        routeArrow(route, COLOR.march),
       );
       return;
+    }
 
     case 'LAUNCH': {
       const a = centerOf(unit.position);
@@ -634,7 +673,7 @@ function drawMarker(
 ): void {
   switch (entry.type) {
     case 'MOVE':
-      layer.addChild(arrow(unit.position, entry.destination, COLOR.move));
+      layer.addChild(routeArrow(moveRouteOf(view, unit, entry.destination), COLOR.move));
       return;
 
     // Same arrow as a MOVE, in the march's green, plus the origin marked as
@@ -645,7 +684,7 @@ function drawMarker(
     case 'MARCH':
       layer.addChild(
         announcedMark(unit.position),
-        arrow(unit.position, entry.destination, COLOR.march),
+        routeArrow(moveRouteOf(view, unit, entry.destination), COLOR.march),
       );
       return;
 
