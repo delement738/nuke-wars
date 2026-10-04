@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { RULES } from '../sim/defs';
 import { axialToOffset, distance, hexKey, hexLine, offsetToAxial, type Hex } from '../sim/hex';
 import { generateMap, lineOfFireClear, makeRng, type MapData } from '../sim/map';
-import { rowsFromBackEdge, validateSetup } from '../sim/setup';
+import { colsFromSideEdge, rowsFromBackEdge, validateSetup } from '../sim/setup';
 import { PLAYERS, type PlayerId } from '../sim/types';
 import { HARD_SITE_GAP_MAX, approachLanes, cpuSetup } from './cpuSetup';
 import { sandboxSetup } from './sandbox';
@@ -130,13 +130,14 @@ describe('cpuSetup', () => {
       for (const { bunker, decoy } of hardBoards(player)) {
         const { col, row } = axialToOffset(bunker);
         expect(rowsFromBackEdge(player, row)).toBeGreaterThanOrEqual(RULES.siteBackRowsBarred);
+        expect(colsFromSideEdge(col, 16)).toBeGreaterThanOrEqual(RULES.siteSideColsBarred);
         rows.add(row);
         cols.add(col);
         expect(distance(bunker, decoy)).toBeLessThanOrEqual(HARD_SITE_GAP_MAX);
       }
-      // Every row the bunker may legally use (§12: not the back row).
+      // Every row and column the bunker may legally use (§12: no map edge).
       expect(rows.size).toBe(zone.max - zone.min + 1 - RULES.siteBackRowsBarred);
-      expect(cols.size).toBe(16);
+      expect(cols.size).toBe(16 - 2 * RULES.siteSideColsBarred);
     }
   });
 });

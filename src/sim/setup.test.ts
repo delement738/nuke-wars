@@ -12,6 +12,7 @@ import {
   PLACEMENT_ORDER,
   legalPlacementHexes,
   nextPlacementKind,
+  colsFromSideEdge,
   rowsFromBackEdge,
   startMatch,
   validatePlacement,
@@ -260,7 +261,7 @@ describe('validatePlacement() — the interceptor exclusion', () => {
   it('rejects a SITE placed too close to an existing base — both kinds', () => {
     const map = makeMap();
     const bases: PlayerSetup = [place('interceptor', BASE_A)];
-    const close = at(0, 16 - (RULES.bunkerExclusionRadius - 1));
+    const close = at(1, 14); // two from BASE_A, one column in from the side edge
     expect(distance(BASE_A, close)).toBe(RULES.bunkerExclusionRadius - 1);
 
     expect(validatePlacement(map, 'p1', 'bunker', close, bases)).toEqual({
@@ -278,7 +279,7 @@ describe('validatePlacement() — the interceptor exclusion', () => {
     // no matter how it was assembled. Without the symmetric check, the
     // base-first sequence passes and an unplayable setup reaches startMatch.
     const map = makeMap();
-    const close = at(0, 16 - (RULES.bunkerExclusionRadius - 1));
+    const close = at(1, 14); // two from BASE_A, one column in from the side edge
 
     const siteFirst: PlayerSetup = [
       place('bunker', close),
@@ -415,6 +416,116 @@ describe('validatePlacement() — the back row', () => {
   });
 });
 
+// --- the side edges (spec §12, added 2026-10-03) ----------------------------
+
+describe('validatePlacement() — the side edges', () => {
+  const WIDTH = 16;
+
+  /**
+   * Every hex on `player`'s side strips — the columns nearest the left and right
+   * map edges — leaving out the back row, which reports BACK_ROW first.
+   */
+  function sideHexes(player: PlayerId): Hex[] {
+    return homeZoneHexes(player).filter((hex) => {
+      const { col, row } = axialToOffset(hex);
+      return (
+        colsFromSideEdge(col, WIDTH) < RULES.siteSideColsBarred &&
+        rowsFromBackEdge(player, row) >= RULES.siteBackRowsBarred
+      );
+    });
+  }
+
+  it('measures from the nearer side edge', () => {
+    expect(colsFromSideEdge(0, WIDTH)).toBe(0);
+    expect(colsFromSideEdge(15, WIDTH)).toBe(0);
+    expect(colsFromSideEdge(1, WIDTH)).toBe(1);
+    expect(colsFromSideEdge(14, WIDTH)).toBe(1);
+    expect(colsFromSideEdge(7, WIDTH)).toBe(7);
+  });
+
+  /** Both sites, with the same reason code (§12's principle). */
+  it('rejects the bunker AND the decoy on every side-edge hex, for both players', () => {
+    const map = makeMap();
+    for (const player of ['p1', 'p2'] as const) {
+      const strip = sideHexes(player);
+      // Two strips, each the zone's 6 rows less the barred back row.
+      expect(strip).toHaveLength(2 * RULES.siteSideColsBarred * (6 - RULES.siteBackRowsBarred));
+      for (const hex of strip) {
+        for (const kind of ['bunker', 'decoy'] as const) {
+          expect(validatePlacement(map, player, kind, hex, [])).toEqual({
+            legal: false,
+            reason: 'SIDE_EDGE',
+          });
+        }
+      }
+    }
+  });
+
+  it('accepts a site one column in from either edge — the bound is exact', () => {
+    const map = makeMap();
+    for (const col of [RULES.siteSideColsBarred, WIDTH - 1 - RULES.siteSideColsBarred]) {
+      for (const kind of ['bunker', 'decoy'] as const) {
+        expect(validatePlacement(map, 'p1', kind, at(col, 15), [])).toEqual({ legal: true });
+        expect(validatePlacement(map, 'p2', kind, at(col, 3), [])).toEqual({ legal: true });
+      }
+    }
+  });
+
+  it('still lets the interceptor base use the side edges', () => {
+    const map = makeMap();
+    for (const player of ['p1', 'p2'] as const) {
+      for (const hex of sideHexes(player)) {
+        expect(validatePlacement(map, player, 'interceptor', hex, [])).toEqual({ legal: true });
+      }
+    }
+  });
+
+  it('bars a side-edge mountain too — terrain does not reopen it', () => {
+    const map = makeMap();
+    const hex = at(0, 15);
+    tileAt(map, axialToOffset(hex))!.terrain = 'mountain';
+    expect(validatePlacement(map, 'p1', 'decoy', hex, [])).toEqual({
+      legal: false,
+      reason: 'SIDE_EDGE',
+    });
+  });
+
+  it('leaves no edge hex at all in either site highlight', () => {
+    const map = makeMap();
+    for (const player of ['p1', 'p2'] as const) {
+      const bunker = legalPlacementHexes(map, player, 'bunker', []);
+      const decoy = legalPlacementHexes(map, player, 'decoy', []);
+      expect(decoy.map(hexKey)).toEqual(bunker.map(hexKey));
+      for (const hex of bunker) {
+        const { col, row } = axialToOffset(hex);
+        expect(colsFromSideEdge(col, WIDTH)).toBeGreaterThanOrEqual(RULES.siteSideColsBarred);
+        expect(rowsFromBackEdge(player, row)).toBeGreaterThanOrEqual(RULES.siteBackRowsBarred);
+      }
+    }
+  });
+
+  it('bars strips that are half-turn twins, so neither side gets more ground', () => {
+    const dims = { width: WIDTH, height: 19 };
+    const p1 = sideHexes('p1').map((hex) =>
+      hexKey(offsetToAxial(rotate180(dims, axialToOffset(hex)))),
+    );
+    const p2 = new Set(sideHexes('p2').map(hexKey));
+    expect(p1.every((key) => p2.has(key))).toBe(true);
+    expect(p1).toHaveLength(p2.size);
+  });
+
+  it('fails a whole setup with the bunker on a side edge, and startMatch refuses it', () => {
+    const map = makeMap();
+    const bad: PlayerSetup = [
+      place('bunker', at(15, 15)),
+      place('decoy', DECOY),
+      place('interceptor', BASE_A),
+    ];
+    expect(validateSetup(map, 'p1', bad)).toEqual({ legal: false, index: 0, reason: 'SIDE_EDGE' });
+    expect(() => startMatch(map, { p1: bad, p2: P2_SETUP })).toThrow(/SIDE_EDGE/);
+  });
+});
+
 // --- the UI's highlight list ------------------------------------------------
 
 describe('legalPlacementHexes()', () => {
@@ -452,8 +563,8 @@ describe('legalPlacementHexes()', () => {
 
   it('offers ground for any kind at any time — there is no placement order', () => {
     // With nothing placed, no exclusion applies yet. §12 gives bunker and decoy
-    // identical ground; the base gets the same plus the back row, which is
-    // closed to sites only (2026-10-01).
+    // identical ground; the base gets the same plus the map edges — the back
+    // row (2026-10-01) and the side columns (2026-10-03) — closed to sites only.
     const map = makeMap();
     const bunker = legalPlacementHexes(map, 'p1', 'bunker', []).map(hexKey);
     const decoy = legalPlacementHexes(map, 'p1', 'decoy', []).map(hexKey);
@@ -463,7 +574,13 @@ describe('legalPlacementHexes()', () => {
     expect(decoy).toEqual(bunker);
     expect(
       base
-        .filter((hex) => rowsFromBackEdge('p1', axialToOffset(hex).row) >= RULES.siteBackRowsBarred)
+        .filter((hex) => {
+          const { col, row } = axialToOffset(hex);
+          return (
+            rowsFromBackEdge('p1', row) >= RULES.siteBackRowsBarred &&
+            colsFromSideEdge(col, map.width) >= RULES.siteSideColsBarred
+          );
+        })
         .map(hexKey),
     ).toEqual(bunker);
   });
@@ -659,7 +776,7 @@ describe('nextPlacementKind', () => {
   // Widely-spaced hexes in P1's home zone, clear of every spawn row and far
   // enough apart that the ≥3 exclusion rule never fires — this describe is about
   // the *order* of placement, so nothing else should be able to reject a hex.
-  const SPOTS = [at(0, 14), at(4, 14), at(9, 14), at(14, 14)];
+  const SPOTS = [at(1, 14), at(4, 14), at(9, 14), at(14, 14)];
 
   it('walks the roster in PLACEMENT_ORDER and then reports done', () => {
     const steps: (Placement['kind'] | null)[] = [];

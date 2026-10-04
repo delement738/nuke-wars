@@ -14,6 +14,7 @@
 import { RULES } from '../sim/defs';
 import type { Hex } from '../sim/hex';
 import type { Unit } from '../sim/types';
+import type { PaletteName } from '../render/palette';
 import {
   clearDraft,
   clearOrder,
@@ -37,6 +38,7 @@ import {
   useViewer,
 } from '../state/useMatch';
 import { hexLabel } from './eventText';
+import Prompt from './Prompt';
 
 /** Verb shown on the mode button. "Fire" rather than "Launch" so the three
  *  buttons never start with the same letter at a glance. */
@@ -47,15 +49,43 @@ const MODE_LABEL: Record<OrderMode, string> = {
   FLY: 'Fly',
 };
 
-/** What picking this mode is asking the player to click. */
-const MODE_HINT: Record<OrderMode, string> = {
-  MOVE: 'Click a green hex to advance there.',
+/**
+ * What picking this mode is asking the player to click: a headline naming the
+ * board colour, then one line on what it costs or rules out. `tone` is the
+ * palette entry the board highlights that mode's hexes in, so the swatch on the
+ * card is the same green / orange / violet the player is looking for.
+ */
+const MODE_PROMPT: Record<OrderMode, { tone: PaletteName; title: string; body: string }> = {
+  MOVE: {
+    tone: 'move',
+    title: 'Move — click a green hex',
+    body: 'The launcher drives there this round.',
+  },
   // States the cost, because no overlay can draw it: the hexes look like richer
   // MOVE ground, and the price is a public event on the hex you are leaving.
-  MARCH: 'Click a bright green hex to force-march there — twice the distance, but the hex you leave is announced to the enemy for one round.',
-  LAUNCH: 'Click any hex in the orange ring to fire on it — mountains included, and blind fire at empty ground is legal. A mountain in the way blocks the shot, so hexes behind a ridge are not offered.',
-  FLY: 'Hover a violet hex to preview the flight path and the corridor it photographs, then click to commit.',
+  MARCH: {
+    tone: 'march',
+    title: 'March — click a bright green hex',
+    body: 'Twice as far, but the enemy hears the hex you leave for one round.',
+  },
+  LAUNCH: {
+    tone: 'launch',
+    title: 'Fire — click an orange hex',
+    body: 'Mountains and empty ground are fair targets. Hexes behind a ridge aren’t offered: the mountain blocks the shot.',
+  },
+  FLY: {
+    tone: 'fly',
+    title: 'Fly — click a violet hex',
+    body: 'Hover first to preview the flight and the strip of ground it photographs.',
+  },
 };
+
+/** What to do with a unit that is picked but has no mode yet. */
+function choosePrompt(unit: Unit): string {
+  return unit.kind === 'drone'
+    ? 'Fly to photograph a strip of ground, or Hover to watch your own.'
+    : 'Move or March to reposition, Fire to launch, or Hold to stay put.';
+}
 
 export default function OrderPanel() {
   const view = useView();
@@ -160,9 +190,23 @@ export default function OrderPanel() {
         })}
       </ul>
 
+      {!selected && decided < units.length && (
+        <Prompt tone="own" title="Pick a unit to order">
+          Click one in the list above or on the board.
+        </Prompt>
+      )}
+
+      {selected && !orderMode && (
+        <Prompt tone="own" title={`${unitLabel(selected)} — choose an order`}>
+          {choosePrompt(selected)}
+        </Prompt>
+      )}
+
       {selected && orderMode && (
         <>
-          <p className="alert">{MODE_HINT[orderMode]}</p>
+          <Prompt tone={MODE_PROMPT[orderMode].tone} title={MODE_PROMPT[orderMode].title}>
+            {MODE_PROMPT[orderMode].body}
+          </Prompt>
           {orderMode === 'MOVE' && (
             // Spec §9, stated in words because the highlight cannot say it: the
             // range is computed from what this player knows, and an undetected
