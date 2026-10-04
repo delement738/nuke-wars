@@ -90,6 +90,7 @@ export type PlacementIllegalReason =
   | 'OUTSIDE_HOME_ZONE' // outside `RULES.homeZoneRows` for this player
   | 'SPAWN_HEX' // §12: placement may never use one of the 8 public spawns
   | 'BACK_ROW' // a bunker or decoy within `RULES.siteBackRowsBarred` of the map edge
+  | 'SIDE_EDGE' // a bunker or decoy within `RULES.siteSideColsBarred` of a side edge
   | 'FORBIDDEN_TERRAIN' // not in `RULES.placementTerrain` for this kind
   | 'HEX_TAKEN' // one of this player's own placed assets is already there
   | 'EXCLUSION_ZONE'; // a base and a site closer than `bunkerExclusionRadius`
@@ -161,6 +162,16 @@ export function rowsFromBackEdge(playerId: PlayerId, row: number): number {
 }
 
 /**
+ * How far `col` sits in from the nearer side edge of a map `width` columns
+ * wide — 0 on the first and last column (spec §12). Symmetric by construction,
+ * so the half-turn that maps one player's ground onto the other's maps the two
+ * barred strips onto each other.
+ */
+export function colsFromSideEdge(col: number, width: number): number {
+  return Math.min(col, width - 1 - col);
+}
+
+/**
  * Whether `playerId` may place `kind` on `hex`, given what they have already
  * placed (spec §12).
  *
@@ -208,6 +219,12 @@ export function validatePlacement(
   // real one would make every back-row site provably the fake.
   if (isSite(kind) && rowsFromBackEdge(playerId, offset.row) < RULES.siteBackRowsBarred) {
     return { legal: false, reason: 'BACK_ROW' };
+  }
+
+  // §12, the same rule at the other two edges: with this and the back row, no
+  // site may touch the map edge anywhere. Also through `isSite`.
+  if (isSite(kind) && colsFromSideEdge(offset.col, map.width) < RULES.siteSideColsBarred) {
+    return { legal: false, reason: 'SIDE_EDGE' };
   }
 
   // `RULES.placementTerrain`, NOT `TerrainDef.groundPassable` — see the header.

@@ -50,6 +50,7 @@ import { hexLabel } from './eventText';
 import HelpButton from './HelpButton';
 import OnlinePanel from './OnlinePanel';
 import SoundButton from './SoundButton';
+import Prompt from './Prompt';
 
 const DIFFICULTIES: readonly CpuDifficulty[] = ['easy', 'medium', 'hard'];
 
@@ -178,9 +179,7 @@ export default function SetupPanel({ onHelp }: Props) {
           <p className="muted">
             You are {seat.toUpperCase()}. Your home is the bottom of the
             board: place your assets on the gold rows, plains or mountain.
-            The bunker and decoy may not use the back{' '}
-            {RULES.siteBackRowsBarred === 1 ? 'row' : `${RULES.siteBackRowsBarred} rows`}{' '}
-            at the map edge.
+            The bunker and decoy may not touch any edge of the map.
           </p>
 
           <ul className="unit-list">
@@ -213,11 +212,12 @@ export default function SetupPanel({ onHelp }: Props) {
 
           {active && (
             <>
-              <p className="alert">
-                {active.hex
-                  ? `Click a gold hex to move your ${slotLabel(active).toLowerCase()}.`
-                  : `Click a gold hex to place your ${slotLabel(active).toLowerCase()}.`}
-              </p>
+              <Prompt
+                tone="place"
+                title={`${active.hex ? 'Move' : 'Place'} your ${slotLabel(active).toLowerCase()}`}
+              >
+                Click a gold hex on the board.
+              </Prompt>
               <p className="footnote">{KIND_BLURB[active.kind]}</p>
             </>
           )}

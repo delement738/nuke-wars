@@ -41,6 +41,8 @@ import { useOrderClock } from './useOrderClock';
 import OrderPanel from './OrderPanel';
 import SelectionPanel from './SelectionPanel';
 import SoundButton from './SoundButton';
+import StatTab from './StatTab';
+import Prompt from './Prompt';
 import { describeOutcome } from './eventText';
 import './hud.css';
 
@@ -115,15 +117,19 @@ export default function Hud({ onHelp, onTitle }: Props) {
             </span>
           </h2>
 
-          <p className={deadHand ? 'alert' : 'muted'}>
-            {over
-              ? 'Match over.'
-              : deadHand
-                ? view.deadHandFor === viewer
-                  ? 'DEAD HAND — your final volley. Launches only.'
-                  : 'DEAD HAND — the enemy fires a final volley.'
-                : 'Order phase.'}
-          </p>
+          {deadHand && !over ? (
+            view.deadHandFor === viewer ? (
+              <Prompt tone="warning" title="Dead hand — your final volley">
+                Your bunker is gone. Fire everything you have left: launches only.
+              </Prompt>
+            ) : (
+              <Prompt tone="warning" title="Dead hand — incoming final volley">
+                Their bunker is gone, and they fire one last time. You give no orders.
+              </Prompt>
+            )
+          ) : (
+            <p className="muted">{over ? 'Match over.' : 'Order phase.'}</p>
+          )}
 
           {view.outcome && (
             <p className="outcome">{describeOutcome(view.outcome, viewer)}</p>
@@ -191,6 +197,7 @@ export default function Hud({ onHelp, onTitle }: Props) {
       </div>
 
       <div className="column right">
+        <StatTab />
         <EventLog />
       </div>
     </div>

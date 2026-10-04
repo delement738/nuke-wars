@@ -12,7 +12,7 @@ Each side fields the entire roster: **3 mobile launchers** (move *or* fire, neve
 
 **V1.5 — online beta.** Play at **<https://nuke-wars.vercel.app/>**: against a CPU opponent (three difficulty tiers), or **Play online** against a friend: *Create match* gives you a 6-character code (and a link) to send, and your friend picks *Join match* and types it in. Each round you have **35 seconds** to send your orders (a round resolves the moment both players have sent), and a match lasts at most 25 rounds.
 
-**The rules are frozen** (since 2026-09-28; reopened once on 2026-10-01 to keep both bunker sites off the back row at the map edge). A how-to-play screen (`?` on any screen) teaches them in about three minutes. The board is a paper plotting table, each round replays from its event log with missiles in flight and inbound warnings, and the sound is synthesized in the browser.
+**The rules are frozen** (since 2026-09-28; reopened on 2026-10-01 and 2026-10-03 to keep both bunker sites off every edge of the map). A how-to-play screen (`?` on any screen) teaches them in about three minutes. The board is a paper plotting table, each round replays from its event log with missiles in flight and inbound warnings, and the sound is synthesized in the browser.
 
 Online play runs on the same engine as solo. The server holds the true match state and sends each player only what they may see, so a client never receives the enemy's hidden positions. A dropped connection or a reloaded tab rejoins its seat. 1016 tests.
 

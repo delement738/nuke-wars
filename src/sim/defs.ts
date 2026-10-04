@@ -395,6 +395,24 @@ export const RULES = {
   siteBackRowsBarred: 1,
 
   /**
+   * How many columns at each SIDE of the board — the left and right map edges —
+   * are closed to the bunker AND the decoy (spec §12, added 2026-10-03). At 1
+   * that is column 0 and the last column. Together with `siteBackRowsBarred`
+   * no site may touch any edge of the map. The interceptor base may still be
+   * built there.
+   *
+   * Why it exists: the same reason as the back row (designer's call). A site
+   * tucked against a side edge has fewer neighbouring hexes, so fewer drone
+   * corridors pass over it — the next-cheapest place to hide once the back
+   * corners closed.
+   *
+   * **Both sites, never just the bunker** (§12), and measured from whichever
+   * side is nearer, so the strip at column 0 and the strip at the last column
+   * are mirror twins by construction.
+   */
+  siteSideColsBarred: 1,
+
+  /**
    * How many of each asset a player places during SETUP (spec §7, §12).
    * Launcher and drone counts are not here because they are not placed — they
    * start on the fixed public spawn hexes in SPAWNS.
