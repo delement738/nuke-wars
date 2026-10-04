@@ -14,7 +14,7 @@
 // closing it with Escape does not also skip the replay or dismiss a battle
 // report underneath. The replay keeps playing behind it (designer's call).
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 // Shape data only: `emblems.ts` imports no Pixi, so the legend draws the very
 // shapes the board does without pulling the renderer into the UI.
 import { EMBLEM_BOX, emblemPaths } from '../render/emblems';
@@ -30,6 +30,7 @@ interface Props {
 
 export default function HowToPlay({ onClose, start }: Props) {
   const bodyRef = useRef<HTMLDivElement>(null);
+  const [active, setActive] = useState(start ?? HOW_TO_PLAY[0].id);
 
   // Jump, not smooth-scroll: the window should open already showing the section.
   useEffect(() => {
@@ -60,6 +61,18 @@ export default function HowToPlay({ onClose, start }: Props) {
     if (body && target) body.scrollTo({ top: target.offsetTop - body.offsetTop, behavior: 'smooth' });
   }
 
+  // Lights the contents entry for the section at the top of the window.
+  function onScroll() {
+    const body = bodyRef.current;
+    if (!body) return;
+    let current = HOW_TO_PLAY[0].id;
+    for (const section of HOW_TO_PLAY) {
+      const el = body.querySelector<HTMLElement>(`#help-${section.id}`);
+      if (el && el.offsetTop - body.offsetTop <= body.scrollTop + 24) current = section.id;
+    }
+    setActive(current);
+  }
+
   return (
     <div className="help-scrim" onClick={onClose}>
       <div
@@ -79,13 +92,19 @@ export default function HowToPlay({ onClose, start }: Props) {
         <div className="help-main">
           <nav className="help-nav" aria-label="Sections">
             {HOW_TO_PLAY.map((section) => (
-              <button key={section.id} type="button" onClick={() => jump(section.id)}>
+              <button
+                key={section.id}
+                type="button"
+                className={section.id === active ? 'active' : undefined}
+                aria-current={section.id === active ? 'true' : undefined}
+                onClick={() => jump(section.id)}
+              >
                 {section.title}
               </button>
             ))}
           </nav>
 
-          <div className="help-body" ref={bodyRef}>
+          <div className="help-body" ref={bodyRef} onScroll={onScroll}>
             {HOW_TO_PLAY.map((section) => (
               <section key={section.id} id={`help-${section.id}`}>
                 <h2>{section.title}</h2>
@@ -106,7 +125,7 @@ function Block({ block }: { block: HelpBlock }) {
     case 'p':
       return <p>{block.text}</p>;
     case 'list': {
-      const items = block.items.map((item) => <li key={item}>{item}</li>);
+      const items = block.items.map((item) => <li key={item}>{withLead(item)}</li>);
       return block.ordered ? <ol>{items}</ol> : <ul>{items}</ul>;
     }
     case 'legend':
@@ -125,6 +144,21 @@ function Block({ block }: { block: HelpBlock }) {
         </ul>
       );
   }
+}
+
+/**
+ * "Move — up to 3 hexes…" sets the order's name in bold. Only a short name
+ * counts, so a dash in the middle of an ordinary sentence is left alone.
+ */
+function withLead(item: string) {
+  const dash = item.indexOf(' — ');
+  if (dash < 1 || dash > 14) return item;
+  return (
+    <>
+      <strong>{item.slice(0, dash)}</strong>
+      {item.slice(dash)}
+    </>
+  );
 }
 
 /** A small picture of a board mark, drawn in its board colours. */
